@@ -89,22 +89,50 @@ jobs:
           echo "===== Final release files ====="
           ls -lh "$GITHUB_WORKSPACE"/*.zip
 
-      - name: Delete old release assets
+      - name: Delete ALL old release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: LG6851F-Pro-${{ env.SOURCE_RUN_ID }}
         run: |
-          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            gh release view "$TAG_NAME" --json assets \
-              --jq '.assets[].name' |
-            while IFS= read -r asset; do
-              [ -z "$asset" ] && continue
-              echo "Deleting old asset: $asset"
-              gh release delete-asset "$TAG_NAME" "$asset" --yes
-            done
-          else
-            echo "No existing release found. Skipping cleanup."
+          set -e
+
+          echo "===== Check existing Release ====="
+
+          if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Release does not exist. Nothing to delete."
+            exit 0
           fi
+
+          echo "===== Get all old assets ====="
+
+          gh release view "$TAG_NAME" \
+            --json assets \
+            --jq '.assets[].name' > old_assets.txt
+
+          echo "===== Delete old assets one by one ====="
+
+          while IFS= read -r asset; do
+            [ -z "$asset" ] && continue
+
+            echo "Deleting: $asset"
+
+            gh release delete-asset "$TAG_NAME" "$asset" --yes
+          done < old_assets.txt
+
+          echo "===== Verify cleanup ====="
+
+          REMAINING=$(gh release view "$TAG_NAME" \
+            --json assets \
+            --jq '.assets | length')
+
+          echo "Remaining old assets: $REMAINING"
+
+          if [ "$REMAINING" -ne 0 ]; then
+            echo "ERROR: Old assets were not completely deleted."
+            exit 1
+          fi
+
+          echo "All old assets deleted successfully."
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
