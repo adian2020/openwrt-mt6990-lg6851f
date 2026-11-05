@@ -1,3 +1,4 @@
+
 name: Publish LG6851F-Pro Release
 
 on:
@@ -45,41 +46,65 @@ jobs:
           B_SOURCE="release_firmware/B槽单刷boot和rootfs签名成功包"
           BIN_SOURCE="release_firmware/bin/targets/mediatek/mt6990"
 
+          A_SYSUPGRADE="lg6851f-mt6990-a-signed-sysupgrade.tar.gz"
+          B_SYSUPGRADE="lg6851f-mt6990-b-signed-sysupgrade.tar.gz"
+
           test -d "$A_SOURCE"
           test -d "$B_SOURCE"
-          test -f "$BIN_SOURCE/lg6851f-mt6990-a-signed-sysupgrade.tar.gz"
-          test -f "$BIN_SOURCE/lg6851f-mt6990-b-signed-sysupgrade.tar.gz"
+          test -f "$BIN_SOURCE/$A_SYSUPGRADE"
+          test -f "$BIN_SOURCE/$B_SYSUPGRADE"
 
-          mkdir -p release_packages
+          A_FOLDER="A槽单刷boot和rootfs签名成功包"
+          B_FOLDER="B槽单刷boot和rootfs签名成功包"
 
-          A_NAME="A槽单刷boot和rootfs签名成功包"
-          B_NAME="B槽单刷boot和rootfs签名成功包"
+          A_ZIP="A槽单刷文件和网页升级包.zip"
+          B_ZIP="B槽单刷文件和网页升级包.zip"
 
-          mkdir -p "release_packages/$A_NAME"
-          mkdir -p "release_packages/$B_NAME"
+          mkdir -p release_packages/A release_packages/B
 
-          echo "===== Copy all A slot files ====="
-          cp -a "$A_SOURCE/." "release_packages/$A_NAME/"
+          echo "===== Copy A slot files ====="
+          mkdir -p "release_packages/A/$A_FOLDER"
+          cp -a "$A_SOURCE/." "release_packages/A/$A_FOLDER/"
+          cp "$BIN_SOURCE/$A_SYSUPGRADE" "release_packages/A/"
 
-          echo "===== Copy all B slot files ====="
-          cp -a "$B_SOURCE/." "release_packages/$B_NAME/"
+          echo "===== Copy B slot files ====="
+          mkdir -p "release_packages/B/$B_FOLDER"
+          cp -a "$B_SOURCE/." "release_packages/B/$B_FOLDER/"
+          cp "$BIN_SOURCE/$B_SYSUPGRADE" "release_packages/B/"
 
-          echo "===== Add A slot sysupgrade image ====="
-          cp "$BIN_SOURCE/lg6851f-mt6990-a-signed-sysupgrade.tar.gz" \
-            "release_packages/$A_NAME/"
+          echo "===== Create A slot ZIP ====="
+          cd release_packages/A
+          zip -qr "$GITHUB_WORKSPACE/$A_ZIP" \
+            "$A_FOLDER" "$A_SYSUPGRADE"
 
-          echo "===== Add B slot sysupgrade image ====="
-          cp "$BIN_SOURCE/lg6851f-mt6990-b-signed-sysupgrade.tar.gz" \
-            "release_packages/$B_NAME/"
+          echo "===== Create B slot ZIP ====="
+          cd ../B
+          zip -qr "$GITHUB_WORKSPACE/$B_ZIP" \
+            "$B_FOLDER" "$B_SYSUPGRADE"
 
-          echo "===== Create two ZIP packages ====="
-          cd release_packages
-
-          zip -qr "$GITHUB_WORKSPACE/$A_NAME.zip" "$A_NAME"
-          zip -qr "$GITHUB_WORKSPACE/$B_NAME.zip" "$B_NAME"
+          echo "===== Verify ZIP contents ====="
+          unzip -l "$GITHUB_WORKSPACE/$A_ZIP"
+          unzip -l "$GITHUB_WORKSPACE/$B_ZIP"
 
           echo "===== Final release files ====="
           ls -lh "$GITHUB_WORKSPACE"/*.zip
+
+      - name: Delete old release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: LG6851F-Pro-${{ env.SOURCE_RUN_ID }}
+        run: |
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release view "$TAG_NAME" --json assets \
+              --jq '.assets[].name' |
+            while IFS= read -r asset; do
+              [ -z "$asset" ] && continue
+              echo "Deleting old asset: $asset"
+              gh release delete-asset "$TAG_NAME" "$asset" --yes
+            done
+          else
+            echo "No existing release found. Skipping cleanup."
+          fi
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -87,8 +112,8 @@ jobs:
           tag_name: LG6851F-Pro-${{ env.SOURCE_RUN_ID }}
           name: LG6851F-Pro Firmware Build ${{ env.SOURCE_RUN_ID }}
           files: |
-            A槽单刷boot和rootfs签名成功包.zip
-            B槽单刷boot和rootfs签名成功包.zip
+            A槽单刷文件和网页升级包.zip
+            B槽单刷文件和网页升级包.zip
           generate_release_notes: true
           draft: false
           prerelease: false
