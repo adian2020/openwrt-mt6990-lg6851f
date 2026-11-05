@@ -1,9 +1,7 @@
+
 name: LG6851F MT6990 Cloud Build
 
 on:
-  push:
-    branches:
-      - cloud-build
   workflow_dispatch:
 
 permissions:
