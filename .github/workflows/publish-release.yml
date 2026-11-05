@@ -3,7 +3,7 @@ name: Publish LG6851F-Pro Release
 on:
   workflow_run:
     workflows:
-      - Build and Release LG6851F-Pro (Strict 06 & 07 Docs)
+      - LG6851F MT6990 Cloud Build
     types:
       - completed
 
@@ -19,7 +19,7 @@ permissions:
   contents: write
 
 env:
-  SOURCE_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.run_id }}
+  SOURCE_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.event.inputs.run_id }}
 
 jobs:
   publish:
@@ -35,12 +35,60 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: release_firmware
 
+      - name: Prepare A and B slot packages
+        run: |
+          set -e
+
+          echo "===== Check source folders ====="
+
+          A_SOURCE="release_firmware/A槽单刷boot和rootfs签名成功包"
+          B_SOURCE="release_firmware/B槽单刷boot和rootfs签名成功包"
+          BIN_SOURCE="release_firmware/bin/targets/mediatek/mt6990"
+
+          test -d "$A_SOURCE"
+          test -d "$B_SOURCE"
+          test -f "$BIN_SOURCE/lg6851f-mt6990-a-signed-sysupgrade.tar.gz"
+          test -f "$BIN_SOURCE/lg6851f-mt6990-b-signed-sysupgrade.tar.gz"
+
+          mkdir -p release_packages
+
+          A_NAME="A槽单刷boot和rootfs签名成功包"
+          B_NAME="B槽单刷boot和rootfs签名成功包"
+
+          mkdir -p "release_packages/$A_NAME"
+          mkdir -p "release_packages/$B_NAME"
+
+          echo "===== Copy all A slot files ====="
+          cp -a "$A_SOURCE/." "release_packages/$A_NAME/"
+
+          echo "===== Copy all B slot files ====="
+          cp -a "$B_SOURCE/." "release_packages/$B_NAME/"
+
+          echo "===== Add A slot sysupgrade image ====="
+          cp "$BIN_SOURCE/lg6851f-mt6990-a-signed-sysupgrade.tar.gz" \
+            "release_packages/$A_NAME/"
+
+          echo "===== Add B slot sysupgrade image ====="
+          cp "$BIN_SOURCE/lg6851f-mt6990-b-signed-sysupgrade.tar.gz" \
+            "release_packages/$B_NAME/"
+
+          echo "===== Create two ZIP packages ====="
+          cd release_packages
+
+          zip -qr "$GITHUB_WORKSPACE/$A_NAME.zip" "$A_NAME"
+          zip -qr "$GITHUB_WORKSPACE/$B_NAME.zip" "$B_NAME"
+
+          echo "===== Final release files ====="
+          ls -lh "$GITHUB_WORKSPACE"/*.zip
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: LG6851F-Pro-${{ env.SOURCE_RUN_ID }}
           name: LG6851F-Pro Firmware Build ${{ env.SOURCE_RUN_ID }}
-          files: release_firmware/**
+          files: |
+            A槽单刷boot和rootfs签名成功包.zip
+            B槽单刷boot和rootfs签名成功包.zip
           generate_release_notes: true
           draft: false
           prerelease: false
