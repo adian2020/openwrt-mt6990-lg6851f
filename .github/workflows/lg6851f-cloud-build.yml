@@ -49,6 +49,10 @@ jobs:
 
           echo "$HOME/zig" >> "$GITHUB_PATH"
 
+          export PATH="$HOME/zig:$PATH"
+
+          echo "===== Verify Zig ====="
+          which zig
           zig version
 
       - name: Download and prepare UU Game Booster
