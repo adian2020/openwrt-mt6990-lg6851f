@@ -1,6 +1,6 @@
 {
 	"admin/modem5g": {
-		"title": "5Gmodem",
+		"title": "蜂窝",
 		"order": 25,
 		"action": {
 			"type": "firstchild"
@@ -25,7 +25,7 @@
 		}
 	},
 	"admin/modem5g/sms": {
-		"title": "SMS",
+		"title": "短信",
 		"order": 20,
 		"action": {
 			"type": "view",
@@ -38,8 +38,8 @@
 		}
 	},
 	"admin/modem5g/network": {
-		"title": "Dial-up and Network",
-		"order": 30,
+		"title": "拨号与网络",
+		"order": 115,
 		"action": {
 			"type": "view",
 			"path": "modem5g/network_v3"
@@ -51,8 +51,8 @@
 		}
 	},
 	"admin/modem5g/lock": {
-		"title": "Band and Cell Lock",
-		"order": 35,
+		"title": "网络锁定",
+		"order": 10,
 		"action": {
 			"type": "view",
 			"path": "modem5g/lock_v17"
@@ -64,7 +64,7 @@
 		}
 	},
 	"admin/modem5g/terminal": {
-		"title": "AT Debug",
+		"title": "AT 终端",
 		"order": 40,
 		"action": {
 			"type": "view",
@@ -77,16 +77,136 @@
 		}
 	},
 	"admin/dashboard": {
-		"title": "CPE 仪表盘",
+		"title": "状态看板",
 		"order": 5,
 		"action": {
 			"type": "view",
-			"path": "modem5g/overview_v7"
+			"path": "modem5g/dashboard_v1"
 		},
 		"depends": {
 			"acl": [
 				"luci-app-5gmodem"
 			]
+		}
+	},
+	"admin/modem5g/forward": {
+		"title": "短信转发",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "modem5g/panels_v1"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-5gmodem"
+			]
+		}
+	},
+	"admin/modem5g/traffic": {
+		"title": "流量池",
+		"order": 50,
+		"action": {
+			"type": "view",
+			"path": "modem5g/panels_v1"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-5gmodem"
+			]
+		}
+	},
+	"admin/modem5g/device": {
+		"title": "设备管理",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "modem5g/panels_v1"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-5gmodem"
+			]
+		}
+	},
+	"admin/modem5g/settings": {
+		"title": "适配设置",
+		"order": 70,
+		"action": {
+			"type": "view",
+			"path": "modem5g/panels_v1"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-5gmodem"
+			]
+		}
+	},
+	"admin/modem5g/cpu": {
+		"title": "CPU 设置",
+		"order": 80,
+		"action": {
+			"type": "view",
+			"path": "modem5g/panels_v1"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-5gmodem"
+			]
+		}
+	},
+	"admin/modem5g/ttl": {
+		"title": "TTL",
+		"order": 90,
+		"action": {
+			"type": "view",
+			"path": "modem5g/panels_v1"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-5gmodem"
+			]
+		}
+	},
+	"admin/modem5g/sim": {
+		"title": "SIM 卡管理",
+		"order": 100,
+		"action": {
+			"type": "view",
+			"path": "modem5g/panels_v1"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-5gmodem"
+			]
+		}
+	},
+	"admin/modem5g/apn": {
+		"title": "接入点 APN",
+		"order": 110,
+		"action": {
+			"type": "view",
+			"path": "modem5g/apn_v1"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-5gmodem"
+			]
+		}
+	},
+	"admin/modem5g/battery": {
+		"title": "电池与电量",
+		"order": 75,
+		"action": {
+			"type": "view",
+			"path": "modem5g/panels_v1"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-5gmodem"
+			],
+			"fs": {
+				"/tmp/lg6851f-battery-present": "file"
+			}
 		}
 	}
 }
