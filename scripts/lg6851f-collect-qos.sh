@@ -18,8 +18,15 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 exec 9>/var/lock/luci-modem5g-control.lock
-flock -n 9 || { echo '模组通道忙，请稍后重试'; exit 75; }
+attempt=0
+while ! flock -n 9; do
+	[ "$attempt" -ne 0 ] || echo '模组通道忙，正在等待空闲（最多45秒）……'
+	[ "$attempt" -lt 45 ] || { echo '等待45秒后模组通道仍忙，本次未查询；请关闭模组网页后重试'; exit 75; }
+	attempt=$((attempt + 1))
+	sleep 1
+done
 locked=1
+[ ! -e /tmp/lg6851f-modem-control.active ] || { echo '模组控制正在进行，本次未查询，请稍后重试'; exit 75; }
 
 cat > "$probe_dir/probe.uc" <<'UCODE'
 'use strict';
