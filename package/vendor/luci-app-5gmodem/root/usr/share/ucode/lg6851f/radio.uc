@@ -1,6 +1,6 @@
 'use strict';
 
-// Parse the verified read-only sample_nw 21, 25/5 and 33 session. No I/O.
+// Parse the verified read-only sample_nw 7, 21, 25/5 and 33 session. No I/O.
 function integer(value) {
 	return type(value) == 'string' && match(value, /^[0-9]+$/) ? +value : null;
 }
@@ -63,14 +63,21 @@ export function parse(output) {
 	let raw = type(output) == 'string' ? output : '';
 	let section = '', fields = {}, endc = {}, carriers = [], current = null;
 	let success = { band: false, ca: false, endc: false };
+	let registration = { ok: false, radio_tech: null, reg_state: null, tech_domain: null };
 	for (let line in split(raw, '\n')) {
 		line = trim(line);
 		let command = match(line, /^Cmd Index=([0-9-]+)$/);
 		if (command) {
-			section = command[1] == '21' ? 'band' : command[1] == '25' ? 'ca' : command[1] == '33' ? 'endc' : '';
+			section = command[1] == '7' ? 'registration' : command[1] == '21' ? 'band' : command[1] == '25' ? 'ca' : command[1] == '33' ? 'endc' : '';
 			continue;
 		}
-		if (section == 'band') {
+		if (section == 'registration') {
+			line = replace(line, /^[0-9]+:[A-Za-z_][A-Za-z0-9_]*\(\):\s*/, '');
+			if (match(line, /^ret=\s*00000000$/)) registration.ok = true;
+			let m = match(line, /^(radio_tech|reg_state|tech_domain)\s*=\s*(.*)$/);
+			if (m) registration[m[1]] = trim(m[2]);
+		}
+		else if (section == 'band') {
 			line = replace(line, /^[0-9]+:main\(\):\s*/, '');
 			if (line == 'get nw current band information:') success.band = true;
 			let m = match(line, /^((lte|nr|wcdma|net|ims)_[a-z_]+)\s*=\s*(.*)$/);
@@ -94,11 +101,17 @@ export function parse(output) {
 	let session = !!match(raw, /ql_nw_init,\s*ret\s*=\s*00000000/) && !!match(raw, /ql_nw_release success,\s*ret\s*=\s*00000000/);
 	let complete = session && success.band && success.ca && success.endc &&
 		fields.lte_band != null && fields.nr_band != null && endc.endc_available != null && endc.dcnr_restricted != null;
-	return { complete, sections: success, bands, carriers: rows,
+	let mode = null;
+	if (session && registration.ok && registration.tech_domain == '3GPP' &&
+	    index(['QL_NW_SERVICE_FULL', 'QL_NW_SERVICE_ROAMING'], registration.reg_state) >= 0) {
+		if (registration.radio_tech == 'QL_NW_RADIO_TECH_NR5G') mode = 'SA';
+		else if (registration.radio_tech == 'QL_NW_RADIO_TECH_NSA5G') mode = 'NSA';
+	}
+	return { complete, sections: success, bands, carriers: rows, data_registration: registration,
 		ambr: { network: { dl: ambr(fields.net_ambr_dl), ul: ambr(fields.net_ambr_ul) },
 			ims: { dl: ambr(fields.ims_ambr_dl), ul: ambr(fields.ims_ambr_ul) } },
 		endc: { available: flag(endc.endc_available), restricted: flag(endc.dcnr_restricted) },
-		qci: null, sa_nsa: null,
+		qci: null, sa_nsa: mode,
 		// These values are enum codes, not proven units or device capabilities.
 		nr_subcarrier_spacing_code: integer(fields.nr_subcarrier_spacing),
 		nr_point_a_arfcn: positive(fields.nr_point_a_arfcn)

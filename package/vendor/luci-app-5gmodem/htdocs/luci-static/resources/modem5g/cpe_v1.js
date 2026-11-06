@@ -9,7 +9,12 @@ const rates = rpc.declare({ object: 'luci.modem5g', method: 'get_rates', expect:
 const getApn = rpc.declare({ object: 'luci.modem5g', method: 'get_apn', expect: {} });
 const saveApn = rpc.declare({ object: 'luci.modem5g', method: 'set_apn', params: ['values', 'apply'], expect: {} });
 const getIdentity = rpc.declare({ object: 'luci.modem5g', method: 'get_sim_identity', params: ['reveal'], expect: {} });
-const setRadio = rpc.declare({ object: 'luci.modem5g', method: 'set_radio', params: ['enabled'], expect: {} });
+const callSetRadio = rpc.declare({ object: 'luci.modem5g', method: 'set_radio', params: ['enabled'], expect: {} });
+async function setRadio(enabled) {
+ const previous=L.env.rpctimeout;
+ try {L.env.rpctimeout=60;return await callSetRadio(enabled);}
+ finally {L.env.rpctimeout=previous;}
+}
 const connect = rpc.declare({ object: 'luci.modem5g', method: 'ifup', expect: {} });
 const disconnect = rpc.declare({ object: 'luci.modem5g', method: 'ifdown', expect: {} });
 const getCells = rpc.declare({ object: 'luci.modem5g', method: 'get_cells', expect: {} });

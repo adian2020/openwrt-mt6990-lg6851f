@@ -12,8 +12,8 @@
 		}
 	},
 	"admin/modem5g/overview": {
-		"title": "Status and Cells",
-		"order": 10,
+		"title": "状态与小区",
+		"order": 5,
 		"action": {
 			"type": "view",
 			"path": "modem5g/overview_v8"
@@ -42,7 +42,7 @@
 		"order": 115,
 		"action": {
 			"type": "view",
-			"path": "modem5g/network_v3"
+			"path": "modem5g/network_v4"
 		},
 		"depends": {
 			"acl": [
@@ -55,7 +55,7 @@
 		"order": 10,
 		"action": {
 			"type": "view",
-			"path": "modem5g/lock_v18"
+			"path": "modem5g/lock_v19"
 		},
 		"depends": {
 			"acl": [
@@ -90,7 +90,7 @@
 		}
 	},
 	"admin/modem5g/forward": {
-		"title": "短信转发",
+		"title": "短信转发（未启用）",
 		"order": 30,
 		"action": {
 			"type": "view",
@@ -103,7 +103,7 @@
 		}
 	},
 	"admin/modem5g/traffic": {
-		"title": "流量池",
+		"title": "流量统计",
 		"order": 50,
 		"action": {
 			"type": "view",
@@ -142,7 +142,7 @@
 		}
 	},
 	"admin/modem5g/cpu": {
-		"title": "CPU 设置",
+		"title": "CPU 状态",
 		"order": 80,
 		"action": {
 			"type": "view",

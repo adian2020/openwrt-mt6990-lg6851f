@@ -3,7 +3,7 @@
 'require poll';
 'require modem5g.cpe_v1 as C';
 
-const titles={cpu:'CPU 设置',device:'设备管理',sim:'SIM 卡管理',settings:'适配设置',ttl:'TTL',battery:'电池与电量',forward:'短信转发',traffic:'流量池'};
+const titles={cpu:'CPU 状态',device:'设备管理',sim:'SIM 卡管理',settings:'适配设置',ttl:'TTL',battery:'电池与电量',forward:'短信转发',traffic:'流量统计'};
 return view.extend({
  load(){return C.dashboard();},
  render(data){

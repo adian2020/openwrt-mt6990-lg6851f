@@ -29,7 +29,7 @@ fiberhome,lg6851f)
 	# not bind this interface to a numbered ccmni netdev here.
 	ucidef_set_interface "modem5g" device "ccmni" protocol "ql_datacall" \
 		apn "cmnet" iptype "3" roamingtype "3" mtu "1400" \
-		plmn "46002" auto_conf "1" auto "1"
+		plmn "46002" auto_conf "1" auto "1" radio_enabled "1"
 	;;
 esac
 

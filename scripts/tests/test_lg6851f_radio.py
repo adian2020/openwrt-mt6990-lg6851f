@@ -20,6 +20,9 @@ logger() { :; }
 scenario="$3"
 uci() { [ "$scenario" != disabled ] && echo 1 || echo 0; }
 lg6851f_radio_transaction() {
+    [ "$scenario" != busy ] || return 75
+    [ "$scenario" != unknown ] || { echo unknown; return 0; }
+    [ "$scenario" != failed-on ] || { echo MIPC_NW_RADIO_STATE_ON; return 5; }
     case "$1" in
     --nw_radio_state_get) printf 'Get SW radio state:MIPC_NW_RADIO_STATE_%s\\r\\n' "$(cat "$statefile")" ;;
     --nw_radio_state_set) echo set >> "$statefile.calls"; [ "$scenario" = failure ] || echo ON > "$statefile" ;;
@@ -46,6 +49,33 @@ exit 0
 
     def test_failure_is_bounded_and_reported(self):
         self.assertEqual(self.run_case('failure'), ['rc=1', '5'])
+
+    def test_busy_or_unknown_query_never_sends_radio_on(self):
+        for scenario in ['busy', 'unknown', 'failed-on']:
+            with self.subTest(scenario=scenario):
+                self.assertEqual(self.run_case(scenario), ['rc=1', '0'])
+
+    def test_policy_rechecked_inside_set_lock(self):
+        with tempfile.TemporaryDirectory() as d:
+            script = '''. "$1"
+LG6851F_RADIO_LOCK="$2/control.lock"
+echo 1 > "$TEST_POLICY"
+uci() { cat "$TEST_POLICY"; }
+sleep() { :; }; logger() { :; }
+lg6851f_radio_call() {
+    case "$1" in
+    --nw_radio_state_get) echo 0 > "$TEST_POLICY"; echo MIPC_NW_RADIO_STATE_OFF ;;
+    --nw_radio_state_set) echo bad > "$TEST_CALLED" ;;
+    esac
+}
+lg6851f_ensure_radio_on
+echo "rc=$?"
+'''
+            import os
+            result = subprocess.run(['sh', '-c', script, 'test', str(HELPER), d],
+                env=dict(os.environ, TEST_POLICY=d+'/policy', TEST_CALLED=d+'/called'), capture_output=True, text=True, check=True)
+            self.assertEqual(result.stdout.strip(), 'rc=2')
+            self.assertFalse(pathlib.Path(d, 'called').exists())
 
 if __name__ == '__main__':
     unittest.main()

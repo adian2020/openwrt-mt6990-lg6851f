@@ -18,13 +18,17 @@ set_network() {
 }
 set_network proto ql_datacall
 set_network device ccmni
-set_network apn cmnet
-set_network iptype 3
-set_network roamingtype 3
-set_network mtu 1400
-set_network plmn 46002
-set_network auto_conf 1
-set_network auto 1
+default_network() {
+	uci -q get "network.modem5g.$1" >/dev/null 2>&1 || set_network "$1" "$2"
+}
+default_network apn cmnet
+default_network iptype 3
+default_network roamingtype 3
+default_network mtu 1400
+default_network plmn 46002
+default_network auto_conf 1
+default_network auto 1
+default_network radio_enabled 1
 
 # Migrate images which previously replaced the physical WAN with the modem.
 if [ "$(uci -q get network.wan.proto)" = "ql_datacall" ] || \

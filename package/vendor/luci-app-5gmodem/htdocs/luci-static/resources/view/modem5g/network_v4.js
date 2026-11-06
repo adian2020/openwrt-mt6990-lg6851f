@@ -1,6 +1,7 @@
 'use strict'; // v3: card summary with bottom-collapsed engineering details
 'require view';
 'require rpc';
+'require poll';
 'require ui';
 'require modem5g.common_v5 as common';
 
@@ -49,9 +50,32 @@ function engineeringInfo(data) {
 
 return view.extend({
 	load() { return getNetwork(); },
-	result(r) { document.getElementById('m5-net-result').textContent = common.resultText(r); return getNetwork().then(n => { document.getElementById('m5-net-state').replaceChildren(networkState(n)); document.getElementById('m5-net-engineering').replaceChildren(engineeringInfo(n)); }); },
-	handleCall(fn, value) { return fn(value).then(L.bind(this.result, this)).catch(e => common.callError(_('5G Modem'), e)); },
-	render(data) { return E('div', { 'class': 'm5-page' }, [ common.style(), common.extraStyle(), E('style', {}, '.m5-net-hero{grid-template-columns:repeat(4,minmax(0,1fr))}.m5-net-hero .m5-metric:first-child{grid-row:auto;grid-column:auto}.m5-net-details{margin-top:1rem}.m5-net-details summary{cursor:pointer;color:#2587c8;font-weight:600}.m5-net-actions .btn{flex:1;min-width:10rem;padding:.7rem}.m5-net-mode{max-width:none;grid-template-columns:10rem minmax(16rem,1fr) auto}.m5-net-mode .btn{min-width:10rem;padding:.65rem 1rem}@media(max-width:800px){.m5-net-hero{grid-template-columns:repeat(2,minmax(0,1fr))}.m5-net-mode{grid-template-columns:1fr}.m5-net-actions .btn{min-width:calc(50% - .55rem)}}@media(max-width:480px){.m5-net-hero{grid-template-columns:1fr}.m5-net-actions .btn{min-width:100%}}'), E('h2', {}, _('Dial-up and Network')),
+	updateNetwork(data) {
+		const target=document.getElementById('m5-net-state');
+		if(!target)return;
+		const opened=target.querySelector('details')?.open, content=networkState(data);
+		if(content.querySelector('details'))content.querySelector('details').open=!!opened;
+		target.replaceChildren(content);
+	},
+	result(r) { document.getElementById('m5-net-result').textContent = common.resultText(r); return getNetwork().then(n=>this.updateNetwork(n)); },
+	async handleCall(fn, value) {
+		if (this.busy) return;
+		this.busy=true;
+		const previous=L.env.rpctimeout;
+		L.env.rpctimeout=60;
+		document.querySelectorAll('.m5-page button').forEach(button=>{button.disabled=true;});
+		try {
+			const result=await fn(value);
+			document.getElementById('m5-net-result').textContent=common.resultText(result);
+			if (result?.code) throw Error(result.error||common.resultText(result));
+			await this.result(result);
+		} catch(error) {common.callError(_('5G Modem'),error);}
+		finally {L.env.rpctimeout=previous;this.busy=false;document.querySelectorAll('.m5-page button').forEach(button=>{button.disabled=false;});}
+	},
+	render(data) {
+		this.busy=false;
+		poll.add(()=>this.busy?Promise.resolve():getNetwork().then(n=>this.updateNetwork(n)),5);
+		return E('div', { 'class': 'm5-page' }, [ common.style(), common.extraStyle(), E('style', {}, '.m5-net-hero{grid-template-columns:repeat(4,minmax(0,1fr))}.m5-net-hero .m5-metric:first-child{grid-row:auto;grid-column:auto}.m5-net-details{margin-top:1rem}.m5-net-details summary{cursor:pointer;color:#2587c8;font-weight:600}.m5-net-actions .btn{flex:1;min-width:10rem;padding:.7rem}.m5-net-mode{max-width:none;grid-template-columns:10rem minmax(16rem,1fr) auto}.m5-net-mode .btn{min-width:10rem;padding:.65rem 1rem}@media(max-width:800px){.m5-net-hero{grid-template-columns:repeat(2,minmax(0,1fr))}.m5-net-mode{grid-template-columns:1fr}.m5-net-actions .btn{min-width:calc(50% - .55rem)}}@media(max-width:480px){.m5-net-hero{grid-template-columns:1fr}.m5-net-actions .btn{min-width:100%}}'), E('h2', {}, _('Dial-up and Network')),
 		common.panel(_('Current modem5g interface'), E('div', { id: 'm5-net-state' }, networkState(data))),
 		common.panel(_('Connection control'), E('div', { 'class': 'm5-actions m5-net-actions' }, [
 			E('button', { 'class': 'btn cbi-button cbi-button-positive', click: ui.createHandlerFn(this, 'handleCall', ifup) }, _('Connect / ifup')),
@@ -61,6 +85,6 @@ return view.extend({
 		])),
 		common.panel(_('Preferred network mode'), E('div', { 'class': 'm5-form m5-net-mode' }, [ E('label', {}, _('RAT mode')), E('select', { id: 'm5-rat-mode' }, [ E('option', { value: 21 }, _('3G / 4G / 5G automatic')), E('option', { value: 19 }, _('4G / 5G automatic')), E('option', { value: 15 }, _('5G only')), E('option', { value: 3 }, _('4G only')) ]), E('button', { 'class': 'btn cbi-button cbi-button-apply', click: ui.createHandlerFn(this, function() { return this.handleCall(setRat, +document.getElementById('m5-rat-mode').value); }) }, _('Apply mode')) ])),
 		common.panel(_('Operation result'), E('pre', { id: 'm5-net-result', 'class': 'm5-raw' }, `${data.radio || ''}\n${data.rat || ''}`)),
-		E('p', { 'class': 'm5-note' }, _('APN, IP type, authentication, MTU and retry settings remain integrated with LuCI Network → modem5g, preventing two pages from writing conflicting configurations.'))
+		E('p', { 'class': 'm5-note' }, 'APN 可在“蜂窝 → 接入点 APN”修改，与网络接口共用配置。射频开关会读回确认并保存；首次启动默认自动开启射频和拨号。')
 	]); }, handleSaveApply: null, handleSave: null, handleReset: null
 });

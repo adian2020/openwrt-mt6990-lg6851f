@@ -16,15 +16,24 @@ const clearCell = rpc.declare({ object: 'luci.modem5g', method: 'clear_cell_lock
 
 const LTE = [ 1, 3, 5, 7, 8, 20, 28, 32, 38, 40, 41, 42, 43, 46 ];
 const NR = [ 1, 3, 5, 7, 8, 20, 28, 38, 40, 41, 75, 76, 77, 78 ];
+const LTE_FDD = [ 1, 3, 5, 7, 8, 20, 28, 32 ];
+const LTE_TDD = [ 38, 40, 41, 42, 43 ];
 
 function checks(id, prefix, values) {
-	return E('div', { id: id, 'class': 'm5-band-grid' }, values.map(v => {
-		const readOnly = prefix == 'n' && v == 76;
-		return E('label', { 'class': 'm5-band', title: readOnly ? '模组支持；厂商工具暂不接受手动设置 n76' : '' }, [
+	const check = v => {
+		const extra = prefix == 'B' && !LTE_FDD.includes(v) && !LTE_TDD.includes(v);
+		const readOnly = prefix == 'n' && v == 76 || extra;
+		return E('label', { 'class': 'm5-band', title: extra ? '模组额外上报，未列入本机标称频段，仅展示' : readOnly ? '模组支持；厂商工具暂不接受手动设置 n76' : '' }, [
 			E('input', { type: 'checkbox', value: v, disabled: readOnly }),
 			E('span', { style: readOnly ? 'opacity:.45;cursor:not-allowed' : '' }, `${prefix}${v}`)
 		]);
-	}));
+	};
+	const groups = prefix == 'B' ? [
+		['LTE FDD / 补充下行（B32）',values.filter(v=>LTE_FDD.includes(v))],
+		['LTE TDD',values.filter(v=>LTE_TDD.includes(v))],
+		['模组额外上报（只读）',values.filter(v=>!LTE_FDD.includes(v)&&!LTE_TDD.includes(v))]
+	] : [[null,values]];
+	return E('div', { id: id, 'class': 'm5-band-grid' }, groups.flatMap(([name,bands])=>!bands.length?[]:[...(name?[E('strong',{style:'grid-column:1/-1'},name)]:[]),...bands.map(check)]));
 }
 
 function selected(id) {
@@ -91,13 +100,15 @@ return view.extend({
 			if (target) target.replaceWith(checks(`m5-${rat}-bands`, prefix, supported[rat]));
 		}
 		const note = document.getElementById('m5-supported-summary');
-		if (note) note.textContent = `模组支持 LTE ${supported.lte.length} 个 / NR ${supported.nr.length} 个频段。` + (supported.nr.includes(76) ? 'n76 仅显示能力，厂商工具暂不接受手动设置；恢复默认会恢复全部支持频段。' : '');
+		if (note) note.textContent = `模组回读 LTE ${supported.lte.length} 个 / NR ${supported.nr.length} 个频段。` + (supported.lte.includes(46) ? 'B46 未列入本机标称频段，仅展示模组上报。' : '') + (supported.nr.includes(76) ? 'n76 暂不接受手动设置。' : '') + '恢复默认按模组完整能力回读校验。';
 		this.updateBandSelect();
 	},
 	updateBandSelect() {
 		const rat = document.getElementById('m5-lock-rat')?.value || 'nr';
-		const values = this.supported?.[rat] || (rat == 'lte' ? LTE : NR);
+		const values = (this.supported?.[rat] || (rat == 'lte' ? LTE : NR)).filter(v=>rat!='lte'||LTE_FDD.includes(v)||LTE_TDD.includes(v));
 		const select = document.getElementById('m5-lock-band');
+		const pci = document.getElementById('m5-lock-pci');
+		if (pci) pci.max = rat == 'nr' ? 1007 : 503;
 		if (select) select.replaceChildren(E('option', {value:''}, '请选择频段'), ...values.filter(v => rat != 'nr' || v != 76).map(v => E('option', {value:v}, (rat == 'lte' ? 'B' : 'n') + v)));
 	},
 	load() { return Promise.all([ getLocks(), getCells() ]); },
@@ -238,9 +249,9 @@ return view.extend({
 		let self = this;
 		let arfcn = +document.getElementById('m5-lock-arfcn').value;
 		let pci = document.getElementById('m5-lock-pci').value.trim();
-		if (!Number.isInteger(arfcn) || arfcn < 1 || arfcn > 3279165 || (pci && (!/^\d+$/.test(pci) || +pci > 2000)))
-			return ui.addNotification(null, E('p', {}, _('Enter a valid ARFCN and an optional PCI from 0 to 2000.')));
 		let rat = document.getElementById('m5-lock-rat').value, band = +document.getElementById('m5-lock-band').value;
+		if (!Number.isInteger(arfcn) || arfcn < 1 || arfcn > 3279165 || (pci && (!/^\d+$/.test(pci) || +pci > (rat == 'nr' ? 1007 : 503))))
+			return ui.addNotification(null, E('p', {}, '请输入有效频点；PCI 范围为 LTE 0–503、NR 0–1007，可留空。'));
 		if (!band) return ui.addNotification(null, E('p', {}, _('Select the radio type and band for this cell.')));
 		return ui.showModal(_('Confirm cell lock'), [
 			E('p', {}, _('A wrong cell lock can disconnect mobile data. Verify the ARFCN and PCI in the serving/neighbor list first.')),
@@ -277,7 +288,7 @@ return view.extend({
 				} }, [ E('option', { value: 'nr' }, '5G NR'), E('option', { value: 'lte' }, '4G LTE') ]),
 				E('label', { 'for': 'm5-lock-band' }, _('Band')), E('select', { id: 'm5-lock-band' }, [E('option', {value:''}, '请选择频段'), ...NR.filter(v => v != 76).map(v => E('option', { value: v }, 'n' + v))]),
 				E('label', { 'for': 'm5-lock-arfcn' }, _('Channel number (ARFCN)')), E('input', { id: 'm5-lock-arfcn', type: 'number', min: 1, max: 3279165, placeholder: _('Select a cell below or enter its ARFCN') }),
-				E('label', { 'for': 'm5-lock-pci' }, _('Physical cell ID (PCI, optional)')), E('input', { id: 'm5-lock-pci', type: 'number', min: 0, max: 2000, placeholder: _('Select a cell below or enter its PCI') }),
+				E('label', { 'for': 'm5-lock-pci' }, _('Physical cell ID (PCI, optional)')), E('input', { id: 'm5-lock-pci', type: 'number', min: 0, max: 1007, placeholder: _('Select a cell below or enter its PCI') }),
 				E('span'), E('div', { 'class': 'm5-lock-footer' }, [
 					E('button', { 'class': 'btn cbi-button cbi-button-apply m5-lock-action', click: ui.createHandlerFn(this, 'applyCell') }, _('Apply cell lock')),
 					E('button', { 'class': 'btn cbi-button cbi-button-negative m5-lock-action', click: ui.createHandlerFn(this, function() { return this.runAction(clearCell, [], () => { document.getElementById('m5-lock-arfcn').value = ''; document.getElementById('m5-lock-pci').value = ''; document.getElementById('m5-lock-result').textContent = _('Cell lock cleared and state refreshed'); }, state => state.mode == 'none', getLockRequest); }) }, _('Clear cell lock'))

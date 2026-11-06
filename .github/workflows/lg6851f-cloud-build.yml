@@ -60,10 +60,16 @@ jobs:
           ./scripts/mt6990-prepare-proxy.sh
           ./scripts/feeds install -a
 
-      - name: Check upgrade overlay migration
+      - name: 检查升级迁移、开机射频与蜂窝分组
         run: |
           python3 scripts/tests/test_lg6851f_upgrade_state.py
           python3 scripts/tests/test_lg6851f_radio.py
+          python3 scripts/tests/test_lg6851f_radio_control.py
+          python3 scripts/tests/test_lg6851f_radio_setup.py
+          python3 scripts/tests/test_lg6851f_network_defaults.py
+          python3 scripts/tests/test_lg6851f_radio_details.py
+          python3 scripts/tests/test_lg6851f_band_verify.py
+          python3 scripts/lg6851f-check-cpe-package.py
 
       - name: Generate and verify configuration
         run: |
@@ -77,7 +83,7 @@ jobs:
             echo "[ERROR] Kconfig generation failed"
             exit 1
           fi
-          for p in luci-app-filemanager luci-i18n-filemanager-zh-cn luci-app-uugamebooster luci-i18n-uugamebooster-zh-cn luci-app-5gmodem luci-i18n-5gmodem-zh-cn lg6851f-modem-chain-only audio-support openssh-sftp-server luci-app-openclash mihomo-openclash-core luci-theme-aurora luci-app-aurora-config luci-i18n-aurora-config-zh-cn; do
+          for p in luci-app-filemanager luci-i18n-filemanager-zh-cn luci-app-uugamebooster luci-i18n-uugamebooster-zh-cn luci-app-5gmodem luci-i18n-5gmodem-zh-cn lg6851f-modem-chain-only audio-support openssh-sftp-server luci-app-openclash mihomo-openclash-core luci-theme-aurora luci-app-aurora-config luci-i18n-aurora-config-zh-cn rpcd-mod-ucode rpcd-mod-iwinfo ucode-mod-fs ucode-mod-uci; do
             grep -qx "CONFIG_PACKAGE_${p}=y" .config || {
               echo "[ERROR] $p is not enabled after defconfig"
               exit 1

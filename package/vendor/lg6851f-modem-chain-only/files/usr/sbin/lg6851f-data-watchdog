@@ -144,6 +144,7 @@ main() {
 		# A user-triggered band/cell transaction deliberately tears down and
 		# recreates the PDN. Never race it with automatic recovery escalation.
 		[ ! -e "$CONTROL_ACTIVE" ] || { failures=0; stage=0; continue; }
+		[ "$(uci -q get network.modem5g.radio_enabled)" != 0 ] || { failures=0; stage=0; continue; }
 		state="$(interface_state)"
 		up="$(link_value "$state" '@.up')"
 		uptime="$(link_value "$state" '@.uptime')"
@@ -168,6 +169,11 @@ main() {
 
 		if ! recovery_lock; then
 			log "another modem recovery is active; postpone this round"
+			continue
+		fi
+		if [ "$(uci -q get network.modem5g.radio_enabled)" = 0 ]; then
+			recovery_unlock
+			stage=0
 			continue
 		fi
 		case "$stage" in

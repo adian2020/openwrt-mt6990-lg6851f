@@ -258,6 +258,20 @@ scc_dl_bandwidth = 11
         self.assertIsNone(data['ambr']['network']['ul']['bps'])
         self.assertIsNone(self.parse_radio('')['endc']['available'])
 
+    def test_mode_requires_successful_current_data_registration(self):
+        registration='''Cmd Index=7
+3444:main():ret= 00000000
+502:print_nw_reg_status():tech_domain = 3GPP
+503:print_nw_reg_status():radio_tech = QL_NW_RADIO_TECH_NR5G
+505:print_nw_reg_status():reg_state = QL_NW_SERVICE_FULL
+'''
+        report=self.radio_report().replace('Cmd Index=21',registration+'Cmd Index=21')
+        self.assertEqual(self.parse_radio(report)['sa_nsa'],'SA')
+        self.assertEqual(self.parse_radio(report.replace('TECH_NR5G','TECH_NSA5G'))['sa_nsa'],'NSA')
+        self.assertIsNone(self.parse_radio(report.replace('ret= 00000000','ret= 80000001'))['sa_nsa'])
+        self.assertIsNone(self.parse_radio(report.replace('SERVICE_FULL','SERVICE_SEARCHING'))['sa_nsa'])
+        self.assertIsNone(self.parse_radio(report.replace('TECH_NR5G','TECH_LTE'))['sa_nsa'])
+
     def test_explicit_radio_query_caches_complete_data_only(self):
         replies = {'network.interface.modem5g': '{"up":true,"uptime":120}',
                    'lg6851f-modem-details': self.radio_report()}
@@ -306,12 +320,34 @@ scc_dl_bandwidth = 11
         self.assertGreater(data['updated'], 0)
 
     def test_new_writable_bands_and_read_only_n76(self):
-        result = self.rpc('set_band_lock', dict(lte=[46], nr=[75]))
+        result = self.rpc('set_band_lock', dict(lte=[1], nr=[75]))
         self.assertEqual(result['result']['code'], 0)
-        self.assertIn("'apply-bands' '46' '75'", result['commands'][0])
-        result = self.rpc('set_band_lock', dict(lte=[46], nr=[76]))
+        self.assertIn("'apply-bands' '1' '75'", result['commands'][0])
+        result = self.rpc('set_band_lock', dict(lte=[1], nr=[76]))
         self.assertEqual(result['result']['code'], 95)
         self.assertEqual(result['commands'], [])
+        result = self.rpc('set_band_lock', dict(lte=[46], nr=[75]))
+        self.assertEqual(result['result']['code'], 95)
+        self.assertEqual(result['commands'], [])
+
+    def test_radio_rpc_always_uses_shared_verified_control(self):
+        for enabled in [True, False]:
+            result = self.rpc('set_radio', dict(enabled=enabled))
+            self.assertEqual(result['result']['code'], 0)
+            self.assertEqual(len(result['commands']), 1)
+            self.assertIn("'/usr/bin/lg6851f-radio-control' '"+str(int(enabled))+"'",result['commands'][0])
+            self.assertNotIn('nw_radio_state_set',result['commands'][0])
+
+    def test_cell_lock_rejects_wrong_pci_and_non_device_bands(self):
+        for rat,band,pci in [('nr',78,'1008'),('lte',1,'504'),('nr',79,'1'),('lte',46,'1'),('nr',76,'1')]:
+            with self.subTest(rat=rat,band=band,pci=pci):
+                result=self.rpc('set_cell_lock',dict(rat=rat,band=band,pci=pci,arfcn=640000))
+                self.assertNotEqual(result['result']['code'],0)
+                self.assertEqual(result['commands'],[])
+        for rat,band,arfcn in [('nr',78,640000),('lte',1,100)]:
+            result=self.rpc('set_cell_lock',dict(rat=rat,band=band,pci='0',arfcn=arfcn))
+            self.assertEqual(result['result']['code'],0)
+            self.assertIn("'set-cell'",result['commands'][0])
 
     def test_partial_band_read_does_not_replace_cache(self):
         result = self.rpc('get_locks', TEST_RESPONSES={

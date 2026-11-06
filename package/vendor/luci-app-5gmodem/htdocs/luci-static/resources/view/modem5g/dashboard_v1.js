@@ -61,7 +61,7 @@ return view.extend({
    C.metric('可写存储使用率',C.value(storage.percent,'%')),C.metric('设备运行时间',C.elapsed(data.uptime))]),
    C.rows([['设备型号',data.model],['CPU频率',data.frequencies?.length?data.frequencies.map(p=>`${p.policy}: ${C.value(p.current_mhz)} / ${C.value(p.maximum_mhz)} MHz`).join(' · '):'当前内核未提供 cpufreq 数值'],['系统版本',data.release],['固件源码',data.firmware_id],['LAN 地址',address(lan['ipv4-address'])],['Linux 连接跟踪',C.value(data.conntrack?.count)+' / '+C.value(data.conntrack?.maximum)]]) ]));
   const network=C.card('链路与流量',C.rows([
-   ['APN',data.apn?.apn],['IPv4',address(n['ipv4-address'])],['全球 IPv6',data.ipv6_global?.join(' · ')||'未取得全球 IPv6 地址'],['DNS',(n['dns-server']||[]).join(' · ')],['连接时长',C.elapsed(n.uptime)],['PLMN',m.plmn],['SIM 状态',m.sim],['注册状态',m.registered?'已注册':'未确认注册'],['当前 SA / NSA','未获取'],['QCI','未获取'],['PPE0 / PPE1','未获取']
+   ['APN',data.apn?.apn],['IPv4',address(n['ipv4-address'])],['全球 IPv6',data.ipv6_global?.join(' · ')||'未取得全球 IPv6 地址'],['DNS',(n['dns-server']||[]).join(' · ')],['连接时长',C.elapsed(n.uptime)],['PLMN',m.plmn],['SIM 状态',m.sim],['注册状态',m.registered?'已注册':'未确认注册'],['当前 SA / NSA',!radio?.stale?details?.sa_nsa:null],['QCI','未获取'],['PPE0 / PPE1','未获取']
   ]));
   const radioCard=C.card('载波与网络参数',E('div',{},[
    E('button',{'class':'btn',disabled:this.readingRadio,click:()=>this.readRadioDetails()},this.readingRadio?'读取中…':'读取高级参数'),
@@ -73,7 +73,8 @@ return view.extend({
    C.rows([
     ['网络 AMBR 下 / 上',C.mbps(details?.ambr?.network?.dl?.bps)+' / '+C.mbps(details?.ambr?.network?.ul?.bps)],
     ['IMS AMBR 下 / 上',C.mbps(details?.ambr?.ims?.dl?.bps)+' / '+C.mbps(details?.ambr?.ims?.ul?.bps)],
-    ['EN-DC 可用 / DCNR 限制标志',C.value(details?.endc?.available)+' / '+C.value(details?.endc?.restricted)]
+    ['EN-DC 可用 / DCNR 限制标志',C.value(details?.endc?.available)+' / '+C.value(details?.endc?.restricted)],
+    ['厂商数据注册制式',details?.data_registration?.ok?details.data_registration.radio_tech:null]
    ]),
    C.unavailable('AMBR 是网络返回的速率参数，不是实测下载/上传速度；EN-DC 标志是状态，不是开启开关。'),
    E('details',{},[E('summary',{},'载波原始编码'),C.table(['载波','调制 下 / 上','MIMO 下 / 上','BWP 带宽编码 下 / 上'],carriers.map(row=>[

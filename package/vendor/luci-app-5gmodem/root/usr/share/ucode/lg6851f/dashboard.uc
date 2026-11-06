@@ -106,7 +106,7 @@ export function snapshot() {
 			updated: num(identity.UPDATED), imei: mask(identity.IMEI), imsi: mask(identity.IMSI), iccid: mask(identity.ICCID) },
 		advanced: { ca: details?.carriers || null,
 			mcs: details ? map(details.carriers || [], row => ({ type: row.type, dl: row.dl_mcs, ul: row.ul_mcs })) : null,
-			qci: null, ambr: details?.ambr || null, endc: details?.endc || null, sa_nsa: null, ppe: null },
+			qci: null, ambr: details?.ambr || null, endc: details?.endc || null, sa_nsa: details?.sa_nsa || null, ppe: null },
 		radio_details,
 		cells: reading('cells'), bands: reading('bands'),
 		capabilities: { apn: true, band_lock: true, cell_lock: true, sms: true, at: true,

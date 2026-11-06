@@ -12,10 +12,11 @@ exec 9>/var/lock/luci-modem5g-control.lock
 /usr/bin/flock -n 9 || { echo 'Modem command channel is busy; retry shortly'; exit 75; }
 trap '/bin/sleep 6; /usr/bin/flock -u 9' EXIT
 
-# 0 init; 21 band/AMBR; 25/5 all CA fields; 33 EN-DC; 1 release; -1 exit.
+# 0 init; 7 data registration; 21 band/AMBR; 25/5 CA; 33 EN-DC; 1 release.
 # Preserve the vendor session exit status while holding the close cooldown.
 /usr/bin/timeout 45 /usr/bin/sample_nw <<'EOF'
 0
+7
 21
 25
 5

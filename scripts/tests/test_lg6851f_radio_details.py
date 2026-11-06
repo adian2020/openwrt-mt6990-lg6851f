@@ -37,7 +37,7 @@ class ReadOnlyDetailsTest(unittest.TestCase):
     def test_only_verified_getters_and_lock_held_through_cooldown(self):
         result = self.run_helper()
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual((self.root / 'input').read_text().splitlines(), ['0', '21', '25', '5', '33', '1', '-1'])
+        self.assertEqual((self.root / 'input').read_text().splitlines(), ['0', '7', '21', '25', '5', '33', '1', '-1'])
         self.assertEqual((self.root / 'cooldown-state').read_text().strip(), 'held')
         self.assertEqual(subprocess.run(['/usr/bin/flock', '-n', str(self.root / 'lock'), '-c', 'true']).returncode, 0)
 

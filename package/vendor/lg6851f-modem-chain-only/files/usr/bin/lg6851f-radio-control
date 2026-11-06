@@ -1,0 +1,47 @@
+#!/bin/sh
+# User radio actions and startup share one control lock and one call/cooldown.
+set -u
+case "${1:-}" in 0|1) enabled="$1" ;; *) echo '无效的射频状态'; exit 22 ;; esac
+case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in
+fiberhome,lg6851f|fiberhome_lg6851f) ;; *) echo '不支持此设备'; exit 95 ;; esac
+. /lib/functions/lg6851f-radio.sh
+
+recovery=/var/lock/lg6851f-modem-recovery.lock
+mkdir "$recovery" 2>/dev/null || { echo '模组控制或自动恢复正在进行，请稍后重试'; exit 75; }
+cleanup() { flock -u 9 2>/dev/null; rmdir "$recovery" 2>/dev/null; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+exec 9>/var/lock/luci-modem5g-control.lock
+flock -n 9 || { echo '模组控制通道忙，请稍后重试'; exit 75; }
+
+# Do not commit unrelated changes made in LuCI Network/APN forms.
+pending="$(uci -q changes network)" || { echo '无法检查网络配置状态'; exit 5; }
+[ -z "$pending" ] || { echo '网络存在未提交修改，请先保存或撤销'; exit 16; }
+
+output="$(lg6851f_radio_call --nw_radio_state_set "$enabled")"; rc=$?
+printf '%s\n' "$output"
+[ "$rc" -eq 0 ] || exit "$rc"
+state="$(lg6851f_radio_call --nw_radio_state_get)"; rc=$?
+printf '%s\n' "$state"
+[ "$rc" -eq 0 ] || exit "$rc"
+case "$enabled:$state" in
+1:*MIPC_NW_RADIO_STATE_ON*|0:*MIPC_NW_RADIO_STATE_OFF*) ;;
+*) echo '射频状态读回与请求不一致，未保存设置'; exit 5 ;;
+esac
+pending="$(uci -q changes network)" || { echo '射频已读回，但无法检查配置状态'; exit 5; }
+[ -z "$pending" ] || { echo '射频已读回，但网络出现未提交修改，未保存开关'; exit 16; }
+uci -q set "network.modem5g.radio_enabled=$enabled" && uci -q commit network || {
+	echo '射频已读回，但状态保存失败，请检查配置'; exit 5;
+}
+# Persist under the lock before letting startup inspect the user policy.
+flock -u 9
+exec 9>&-
+trap 'rmdir "$recovery" 2>/dev/null' EXIT
+if [ "$enabled" = 1 ]; then
+	timeout 10 /sbin/ifup modem5g || exit "$?"
+	echo '射频已确认开启并保存，已请求拨号'
+else
+	timeout 10 /sbin/ifdown modem5g || exit "$?"
+	echo '射频已确认关闭并保存，已停止拨号'
+fi

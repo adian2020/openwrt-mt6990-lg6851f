@@ -36,6 +36,16 @@ make -C "$repo_dir" "$@"
 # silently fall back to a volatile /tmp overlay on first boot.
 if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_dir/.config"; then
 	rootfs_dir="$repo_dir/build_dir/target-aarch64_cortex-a55+neon-vfpv4_musl/root-mediatek"
+	python3 "$repo_dir/scripts/lg6851f-check-cpe-package.py" --rootfs "$rootfs_dir"
+	# Use this build's host interpreter; target aarch64 modules cannot run here.
+	UCODE="$repo_dir/staging_dir/hostpkg/bin/ucode"
+	UCODE_LIBRARY="$repo_dir/staging_dir/hostpkg/lib/ucode"
+	[ -x "$UCODE" ] && [ -s "$UCODE_LIBRARY/fs.so" ] || {
+		printf 'ERROR: native ucode/fs test runtime is missing.\n' >&2
+		exit 1
+	}
+	export UCODE UCODE_LIBRARY
+	python3 "$repo_dir/scripts/tests/test_lg6851f_dashboard.py"
 	[ -x "$rootfs_dir/usr/sbin/mkfs.f2fs" ] || {
 		printf 'ERROR: LG6851F image is missing /usr/sbin/mkfs.f2fs; refusing to sign.\n' >&2
 		exit 1

@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=lg6851f-modem-chain-only
 PKG_VERSION:=0.6
-PKG_RELEASE:=6
+PKG_RELEASE:=7
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -31,7 +31,7 @@ endef
 define Package/lg6851f-modem-chain-only/install
 	$(CP) ./files/* $(1)/
 	# The official sample_nw binary is only reachable through the validated,
-	# user-triggered modem-lock wrapper.  Keep the old polling wrapper absent.
+	# user-triggered modem-lock/details wrappers. Keep the old polling wrapper absent.
 	rm -f $(1)/usr/bin/lg6851f-modem-band
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/modem5g-at $(1)/usr/bin/modem5g-at
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/modem5g-sms-send $(1)/usr/bin/modem5g-sms-send
