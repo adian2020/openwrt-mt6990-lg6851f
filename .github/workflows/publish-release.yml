@@ -162,7 +162,7 @@ jobs:
         with:
           target_commitish: ${{ steps.source.outputs.sha }}
           tag_name: ${{ steps.version.outputs.tag_name }}
-          name: LG6851F-Pro ${{ steps.version.outputs.version }} (Build ${{ env.SOURCE_RUN_ID }})
+          name: LG6851F-Pro ${{ steps.version.outputs.version }}（构建 ${{ env.SOURCE_RUN_ID }}）
           files: |
             A槽单刷文件和网页升级包.zip
             B槽单刷文件和网页升级包.zip

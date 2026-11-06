@@ -114,7 +114,7 @@ jobs:
           git -C "$publish" config user.name github-actions[bot]
           git -C "$publish" config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git -C "$publish" add "$BUILD_SOURCE_SHA"
-          git -C "$publish" commit -m "Nikki APKs for $BUILD_SOURCE_SHA"
+          git -C "$publish" commit -m "发布与源码 $BUILD_SOURCE_SHA 匹配的 Nikki 软件包"
           git -C "$publish" push origin HEAD:nikki-apk
 
       - name: Show output files
