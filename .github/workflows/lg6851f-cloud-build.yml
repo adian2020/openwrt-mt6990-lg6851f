@@ -73,6 +73,16 @@ jobs:
             "$RUNNER_TEMP/uuplugin-src/luci-app-uugamebooster/." \
             package/vendor/luci-app-uugamebooster/
 
+          echo "===== Fix OpenWrt runtime dependency ====="
+
+          sed -i 's/+libstdcpp6/+libstdcpp/g' \
+            package/vendor/luci-app-uugamebooster/Makefile
+
+          echo "===== Verify UU dependencies ====="
+
+          grep '^LUCI_DEPENDS' \
+            package/vendor/luci-app-uugamebooster/Makefile
+
           echo "===== Build architecture filters ====="
 
           sh "$RUNNER_TEMP/uuplugin-src/tools/build-preload.sh" \
@@ -115,19 +125,29 @@ jobs:
       - name: Verify UU Game Booster package discovery
         run: |
           set -e
+          set -o pipefail
 
           echo "===== Check UU package Makefile ====="
+
           test -f package/vendor/luci-app-uugamebooster/Makefile
 
-          echo "===== Generate OpenWrt package metadata ====="
-          make packageinfo
+          echo "===== Verify UU dependency ====="
+
+          grep '^LUCI_DEPENDS' \
+            package/vendor/luci-app-uugamebooster/Makefile
+
+          echo "===== Generate OpenWrt package metadata with verbose output ====="
+
+          make -j1 V=s packageinfo 2>&1 | tee "$RUNNER_TEMP/packageinfo.log"
 
           echo "===== Verify UU package discovery ====="
+
           grep -n -A 12 -B 2 \
             '^Package: luci-app-uugamebooster$' \
             tmp/.packageinfo
 
           echo "===== Verify UU package configuration ====="
+
           grep -n '^CONFIG_PACKAGE_luci-app-uugamebooster=y$' .config
 
           echo "UU Game Booster package discovery PASSED."
