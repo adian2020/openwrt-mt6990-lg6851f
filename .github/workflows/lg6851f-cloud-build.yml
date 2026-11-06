@@ -50,6 +50,9 @@ jobs:
 
       - name: Update feeds
         run: |
+          # feeds update refreshes .config before feed packages are installed.
+          # Preserve the checked-in selections until all recipes are available.
+          cp .config "$RUNNER_TEMP/lg6851f.config"
           ./scripts/feeds update -a
 
       - name: Select Nikki with Mihomo Alpha
@@ -60,12 +63,13 @@ jobs:
       - name: Generate and verify configuration
         run: |
           set -euo pipefail
+          cp "$RUNNER_TEMP/lg6851f.config" .config
           make defconfig 2>&1 | tee defconfig.log
           if grep -Eq 'recursive dependency detected|error:' defconfig.log; then
             echo "[ERROR] Kconfig generation failed"
             exit 1
           fi
-          for p in nikki luci-app-nikki mihomo-alpha luci-theme-vantage luci-app-vantage; do
+          for p in nikki luci-app-nikki mihomo-alpha luci-theme-vantage luci-app-vantage luci-i18n-nikki-zh-cn luci-i18n-vantage-zh-cn luci-i18n-vantage-theme-zh-cn; do
             grep -qx "CONFIG_PACKAGE_${p}=y" .config || {
               echo "[ERROR] $p is not enabled after defconfig"
               exit 1
