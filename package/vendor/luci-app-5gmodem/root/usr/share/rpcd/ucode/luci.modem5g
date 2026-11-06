@@ -5,11 +5,13 @@
 import { popen, readfile, glob, open, rename, mkdtemp, rmdir, unlink } from 'fs';
 import { cursor } from 'uci';
 import * as dashboard from 'lg6851f.dashboard';
+import * as radio from 'lg6851f.radio';
 
 const CLI = '/usr/bin/mipc_wan_cli';
 const ATCLI = '/usr/bin/modem5g-at';
 const SMSCLI = '/usr/bin/modem5g-sms-send';
 const LOCKCLI = '/usr/bin/lg6851f-modem-lock';
+const DETAILSCLI = '/usr/bin/lg6851f-modem-details';
 const STATE = '/tmp/lg6851f-modem-status.state';
 const LOCKSTATE = '/etc/modem5g-lock.state';
 
@@ -262,6 +264,15 @@ function save_apn(req) {
 }
 
 const methods = {
+	get_radio_details: { call: function() {
+		if (!board_ok()) return { code: 95, error: '当前设备不支持此查询' };
+		if (!modem_settled(network_state())) return { code: 11, error: '请等待蜂窝网络完成启动后再读取' };
+		let result = capture([ DETAILSCLI ], 55);
+		if (result.code != 0) return result;
+		result.parsed = radio.parse(result.output);
+		if (!result.parsed.complete) return { code: 5, error: '高级参数读取不完整，请稍后重试', output: result.output };
+		return save_reading('radio-details', result);
+	} },
 	get_dashboard: { call: function() { return dashboard_state(); } },
 	get_rates: { call: function() { return dashboard.rate_sample(network_state()?.l3_device); } },
 	get_apn: { call: function() { return apn_values(); } },

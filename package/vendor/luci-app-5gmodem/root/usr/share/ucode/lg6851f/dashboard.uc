@@ -17,7 +17,7 @@ export function cached() {
 	return row;
 }
 export function reading(name) {
-	if (index(['cells', 'bands'], name) < 0) return null;
+	if (index(['cells', 'bands', 'radio-details'], name) < 0) return null;
 	let data;
 	try { data = json(text('/tmp/lg6851f-modem-' + name + '.json')); } catch (e) { return null; }
 	let boot = text('/proc/sys/kernel/random/boot_id');
@@ -86,6 +86,7 @@ export function snapshot() {
 	for (let dir in paths('/sys/class/power_supply/*'))
 		push(power_supplies, { name: basename(dir), type: text(dir + '/type'), status: text(dir + '/status'), capacity: number(dir + '/capacity') });
 	let identity = cached();
+	let radio_details = reading('radio-details'), details = radio_details?.parsed;
 	let operators = { '46000': '中国移动', '46002': '中国移动', '46007': '中国移动',
 		'46001': '中国联通', '46006': '中国联通', '46009': '中国联通',
 		'46003': '中国电信', '46005': '中国电信', '46011': '中国电信' };
@@ -103,7 +104,10 @@ export function snapshot() {
 			plmn: identity.OPERATOR || null, sim: identity.SIM || null, registered: identity.REGISTERED == 'YES',
 			radio: identity.RADIO || null, rsrp: num(identity.RSRP), rsrq: num(identity.RSRQ), sinr: num(identity.SINR),
 			updated: num(identity.UPDATED), imei: mask(identity.IMEI), imsi: mask(identity.IMSI), iccid: mask(identity.ICCID) },
-		advanced: { ca: null, mcs: null, qci: null, ambr: null, endc: null, sa_nsa: null, ppe: null },
+		advanced: { ca: details?.carriers || null,
+			mcs: details ? map(details.carriers || [], row => ({ type: row.type, dl: row.dl_mcs, ul: row.ul_mcs })) : null,
+			qci: null, ambr: details?.ambr || null, endc: details?.endc || null, sa_nsa: null, ppe: null },
+		radio_details,
 		cells: reading('cells'), bands: reading('bands'),
 		capabilities: { apn: true, band_lock: true, cell_lock: true, sms: true, at: true,
 			cpu_frequency_read: length(frequencies) > 0, cpu_voltage_write: false, sim_switch: false,

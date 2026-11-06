@@ -115,10 +115,14 @@ class DashboardTest(unittest.TestCase):
             export function rename(oldpath, newpath) {TEST_CACHE[newpath]=TEST_CACHE[oldpath];delete TEST_CACHE[oldpath];return true;}
             export function popen(command, mode) {
                 push(TEST_COMMANDS, command);
-                let output = '{}';
+                let output = '{}', code = 0;
                 for (let needle, response in TEST_RESPONSES)
-                    if (index(command, needle) >= 0) {output=response;break;}
-                return { read: function() { return output; }, close: function() { return 0; } };
+                    if (index(command, needle) >= 0) {
+                        output=type(response)=='object' ? response.output : response;
+                        code=type(response)=='object' ? response.code : 0;
+                        break;
+                    }
+                return { read: function() { return output; }, close: function() { return code; } };
             }
         """)
         self.write('/testuci.uc', """
@@ -166,6 +170,127 @@ class DashboardTest(unittest.TestCase):
             self.assertNotIn('mipc', command)
             self.assertNotIn('modem5g-at', command)
             self.assertNotIn('lg6851f-modem-lock', command)
+            self.assertNotIn('lg6851f-modem-details', command)
+
+    @staticmethod
+    def radio_report():
+        return '''ql_nw_init, ret = 00000000
+Cmd Index=21
+100:main():get nw current band information:
+101:main():lte_band = 0
+102:main():nr_band = 78
+103:main():nr_dl_bandwidth = 100M
+104:main():nr_ul_bandwidth = 100M
+105:main():nr_dl_arfcn = 640000
+106:main():nr_ul_arfcn = 639388
+107:main():nr_cqi = 11
+108:main():net_ambr_dl = 256000 Kbps
+109:main():net_ambr_ul = 12800 Kbps
+110:main():ims_ambr_dl = 512000 Kbps
+111:main():ims_ambr_ul = 512000 Kbps
+Cmd Index=25
+get all info success!
+pcc_type = NR PCC
+pcc_band = 78
+pcc_pci = 321
+pcc_arfcn = 640000
+pcc_dl_bandwidth = 11
+pcc_ul_bandwidth = 11
+pcc_dl_mcs = 0
+pcc_ul_mcs = 28
+pcc_dl_modulation = 1
+pcc_ul_modulation = 1
+pcc_dl_mimo = 2
+pcc_ul_mimo = 2
+Cmd Index=33
+get endc status success...
+endc_available = 0
+dcnr_restricted = 0
+Cmd Index=1
+ql_nw_release success, ret = 00000000
+'''
+
+    def parse_radio(self, report):
+        return self.run_ucode("import * as r from 'lg6851f.radio'; printf('%J',r.parse(REPORT));", REPORT=report)
+
+    def test_radio_units_zero_mcs_and_distinct_ims_ambr(self):
+        data = self.parse_radio(self.radio_report())
+        self.assertTrue(data['complete'])
+        self.assertEqual(len(data['carriers']), 1)
+        row = data['carriers'][0]
+        self.assertEqual((row['dl_bandwidth_mhz'], row['ul_bandwidth_mhz']), (100, 100))
+        self.assertEqual((row['dl_mcs'], row['ul_mcs']), (0, 28))
+        self.assertEqual(data['ambr']['network']['ul']['bps'], 12800000)
+        self.assertEqual(data['ambr']['ims']['ul']['bps'], 512000000)
+        self.assertEqual(row['dl_modulation_code'], 1)
+        self.assertEqual(row['cqi'], 11)
+        self.assertIsNone(data['qci'])
+        self.assertIsNone(data['sa_nsa'])
+        self.assertEqual(data['endc'], {'available': 0, 'restricted': 0})
+
+    def test_repeated_scc_rows_never_inherit_primary_fields(self):
+        extra = '''scc_type = NR SCC
+scc_band = 41
+scc_pci = 111
+scc_arfcn = 520000
+scc_dl_bandwidth = 11
+scc_dl_mcs = 9
+scc_type = NR SCC
+scc_band = 78
+scc_pci = 222
+scc_arfcn = 640000
+scc_dl_bandwidth = 11
+'''
+        data = self.parse_radio(self.radio_report().replace('Cmd Index=33', extra+'Cmd Index=33'))
+        self.assertEqual(len(data['carriers']), 3)
+        for row in data['carriers'][1:]:
+            self.assertIsNone(row['ul_mcs'])
+            self.assertIsNone(row['dl_bandwidth_mhz'])
+            self.assertIsNone(row['cqi'])
+        self.assertEqual(data['carriers'][1]['dl_mcs'], 9)
+        self.assertIsNone(data['carriers'][2]['dl_mcs'])
+
+    def test_radio_missing_units_and_enum_codes_are_not_mhz(self):
+        report = self.radio_report().replace('100M', '11').replace('12800 Kbps', '12800 unknown')
+        data = self.parse_radio(report)
+        self.assertIsNone(data['carriers'][0]['dl_bandwidth_mhz'])
+        self.assertEqual(data['carriers'][0]['dl_bandwidth_code'], 11)
+        self.assertIsNone(data['ambr']['network']['ul']['bps'])
+        self.assertIsNone(self.parse_radio('')['endc']['available'])
+
+    def test_explicit_radio_query_caches_complete_data_only(self):
+        replies = {'network.interface.modem5g': '{"up":true,"uptime":120}',
+                   'lg6851f-modem-details': self.radio_report()}
+        result = self.rpc('get_radio_details', TEST_RESPONSES=replies)
+        cache = result['cache']['/tmp/lg6851f-modem-radio-details.json']
+        self.assertEqual(cache['perm'], 0o600)
+        data = json.loads(cache['data'])
+        self.assertTrue(data['parsed']['complete'])
+        self.assertEqual(data['parsed']['carriers'][0]['dl_mcs'], 0)
+        replies['lg6851f-modem-details'] = self.radio_report().replace('get all info success!', 'get ca failed')
+        result = self.rpc('get_radio_details', TEST_RESPONSES=replies)
+        self.assertEqual(result['result']['code'], 5)
+        self.assertEqual(result['cache'], {})
+        replies['lg6851f-modem-details'] = {'output': 'channel busy', 'code': 75}
+        result = self.rpc('get_radio_details', TEST_RESPONSES=replies)
+        self.assertEqual(result['result']['code'], 75)
+        self.assertEqual(result['cache'], {})
+
+    def test_initializing_radio_query_never_opens_vendor_session(self):
+        result = self.rpc('get_radio_details')
+        self.assertEqual(result['result']['code'], 11)
+        self.assertFalse(any('lg6851f-modem-details' in row for row in result['commands']))
+
+    def test_dashboard_exposes_radio_snapshot_with_zero_mcs_and_age(self):
+        self.write('/proc/sys/kernel/random/boot_id', 'test-boot')
+        self.write('/tmp/lg6851f-modem-radio-details.json', json.dumps({
+            'boot_id': 'test-boot', 'updated': int(time.time()), 'parsed': self.parse_radio(self.radio_report())}))
+        data = self.run_ucode("import * as d from 'lg6851f.dashboard'; printf('%J',d.snapshot());")
+        self.assertFalse(data['radio_details']['stale'])
+        self.assertEqual(data['advanced']['mcs'][0]['dl'], 0)
+        self.assertEqual(data['advanced']['ambr']['network']['ul']['bps'], 12800000)
+        self.assertIsNone(data['advanced']['qci'])
+        self.assertIsNone(data['advanced']['sa_nsa'])
 
     def test_explicit_cell_query_publishes_private_snapshot(self):
         result = self.rpc('get_cells', TEST_RESPONSES={

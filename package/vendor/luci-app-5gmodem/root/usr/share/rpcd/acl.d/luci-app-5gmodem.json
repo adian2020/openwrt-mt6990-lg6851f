@@ -14,7 +14,8 @@
 					"get_dashboard",
 					"get_rates",
 					"get_apn",
-					"get_sim_identity"
+					"get_sim_identity",
+					"get_radio_details"
 				]
 			}
 		},

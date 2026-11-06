@@ -10,16 +10,28 @@ function graph(values){
  line.setAttribute('points',values.map((v,i)=>`${i*240/Math.max(1,values.length-1)},${62-v*60/top}`).join(' '));svg.append(line);return svg;
 }
 const address=rows=>(rows||[]).map(row=>`${row.address}/${row.mask}`).join(' · ');
+const bandwidth=(row,dir)=>row[dir+'_bandwidth_mhz'] == null ? (row[dir+'_bandwidth_code'] == null ? '未获取' : '编码 '+row[dir+'_bandwidth_code']) : C.value(row[dir+'_bandwidth_mhz'],' MHz');
 return view.extend({
  load(){return C.dashboard();},
  render(data){
-  this.previous=null;this.history={rx:[],tx:[]};this.busy=false;
+  this.previous=null;this.history={rx:[],tx:[]};this.busy=false;this.readingRadio=false;
   this.body=E('div');this.rates=E('div',{'class':'cpe-grid'});
   const root=E('div',{'class':'cpe'},[C.style(),E('div',{'class':'cpe-header'},[E('h2',{},'状态看板'),E('button',{'class':'btn',click:()=>this.refresh()},'刷新状态')]),this.rates,this.body]);
   this.paint(data);
   poll.add(()=>this.refresh(),10);poll.add(()=>this.sample(),2);this.sample();return root;
  },
  async refresh(){if(this.busy)return;this.busy=true;try{this.paint(await C.dashboard());}finally{this.busy=false;}},
+ async readRadioDetails(){
+  if(this.readingRadio)return;
+  this.readingRadio=true;this.paint(this.data);
+  const previousTimeout=L.env.rpctimeout;
+  try{
+   L.env.rpctimeout=60;
+   const result=await C.getRadioDetails();
+   if(result?.code)throw Error(result.error||result.output||'高级参数读取失败');
+  }catch(error){ui.addNotification(null,E('p',{},error.message||String(error)),'error');}
+  finally{L.env.rpctimeout=previousTimeout;this.readingRadio=false;await this.refresh();}
+ },
  async sample(){
   if(this.sampling)return;this.sampling=true;
   try{
@@ -34,7 +46,9 @@ return view.extend({
   }finally{this.sampling=false;}
  },
  paint(data){
+  this.data=data;
   const m=data.modem||{},n=data.network||{},lan=data.lan||{};
+  const radio=data.radio_details,details=radio?.parsed,carriers=details?.carriers||[];
   const cells = C.cellular.parseCells(data.cells?.serving);
   const serving = !data.cells?.stale && cells.find(row=>row.serving);
   const signal = serving || m;
@@ -47,7 +61,24 @@ return view.extend({
    C.metric('可写存储使用率',C.value(storage.percent,'%')),C.metric('设备运行时间',C.elapsed(data.uptime))]),
    C.rows([['设备型号',data.model],['CPU频率',data.frequencies?.length?data.frequencies.map(p=>`${p.policy}: ${C.value(p.current_mhz)} / ${C.value(p.maximum_mhz)} MHz`).join(' · '):'当前内核未提供 cpufreq 数值'],['系统版本',data.release],['固件源码',data.firmware_id],['LAN 地址',address(lan['ipv4-address'])],['Linux 连接跟踪',C.value(data.conntrack?.count)+' / '+C.value(data.conntrack?.maximum)]]) ]));
   const network=C.card('链路与流量',C.rows([
-   ['APN',data.apn?.apn],['IPv4',address(n['ipv4-address'])],['全球 IPv6',data.ipv6_global?.join(' · ')||'未取得全球 IPv6 地址'],['DNS',(n['dns-server']||[]).join(' · ')],['连接时长',C.elapsed(n.uptime)],['PLMN',m.plmn],['SIM 状态',m.sim],['注册状态',m.registered?'已注册':'未确认注册'],['当前 SA / NSA','未获取'],['CA / MCS / AMBR / QCI','未获取'],['PPE0 / PPE1','未获取']
+   ['APN',data.apn?.apn],['IPv4',address(n['ipv4-address'])],['全球 IPv6',data.ipv6_global?.join(' · ')||'未取得全球 IPv6 地址'],['DNS',(n['dns-server']||[]).join(' · ')],['连接时长',C.elapsed(n.uptime)],['PLMN',m.plmn],['SIM 状态',m.sim],['注册状态',m.registered?'已注册':'未确认注册'],['当前 SA / NSA','未获取'],['QCI','未获取'],['PPE0 / PPE1','未获取']
+  ]));
+  const radioCard=C.card('载波与网络参数',E('div',{},[
+   E('button',{'class':'btn',disabled:this.readingRadio,click:()=>this.readRadioDetails()},this.readingRadio?'读取中…':'读取高级参数'),
+   C.unavailable(radio?`采样于 ${radio.age} 秒前${radio.stale?'（已过期，点击重新读取）':''}；本次报告 ${carriers.length} 条载波记录。`:'尚无采样，点击读取带宽、载波、MCS 和 AMBR。'),
+   C.table(['载波 / 频段','PCI / ARFCN','带宽 下 / 上','MCS 下 / 上','CQI'],carriers.map(row=>[
+    `${row.type} / ${row.rat==='nr'?'n':'B'}${row.band}`,`${row.pci} / ${row.arfcn}`,
+    bandwidth(row,'dl')+' / '+bandwidth(row,'ul'),C.value(row.dl_mcs)+' / '+C.value(row.ul_mcs),row.cqi
+   ])),
+   C.rows([
+    ['网络 AMBR 下 / 上',C.mbps(details?.ambr?.network?.dl?.bps)+' / '+C.mbps(details?.ambr?.network?.ul?.bps)],
+    ['IMS AMBR 下 / 上',C.mbps(details?.ambr?.ims?.dl?.bps)+' / '+C.mbps(details?.ambr?.ims?.ul?.bps)],
+    ['EN-DC 可用 / DCNR 限制标志',C.value(details?.endc?.available)+' / '+C.value(details?.endc?.restricted)]
+   ]),
+   C.unavailable('AMBR 是网络返回的速率参数，不是实测下载/上传速度；EN-DC 标志是状态，不是开启开关。'),
+   E('details',{},[E('summary',{},'载波原始编码'),C.table(['载波','调制 下 / 上','MIMO 下 / 上','BWP 带宽编码 下 / 上'],carriers.map(row=>[
+    row.type,C.value(row.dl_modulation_code)+' / '+C.value(row.ul_modulation_code),C.value(row.dl_mimo_code)+' / '+C.value(row.ul_mimo_code),C.value(row.dl_bwp_bandwidth_code)+' / '+C.value(row.ul_bwp_bandwidth_code)
+   ])),C.unavailable('这些编码尚未确认映射，暂不换算为调制名称、天线组合或 BWP MHz。')])
   ]));
   const temperature=C.card('温度传感器',C.table(['来源','传感器','温度'],(data.temperatures||[]).map(row=>[row.kind,row.name+(row.label?' / '+row.label:''),row.celsius.toFixed(1)+' °C'])));
   const wifi=C.card('无线网络',C.table(['接口 / SSID','信道','频率','功率','加密'],(data.wireless||[]).map(row=>[`${row.device} / ${row.ssid||'未获取'}`,row.channel,C.value(row.frequency,' MHz'),C.value(row.txpower,' dBm'),row.encryption])));
@@ -69,7 +100,7 @@ return view.extend({
    E('button',{'class':'btn',click:()=>C.action('开启射频','将开启蜂窝射频，并按现有配置请求拨号。',()=>C.setRadio(true),()=>this.refresh())},'开启射频'),
    E('button',{'class':'btn',click:()=>C.action('关闭射频','蜂窝连接、短信等服务可能中断。',()=>C.setRadio(false),()=>this.refresh())},'关闭射频')
   ]));
-  this.body.replaceChildren(header,network,cellCard,bandCard,devices,temperature,wifi,clients,leases,controls,C.unavailable('温度按系统提供的传感器名称展示。无线客户端速率为协商速率，实际传输速度请查看上方流量曲线。'));
+  this.body.replaceChildren(header,network,radioCard,cellCard,bandCard,devices,temperature,wifi,clients,leases,controls,C.unavailable('温度按系统提供的传感器名称展示。无线客户端速率为协商速率，实际传输速度请查看上方流量曲线。'));
  },
  handleSaveApply:null,handleSave:null,handleReset:null
 });
