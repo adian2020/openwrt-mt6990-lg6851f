@@ -51,62 +51,30 @@ jobs:
       - name: Update feeds
         run: |
           ./scripts/feeds update -a
+
+      - name: Select Nikki with Mihomo Alpha
+        run: |
+          ./scripts/mt6990-prepare-proxy.sh
           ./scripts/feeds install -a
 
-      - name: Diagnose Kconfig recursive dependencies
+      - name: Generate and verify configuration
         run: |
-          echo "===== Feed directories ====="
-          ls -lah package/feeds/
-
-          echo "===== Generated package config references ====="
-          for p in libsdl2-image libsdl3-image sdl3-doom libsdl2-compat wpewebkit-driver wpewebkit-minibrowser openappid libgtk-demos libgtk-utils qt5graphicaleffects qt5quick-controls2 qt5svg qt5script-examples qt5script-scriptTools mihomo-alpha mihomo-meta; do
-            echo "===== $p ====="
-            grep -RInE "DEPENDS.*${p}|${p}.*DEPENDS" package/feeds/ feeds/ package/ 2>/dev/null | head -30 || true
-          done
-
-          echo "===== Nikki and Vantage package files ====="
-          find package/feeds -type f \( -path '*nikki*Makefile' -o -path '*vantage*Makefile' \) -print
-
-      - name: Generate configuration and inspect Kconfig
-        run: |
-          echo "===== Before defconfig ====="
-          grep -E '^(CONFIG_PACKAGE_(nikki|luci-app-nikki|luci-theme-vantage|luci-app-vantage|luci-i18n-nikki-zh-cn|luci-i18n-vantage-zh-cn|luci-i18n-vantage-theme-zh-cn|mihomo-meta)=y|# CONFIG_PACKAGE_(nikki|luci-app-nikki|luci-theme-vantage|luci-app-vantage|luci-i18n-nikki-zh-cn|luci-i18n-vantage-zh-cn|luci-i18n-vantage-theme-zh-cn|mihomo-meta) is not set)' .config || true
-
-          make defconfig || true
-
-          echo "===== Kconfig context: Mihomo circular dependency ====="
-          if [ -f tmp/.config-package.in ]; then
-            sed -n '129815,129845p' tmp/.config-package.in
-          else
-            echo "[ERROR] tmp/.config-package.in not found"
+          set -euo pipefail
+          make defconfig 2>&1 | tee defconfig.log
+          if grep -Eq 'recursive dependency detected|error:' defconfig.log; then
+            echo "[ERROR] Kconfig generation failed"
+            exit 1
           fi
-
-          echo "===== Kconfig context: SDL / WPE / GTK ====="
-          sed -n '64200,64285p' tmp/.config-package.in 2>/dev/null || true
-          sed -n '66340,66390p' tmp/.config-package.in 2>/dev/null || true
-          sed -n '107885,107910p' tmp/.config-package.in 2>/dev/null || true
-
-          echo "===== Kconfig context: SDL3 / GTK / Qt ====="
-          sed -n '138370,138425p' tmp/.config-package.in 2>/dev/null || true
-          sed -n '151040,151335p' tmp/.config-package.in 2>/dev/null || true
-
-          echo "===== Locate original Mihomo package definitions ====="
-          grep -RInE 'mihomo-alpha|mihomo-meta' feeds package/feeds package 2>/dev/null | head -100 || true
-
-          echo "===== Locate original SDL / Qt / GTK package definitions ====="
-          grep -RInE 'libsdl2-image|libsdl3-image|qt5script-examples|qt5svg|libgtk-demos|wpewebkit-driver' feeds package/feeds package 2>/dev/null | head -100 || true
-
-          echo "===== After defconfig ====="
-          grep -E '^(CONFIG_PACKAGE_(nikki|luci-app-nikki|luci-theme-vantage|luci-app-vantage|luci-i18n-nikki-zh-cn|luci-i18n-vantage-zh-cn|luci-i18n-vantage-theme-zh-cn|mihomo-meta)=y|# CONFIG_PACKAGE_(nikki|luci-app-nikki|luci-theme-vantage|luci-app-vantage|luci-i18n-nikki-zh-cn|luci-i18n-vantage-zh-cn|luci-i18n-vantage-theme-zh-cn|mihomo-meta) is not set)' .config || true
-
-          for p in nikki luci-app-nikki luci-theme-vantage luci-app-vantage; do
-            if grep -qx "CONFIG_PACKAGE_${p}=y" .config; then
-              echo "[OK] $p is enabled"
-            else
+          for p in nikki luci-app-nikki mihomo-alpha luci-theme-vantage luci-app-vantage; do
+            grep -qx "CONFIG_PACKAGE_${p}=y" .config || {
               echo "[ERROR] $p is not enabled after defconfig"
               exit 1
-            fi
+            }
           done
+          if grep -Eq '^CONFIG_PACKAGE_(luci-app-openclash|mihomo-openclash-core|mihomo-meta)=[ym]$' .config; then
+            echo "[ERROR] An unwanted proxy package is enabled"
+            exit 1
+          fi
 
       - name: Build and verify LG6851F images
         run: |
@@ -121,6 +89,19 @@ jobs:
           ls -lah "A槽单刷boot和rootfs签名成功包/"
           echo "===== B slot signed images ====="
           ls -lah "B槽单刷boot和rootfs签名成功包/"
+
+      - name: Upload build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LG6851F-build-diagnostics
+          include-hidden-files: true
+          path: |
+            defconfig.log
+            .config
+            tmp/.config-package.in
+            logs/
+          retention-days: 7
 
       - name: Upload firmware artifacts
         if: success()
