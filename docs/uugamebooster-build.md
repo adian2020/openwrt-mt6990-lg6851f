@@ -37,8 +37,8 @@ requires Internet access to download the official core and verify its MD5.
 No official UU binary is bundled or redistributed here. Binding and use
 require the NetEase UU app/account.
 
-Keep the upstream tunnel firewall option enabled (addfw=1). OpenClash
-integration defaults to off because this firmware uses Nikki + Mihomo Alpha;
-OpenClash is not installed. Upstream's OpenClash/UA3F coexistence does not
-establish Nikki compatibility. Concurrent acceleration and Nikki policy routing
-must be verified on an LG6851F; building the package cannot establish that.
+Keep the upstream tunnel firewall option enabled (addfw=1). This firmware now
+preinstalls OpenClash with its pinned Meta core; UU's upstream OpenClash
+integration is cooperative by default. UU remains disabled until explicitly
+enabled. Concurrent acceleration, proxy policy routing and the native vendor
+client must be verified on an LG6851F; a successful build is not a runtime test.

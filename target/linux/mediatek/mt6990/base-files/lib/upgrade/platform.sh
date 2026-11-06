@@ -55,6 +55,13 @@ lg6851f_reset_crash_baseline() {
 		rm -f "$record" || return 1
 	done
 	sync
+	# This runs only after all image writes and bootctrl verification succeed.
+	# do_stage2 skips platform_copy_config entirely for a no-settings upgrade.
+	local config_mode=reset
+	[ -z "$UPGRADE_BACKUP" ] || config_mode=keep
+	printf 'mode=%s\nslot=%s\n' "$config_mode" "$slot" > "$LG6851F_TRACE_MNT/openwrt-sysupgrade/overlay-policy" || return 1
+	[ "$config_mode" = keep ] || rm -f "$LG6851F_TRACE_MNT/openwrt-sysupgrade/sysupgrade.tgz"
+	sync
 	lg6851f_trace "PASS crash baseline reset slot=$slot old-pstore+crash+runtime-cleared"
 }
 

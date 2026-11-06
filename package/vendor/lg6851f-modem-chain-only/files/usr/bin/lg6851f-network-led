@@ -27,13 +27,16 @@ panel_off() {
 }
 
 wifi_state() {
-	local netdev master state
-	for netdev in /sys/class/net/phy*-ap*; do
-		[ -e "$netdev" ] || continue
+	local netdev state
+	# netifd may name APs wlan*, phy*-ap* or a user-defined name and bridge.
+	for netdev in /sys/class/net/*; do
+		[ -d "$netdev/phy80211" ] || [ -d "$netdev/wireless" ] || continue
 		state="$(cat "$netdev/operstate" 2>/dev/null)"
-		master="$(readlink -f "$netdev/master" 2>/dev/null)"
-		case "$state:$master" in
-			up:*/br-lan|unknown:*/br-lan) return 0 ;;
+		case "$state" in
+			up) return 0 ;;
+			unknown)
+				iw dev "${netdev##*/}" info 2>/dev/null | grep -q 'channel ' && return 0
+				;;
 		esac
 	done
 	return 1
@@ -71,13 +74,13 @@ update_signal_quality() {
 	fi
 }
 
-trap 'panel_off; set_led "lg6851f:wifi" 0; exit 0' TERM INT EXIT
+trap 'panel_off; set_led "lg6851f:wifi" 0' EXIT
+trap 'exit 0' TERM INT
 sleep "$start_delay"
 
 for led in lg6851f:wifi $PANEL_LEDS; do
 	if [ ! -w "$LEDROOT/$led/brightness" ]; then
-		logger -t "$TAG" "missing DTS LED class: $led"
-		exit 1
+		logger -t "$TAG" "missing DTS LED class: $led; continuing with available LEDs"
 	fi
 done
 
@@ -95,6 +98,11 @@ while :; do
 	UP="$(echo "$NET_JSON" | jsonfilter -e '@.up')"
 	WAN="$(echo "$NET_JSON" | jsonfilter -e '@.l3_device')"
 
+	RAT=UNKNOWN
+	RAT_RAW=
+	RSRP=
+	cached_sim=
+	cached_registered=
 	# A single collector owns all periodic MIPC queries. LED and LuCI consume
 	# the same atomic cache, preventing independent control-channel polling.
 	if [ -r "$MODEM_STATE" ]; then

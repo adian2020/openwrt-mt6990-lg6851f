@@ -1,0 +1,14 @@
+#!/bin/sh
+# Restore only LED sections saved before an upgrade, including no-settings.
+if [ -s /etc/lg6851f-system-leds.pending ]; then
+	while uci -q delete system.@led[0]; do :; done
+	uci -m import system < /etc/lg6851f-system-leds.pending && uci commit system
+	rm -f /etc/lg6851f-system-leds.pending
+fi
+# Refresh menus after an upgrade that retains old LuCI caches/configuration.
+rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*
+rm -rf /tmp/luci-modulecache
+for service in lg6851f-network-led lg6851f-modem-status; do
+	[ ! -x "/etc/init.d/$service" ] || "/etc/init.d/$service" enable
+done
+exit 0

@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: lg6851f-cloud-build
@@ -55,27 +55,33 @@ jobs:
           cp .config "$RUNNER_TEMP/lg6851f.config"
           ./scripts/feeds update -a
 
-      - name: Select Nikki with Mihomo Alpha
+      - name: Prepare OpenClash and optional Nikki packages
         run: |
           ./scripts/mt6990-prepare-proxy.sh
           ./scripts/feeds install -a
+
+      - name: Check upgrade overlay migration
+        run: |
+          python3 scripts/tests/test_lg6851f_upgrade_state.py
 
       - name: Generate and verify configuration
         run: |
           set -euo pipefail
           cp "$RUNNER_TEMP/lg6851f.config" .config
+          mkdir -p files/etc/apk/repositories.d
+          printf '%s\n' "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/nikki-apk/${GITHUB_SHA}/packages.adb" > files/etc/apk/repositories.d/nikki.list
           make defconfig 2>&1 | tee defconfig.log
           if grep -Eq 'recursive dependency detected|error:' defconfig.log; then
             echo "[ERROR] Kconfig generation failed"
             exit 1
           fi
-          for p in luci-app-filemanager luci-i18n-filemanager-zh-cn luci-app-uugamebooster luci-i18n-uugamebooster-zh-cn nikki luci-app-nikki mihomo-alpha luci-theme-vantage luci-app-vantage luci-i18n-nikki-zh-cn luci-i18n-vantage-zh-cn luci-i18n-vantage-theme-zh-cn; do
+          for p in luci-app-filemanager luci-i18n-filemanager-zh-cn luci-app-uugamebooster luci-i18n-uugamebooster-zh-cn luci-app-5gmodem luci-i18n-5gmodem-zh-cn lg6851f-modem-chain-only audio-support openssh-sftp-server luci-app-openclash mihomo-openclash-core luci-theme-vantage luci-app-vantage luci-i18n-vantage-zh-cn luci-i18n-vantage-theme-zh-cn; do
             grep -qx "CONFIG_PACKAGE_${p}=y" .config || {
               echo "[ERROR] $p is not enabled after defconfig"
               exit 1
             }
           done
-          if grep -Eq '^CONFIG_PACKAGE_(luci-app-openclash|mihomo-openclash-core|mihomo-meta)=[ym]$' .config; then
+          if grep -Eq '^CONFIG_PACKAGE_(nikki|luci-app-nikki|luci-i18n-nikki-zh-cn|mihomo-meta)=y$|^CONFIG_PACKAGE_mihomo-alpha=[ym]$' .config; then
             echo "[ERROR] An unwanted proxy package is enabled"
             exit 1
           fi
@@ -83,6 +89,33 @@ jobs:
       - name: Build and verify LG6851F images
         run: |
           ./scripts/mt6990-build-and-record.sh
+
+      - name: Publish firmware-matched Nikki APK feed
+        env:
+          BUILD_SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          feed="bin/packages/aarch64_cortex-a55_neon-vfpv4/nikki"
+          test -s "$feed/packages.adb"
+          for p in nikki luci-app-nikki luci-i18n-nikki-zh-cn mihomo-meta; do
+            compgen -G "$feed/${p}-*.apk" > /dev/null
+          done
+          publish="$RUNNER_TEMP/nikki-apk-publish"
+          git fetch origin refs/heads/nikki-apk:refs/remotes/origin/nikki-apk || true
+          if git show-ref --verify --quiet refs/remotes/origin/nikki-apk; then
+            git worktree add "$publish" origin/nikki-apk
+          else
+            git worktree add --detach "$publish" HEAD
+            git -C "$publish" checkout --orphan nikki-feed
+            git -C "$publish" rm -rf --quiet .
+          fi
+          mkdir -p "$publish/$BUILD_SOURCE_SHA"
+          cp "$feed"/*.apk "$feed/packages.adb" "$publish/$BUILD_SOURCE_SHA/"
+          git -C "$publish" config user.name github-actions[bot]
+          git -C "$publish" config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git -C "$publish" add "$BUILD_SOURCE_SHA"
+          git -C "$publish" commit -m "Nikki APKs for $BUILD_SOURCE_SHA"
+          git -C "$publish" push origin HEAD:nikki-apk
 
       - name: Show output files
         if: success()

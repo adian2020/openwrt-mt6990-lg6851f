@@ -11,7 +11,7 @@ config uuplugin
 	# x86_64 | aarch64 | arm | mipsel | mipseb
 	option arch_force ''
 	# off | cooperative | bypass
-	option openclash_mode 'off'
+	option openclash_mode 'cooperative'
 	option oc_interval '5'
 	option oc_min_prefix '8'
 	# off | cooperative   (only acts while UA3F is installed and running)

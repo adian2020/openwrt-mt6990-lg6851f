@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=lg6851f-modem-chain-only
 PKG_VERSION:=0.6
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -10,7 +10,7 @@ define Package/lg6851f-modem-chain-only
   SECTION:=firmware
   CATEGORY:=Firmware
   TITLE:=LG6851F 5G modem chain only userspace/materials
-  DEPENDS:=+libstdcpp +libgcc +libuci +libubox +libubus +libjson-c +libcurl +alsa-lib +jshn
+  DEPENDS:=+libstdcpp +libgcc +libuci +libubox +libubus +libjson-c +libcurl +alsa-lib +audio-support +jshn
 endef
 
 define Package/lg6851f-modem-chain-only/description

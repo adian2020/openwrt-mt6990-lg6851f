@@ -12,7 +12,8 @@ const STATE = '/tmp/lg6851f-modem-status.state';
 const LOCKSTATE = '/etc/modem5g-lock.state';
 
 function board_ok() {
-	return trim(readfile('/tmp/sysinfo/board_name') || '') == 'fiberhome,lg6851f';
+	let board = trim(readfile('/tmp/sysinfo/board_name') || '');
+	return board == 'fiberhome,lg6851f' || board == 'fiberhome_lg6851f';
 }
 
 function quote(value) {

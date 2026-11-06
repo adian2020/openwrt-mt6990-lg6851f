@@ -44,6 +44,12 @@ if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_di
 		printf 'ERROR: LG6851F image is missing /usr/sbin/fsck.f2fs; refusing to sign.\n' >&2
 		exit 1
 	}
+	for program in usr/share/luci/menu.d/luci-app-5gmodem.json usr/share/rpcd/acl.d/luci-app-5gmodem.json usr/share/rpcd/ucode/luci.modem5g usr/bin/lg6851f-network-led etc/init.d/lg6851f-network-led usr/libexec/sftp-server etc/openclash/core/clash_meta; do
+		[ -s "$rootfs_dir/$program" ] || {
+			printf 'ERROR: required modem/LED/SFTP/proxy file missing: %s\n' "$program" >&2
+			exit 1
+		}
+	done
 	if grep -qx 'CONFIG_PACKAGE_luci-app-filemanager=y' "$repo_dir/.config"; then
 		[ -s "$rootfs_dir/www/luci-static/resources/view/system/filemanager.js" ] || {
 			printf 'ERROR: File Manager is selected but missing from rootfs.\n' >&2
