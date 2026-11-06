@@ -2,7 +2,7 @@
 'require view';
 'require rpc';
 'require ui';
-'require modem5g.common_v4 as common';
+'require modem5g.common_v5 as common';
 
 const runAt = rpc.declare({ object: 'luci.modem5g', method: 'run_at', params: [ 'command' ] });
 

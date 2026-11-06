@@ -11,4 +11,9 @@ rm -rf /tmp/luci-modulecache
 for service in lg6851f-network-led lg6851f-modem-status; do
 	[ ! -x "/etc/init.d/$service" ] || "/etc/init.d/$service" enable
 done
+# Aurora is the firmware default after removing Vantage.
+uci -q set luci.main.mediaurlbase='/luci-static/aurora'
+uci -q set luci.themes.Aurora='/luci-static/aurora'
+uci -q delete luci.themes.Vantage
+uci -q commit luci
 exit 0

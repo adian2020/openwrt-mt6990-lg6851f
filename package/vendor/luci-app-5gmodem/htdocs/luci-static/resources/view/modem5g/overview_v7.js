@@ -3,7 +3,7 @@
 'require view';
 'require rpc';
 'require poll';
-'require modem5g.common_v4 as common';
+'require modem5g.common_v5 as common';
 
 const callStatus = rpc.declare({ object: 'luci.modem5g', method: 'get_status', expect: {} });
 const callCells = rpc.declare({ object: 'luci.modem5g', method: 'get_cells', expect: {} });

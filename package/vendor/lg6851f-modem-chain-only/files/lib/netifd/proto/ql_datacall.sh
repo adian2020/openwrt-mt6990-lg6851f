@@ -569,8 +569,17 @@ proto_ql_datacall_setup() {
     # owner before waiting for SIM/APN; the vendor ordering queried SIM first
     # while mipc_wan.init attempted radio-on concurrently, creating a deadlock
     # (APN timeout vs. repeated EBUSY) on the OpenWrt procd startup sequence.
+    if [ "$(uci -q get "network.$interface.radio_enabled")" = 0 ]; then
+        proto_notify_error "$interface" RADIO_DISABLED_BY_USER
+        proto_block_restart "$interface"
+        return 1
+    fi
     echo "Enable modem radio before SIM/APN provisioning"
-    mipc_wan_cli --nw_radio_state_set 1
+    . /lib/functions/lg6851f-radio.sh
+    if ! lg6851f_ensure_radio_on; then
+        proto_notify_error "$interface" RADIO_START_PENDING
+        return 1
+    fi
 
     # Check APN provision from SIM
     if [ "$auto_conf" = "1" ] ; then
@@ -589,26 +598,6 @@ proto_ql_datacall_setup() {
         sysctl -w net.ipv6.conf.default.accept_ra=0
         echo 1 > /proc/ccmni/bridge_mode_control
     fi
-
-    # Check CFUN State
-    cfun_retry=5
-    while [ "$cfun_retry" -gt 0 ]
-    do
-        cfun_state=$(mipc_wan_cli --nw_radio_state_get 0)
-
-        if [ "$cfun_state" != "Get SW radio state:MIPC_NW_RADIO_STATE_ON" ] ; then
-            echo "radio state get failed or state is off"
-            let cfun_retry--
-            if [ "$cfun_retry" -eq 0 ] ; then
-                proto_notify_error "$interface" CFUN_IS_OFF
-                proto_block_restart "$interface"
-                return 1
-            fi
-            sleep 3
-        else
-            break
-        fi
-    done
 
     echo "Radio on ia:[${iaapn} ${rattype} ${iaiptype} ${iaroamingtype} ${dataroaming}]"
     mipc_wan_cli --check_ia ${iaapn} ${rattype} ${iaiptype} ${iaroamingtype} "${username}" "${password}" ${auth} ${iabearer_bitmask} ${dataroaming}
@@ -986,17 +975,14 @@ proto_ql_datacall_teardown() {
     proto_init_update "*" 0
     proto_send_update "$interface"
 
-    # Handle AT+EFUN=0 command
-    radio_status=`(mipc_wan_cli --nw_radio_state_get)`
-    case "$radio_status" in
-    *MIPC_NW_RADIO_STATE_OFF*)
-        proto_notify_error "$interface" RADIO_OFF
+    # Only an explicit user choice may block restart. A transient RF-off
+    # status during boot must be retried through the serialized setup path.
+    if [ "$(uci -q get "network.$interface.radio_enabled")" = 0 ]; then
+        proto_notify_error "$interface" RADIO_DISABLED_BY_USER
         proto_block_restart "$interface"
-        ;;
-    *)
+    else
         proto_notify_error "$interface" STOPPED
-        ;;
-    esac
+    fi
 
     if [ ${mode} -eq 2 ] ; then
         ql_datacall_reset_bridge "$vlan"

@@ -1,10 +1,10 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-only
 
-lg6851f_restore_sysupgrade() {
+lg6851f_prepare_sysupgrade() {
 	local mnt=/tmp/lg6851f-user-data
 	local saved="$mnt/openwrt-sysupgrade/sysupgrade.tgz"
-	local rootdev rootuuid stored_rootuuid source_mount mounted_here=0 reset_marker policy current_slot pending_slot pending_file
+	local rootdev rootuuid stored_rootuuid source_mount mounted_here=0 reset_marker policy current_slot pending_slot pending_file firmware_id stored_firmware_id migration_id
 
 	[ -b /dev/mmcblk0p46 ] || return 0
 	[ "$(cat /sys/class/block/mmcblk0p46/partition 2>/dev/null)" = 46 ] || return 0
@@ -38,8 +38,11 @@ lg6851f_restore_sysupgrade() {
 		rootdev="$(sed -n 's/.*[[:space:]]root=\([^[:space:]]*\).*/\1/p' /proc/cmdline)"
 		rootuuid="$(block info "$rootdev" 2>/dev/null | sed -n 's/.*UUID="\([^"]*\)".*/\1/p')"
 		if [ -n "$rootuuid" ]; then
-			echo "$rootuuid" > "$mnt/etc/.extroot-uuid"
-			echo "$rootuuid" > "$mnt/.mt6990-extroot-managed"
+			if [ -n "$rootuuid" ]; then
+				echo "$rootuuid" > "$mnt/etc/.extroot-uuid"
+				echo "$rootuuid" > "$mnt/.mt6990-extroot-managed"
+			fi
+			[ -z "$firmware_id" ] || echo "$firmware_id" > "$mnt/.mt6990-firmware-id"
 			rm -f "$reset_marker"
 			sync
 			echo "LG6851F: managed p46 factory reset completed"
@@ -51,11 +54,13 @@ lg6851f_restore_sysupgrade() {
 	# binding before mount_root evaluates it, otherwise a preserved p46
 	# software layer is correctly rejected and the system falls back to RAM.
 	if [ -f "$mnt/.mt6990-extroot-managed" ] &&
-	   [ -d "$mnt/upper" ] && [ -d "$mnt/work" ] &&
-	   [ -f "$mnt/etc/.extroot-uuid" ]; then
+	   [ -d "$mnt/upper" ] && [ -d "$mnt/work" ]; then
 		rootdev="$(sed -n 's/.*[[:space:]]root=\([^[:space:]]*\).*/\1/p' /proc/cmdline)"
 		rootuuid="$(block info "$rootdev" 2>/dev/null | sed -n 's/.*UUID="\([^"]*\)".*/\1/p')"
-		if [ -n "$rootuuid" ]; then
+		firmware_id="$(cat /etc/mt6990-firmware-id 2>/dev/null)"
+		stored_firmware_id="$(cat "$mnt/.mt6990-firmware-id" 2>/dev/null)"
+		migration_id="${rootuuid:-$firmware_id}"
+		if [ -n "$migration_id" ]; then
 			stored_rootuuid="$(cat "$mnt/etc/.extroot-uuid" 2>/dev/null)"
 			pending_file="$mnt/openwrt-sysupgrade/overlay-policy"
 			current_slot="$(sed -n 's/.*[[:space:]]bootslot=\([^[:space:]]*\).*/\1/p' /proc/cmdline)"
@@ -63,14 +68,15 @@ lg6851f_restore_sysupgrade() {
 			policy="$(sed -n 's/^mode=//p' "$pending_file" 2>/dev/null)"
 			# Legacy firmware leaves no policy: a changed root UUID proves an
 			# upgrade; only a real sysupgrade backup permits config restoration.
-			if [ -n "$stored_rootuuid" ] && [ "$stored_rootuuid" != "$rootuuid" ] ||
+			if { [ -n "$firmware_id" ] && [ "$firmware_id" != "$stored_firmware_id" ]; } ||
+			   { [ -n "$stored_rootuuid" ] && [ -n "$rootuuid" ] && [ "$stored_rootuuid" != "$rootuuid" ]; } ||
 			   { [ -n "$current_slot" ] && [ "$pending_slot" = "$current_slot" ]; }; then
 				case "$policy:$pending_slot" in
 					keep:"$current_slot"|reset:"$current_slot") ;;
 					*) if [ -s "$saved" ]; then policy=keep; else policy=reset; fi ;;
 				esac
 				. /lib/functions/lg6851f-upgrade-state.sh
-				lg6851f_fresh_upgrade_upper "$mnt" "$rootuuid" "$policy" || {
+				lg6851f_fresh_upgrade_upper "$mnt" "$migration_id" "$policy" || {
 					echo "LG6851F: failed to prepare fresh upgrade overlay; refusing to rebind"
 					[ "$mounted_here" = 0 ] || umount "$mnt"
 					return 1
@@ -78,16 +84,27 @@ lg6851f_restore_sysupgrade() {
 				rm -f "$pending_file"
 			fi
 			mkdir -p "$mnt/etc"
-			echo "$rootuuid" > "$mnt/etc/.extroot-uuid"
-			echo "$rootuuid" > "$mnt/.mt6990-extroot-managed"
+			if [ -n "$rootuuid" ]; then
+				echo "$rootuuid" > "$mnt/etc/.extroot-uuid"
+				echo "$rootuuid" > "$mnt/.mt6990-extroot-managed"
+			fi
+			[ -z "$firmware_id" ] || echo "$firmware_id" > "$mnt/.mt6990-firmware-id"
 			echo "LG6851F: refreshed managed extroot binding for current rootfs"
 		fi
 	fi
 	if [ -s "$saved" ]; then
-		cp -f "$saved" /sysupgrade.tgz &&
+		cp -f "$saved" /tmp/lg6851f-sysupgrade.tgz &&
 			echo "LG6851F: staged preserved configuration for restore"
 	fi
 	[ "$mounted_here" = 1 ] && umount "$mnt"
 }
 
-boot_hook_add preinit_mount_root lg6851f_restore_sysupgrade
+# 79 sorts before base-files/80_mount_root. Never move an upperdir after the
+# overlay has already been mounted: the active mount keeps the old inode.
+boot_hook_add preinit_main lg6851f_prepare_sysupgrade
+
+lg6851f_stage_sysupgrade() {
+	[ ! -s /tmp/lg6851f-sysupgrade.tgz ] ||
+		cp -f /tmp/lg6851f-sysupgrade.tgz /sysupgrade.tgz
+}
+boot_hook_add preinit_mount_root lg6851f_stage_sysupgrade

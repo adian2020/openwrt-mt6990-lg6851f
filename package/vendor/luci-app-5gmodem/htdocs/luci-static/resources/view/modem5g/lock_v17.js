@@ -3,7 +3,7 @@
 'require view';
 'require rpc';
 'require ui';
-'require modem5g.common_v4 as common';
+'require modem5g.common_v5 as common';
 
 const getLocks = rpc.declare({ object: 'luci.modem5g', method: 'get_locks', expect: {} });
 const getLockRequest = rpc.declare({ object: 'luci.modem5g', method: 'get_lock_request', expect: {} });
@@ -93,7 +93,7 @@ function parseCells(result) {
 
 function candidateTable(rows) {
 	if (!rows.length) return E('p', { 'class': 'm5-note' }, _('No cell measurements are currently available.'));
-	return E('div', { 'style': 'overflow-x:auto' }, E('table', { 'class': 'm5-cell-table' }, [
+	return E('div', { 'class': 'm5-table-scroll' }, E('table', { 'class': 'm5-cell-table' }, [
 		E('thead', {}, E('tr', {}, [ _('Type'), _('Band'), _('ARFCN'), _('PCI'), _('RSRP'), _('RSRQ'), _('SINR') ].map(x => E('th', {}, x)))),
 		E('tbody', {}, rows.map(r => E('tr', { 'class': r.serving ? 'm5-serving' : '', click: function() {
 			document.getElementById('m5-lock-arfcn').value = r.arfcn;

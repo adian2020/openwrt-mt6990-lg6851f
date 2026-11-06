@@ -58,5 +58,27 @@ class UpgradeStateTest(unittest.TestCase):
         self.assertNotEqual(self.migrate().returncode, 0)
         self.assertTrue((self.root / 'upper/usr/bin/old-plugin').exists())
 
+class PreinitOrderTest(unittest.TestCase):
+    def test_overlay_is_prepared_before_mount_and_backup_after_mount(self):
+        tree = pathlib.Path(__file__).resolve().parents[2] / 'target/linux/mediatek/mt6990/base-files'
+        early = tree / 'lib/preinit/79_lg6851f_restore_sysupgrade'
+        # Resolve from repository root, independent of the user's current directory.
+        repo = pathlib.Path(__file__).resolve().parents[2]
+        mount = repo / 'package/base-files/files/lib/preinit/80_mount_root'
+        script = r'''boot_hook_add() { eval "$1=\"\${$1} $2\""; }
+boot_run_hook() { eval "hooks=\${$1}"; for hook in $hooks; do "$hook"; done; }
+INITRAMFS=0
+. "$1"
+. "$2"
+lg6851f_prepare_sysupgrade() { echo prepare; }
+mount_root() { echo mount; }
+lg6851f_stage_sysupgrade() { echo restore; }
+boot_run_hook preinit_main
+:
+'''
+        result = subprocess.run(['sh', '-c', script, 'test', str(early), str(mount)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), ['prepare', 'mount', 'restore'])
+
 if __name__ == '__main__':
     unittest.main()

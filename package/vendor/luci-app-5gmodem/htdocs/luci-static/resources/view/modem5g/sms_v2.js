@@ -2,7 +2,7 @@
 'require view';
 'require rpc';
 'require ui';
-'require modem5g.common_v4 as common';
+'require modem5g.common_v5 as common';
 
 const listSms = rpc.declare({ object: 'luci.modem5g', method: 'list_sms', expect: {} });
 const getSmsc = rpc.declare({ object: 'luci.modem5g', method: 'get_smsc', expect: {} });

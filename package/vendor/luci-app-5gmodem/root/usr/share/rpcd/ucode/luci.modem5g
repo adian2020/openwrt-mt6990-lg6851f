@@ -263,7 +263,16 @@ const methods = {
 		return launch_lock([ 'set-cell', arfcnText, pciText, rat, '' + band ]);
 	} },
 	clear_cell_lock: { call: function() { return launch_lock([ 'clear-cell' ]); } },
-	set_radio: { args: { enabled: true }, call: function(req) { return cli('nw_radio_state_set', req.args?.enabled ? '1' : '0'); } },
+	set_radio: { args: { enabled: true }, call: function(req) {
+		let enabled = req.args?.enabled ? '1' : '0';
+		let result = cli('nw_radio_state_set', enabled);
+		if (result.code == 0) {
+			capture([ '/sbin/uci', 'set', 'network.modem5g.radio_enabled=' + enabled ], 5);
+			capture([ '/sbin/uci', 'commit', 'network' ], 5);
+			if (enabled == '1') capture([ '/sbin/ifup', 'modem5g' ], 5);
+		}
+		return result;
+	} },
 	set_rat: { args: { mode: 21 }, call: function(req) {
 		let mode = +req.args?.mode;
 		if (index([ 3, 15, 19, 21 ], mode) < 0) return { code: 22, error: 'Invalid RAT mode' };
