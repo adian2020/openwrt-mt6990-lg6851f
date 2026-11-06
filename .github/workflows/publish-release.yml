@@ -15,6 +15,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: lg6851f-release
+  cancel-in-progress: false
+
 permissions:
   actions: read
   contents: write
@@ -119,48 +123,47 @@ jobs:
           echo "===== Final release files ====="
           ls -lh "$GITHUB_WORKSPACE"/*.zip
 
-      - name: Generate automatic version number
+      - name: 生成或复用固件版本号
         id: version
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
-          set -e
-
-          echo "===== Get existing version tags ====="
-
-          TAGS=$(gh api --paginate \
-            "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" \
-            --jq '.[].ref' \
-            | sed 's#refs/tags/##' \
-            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V || true)
-
-          LATEST=$(echo "$TAGS" | tail -n 1)
-
-          if [ -z "$LATEST" ]; then
-            VERSION="v1.0.8"
-            echo "No previous version found. Starting from $VERSION"
+          set -euo pipefail
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" | jq 'add' > version-tags.json
+          existing=$(jq -r --arg sha "$SOURCE_SHA" '.[] | select(.object.type == "commit" and .object.sha == $sha) | .ref' version-tags.json | sed 's#refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+          if [ -n "$existing" ]; then
+            VERSION="$existing"
           else
-            echo "Latest version: $LATEST"
-
-            VERSION_NUMBER="${LATEST#v}"
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NUMBER"
-
-            PATCH=$((PATCH + 1))
-            VERSION="v${MAJOR}.${MINOR}.${PATCH}"
-
-            echo "Next version: $VERSION"
+            LATEST=$(jq -r '.[].ref' version-tags.json | sed 's#refs/tags/##' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)
+            if [ -z "$LATEST" ]; then
+              VERSION=v1.0.8
+            else
+              IFS='.' read -r MAJOR MINOR PATCH <<< "${LATEST#v}"
+              VERSION="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+            fi
           fi
-
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag_name=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "本次发布版本：$VERSION；源码：$SOURCE_SHA"
 
-          echo "===== Generated version: $VERSION ====="
+      - name: 创建并核对源码版本标签
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          TAG_NAME: ${{ steps.version.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG_NAME" > release-tag.json; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$TAG_NAME" -f "sha=$SOURCE_SHA" > release-tag.json
+          fi
+          jq -e --arg sha "$SOURCE_SHA" '.object.type == "commit" and .object.sha == $sha' release-tag.json > /dev/null
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          target_commitish: ${{ steps.source.outputs.sha }}
+          token: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           tag_name: ${{ steps.version.outputs.tag_name }}
           name: LG6851F-Pro ${{ steps.version.outputs.version }}（构建 ${{ env.SOURCE_RUN_ID }}）
           files: |
