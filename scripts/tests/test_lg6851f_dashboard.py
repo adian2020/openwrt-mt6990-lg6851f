@@ -261,9 +261,9 @@ scc_dl_bandwidth = 11
     def test_mode_requires_successful_current_data_registration(self):
         registration='''Cmd Index=7
 3444:main():ret= 00000000
-502:print_nw_reg_status():tech_domain = 3GPP
-503:print_nw_reg_status():radio_tech = QL_NW_RADIO_TECH_NR5G
-505:print_nw_reg_status():reg_state = QL_NW_SERVICE_FULL
+ 502:print_data_reg_status_info():tech_domain = 3GPP
+ 503:print_data_reg_status_info():radio_tech = QL_NW_RADIO_TECH_NR5G
+ 505:print_data_reg_status_info():reg_state = QL_NW_SERVICE_FULL
 '''
         report=self.radio_report().replace('Cmd Index=21',registration+'Cmd Index=21')
         self.assertEqual(self.parse_radio(report)['sa_nsa'],'SA')

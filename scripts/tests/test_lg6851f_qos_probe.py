@@ -72,6 +72,16 @@ export function connect(path,timeout){return {call:function(object,method,args){
         self.assertEqual(data['requests'][0]['data_hex'],'000000')
         self.assertIsNone(data['qos'])
 
+    def test_hardware_empty_sdk_list_does_not_query_qos(self):
+        # 实机返回固定 580 字节结构：数量为零，其余为零填充。
+        rc,data=self.run_probe(**{'8':{'hex':bytes(580).hex()}})
+        self.assertEqual(rc,95)
+        self.assertEqual(data['status'],'ACTIVE_CID_NOT_IN_SDK_LIST')
+        self.assertEqual(data['call_list'],[])
+        self.assertEqual([row['command'] for row in data['requests']],[8])
+        self.assertEqual(data['requests'][0]['received_bytes'],579)
+        self.assertIsNone(data['qos'])
+
     def test_ims_or_other_apn_is_not_used_for_default_connection(self):
         rc,data=self.run_probe(**{'12':{'hex':(b'\1'+b'ims'.ljust(150,b'\0')).hex()}})
         self.assertEqual(rc,95)
