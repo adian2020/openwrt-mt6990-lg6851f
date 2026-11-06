@@ -20,6 +20,7 @@ permissions:
   contents: write
 
 env:
+  GH_REPO: ${{ github.repository }}
   SOURCE_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.event.inputs.run_id }}
 
 jobs:
@@ -28,6 +29,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Verify successful source build and prepare release notes
+        id: source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > source-run.json
+          jq -e '.status == "completed" and .conclusion == "success" and .head_branch == "cloud-build" and .path == ".github/workflows/lg6851f-cloud-build.yml"' source-run.json > /dev/null
+          source_sha=$(jq -r .head_sha source-run.json)
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          # Read Markdown as data. Never run code from a workflow_run artifact.
+          if gh api "repos/$GITHUB_REPOSITORY/contents/RELEASE_NOTES.md?ref=$source_sha" > notes.json; then
+            jq -r .content notes.json | base64 -d > RELEASE_NOTES.md
+          else
+            # A build already in progress may predate the notes file. The
+            # backfill is keyed by its exact SHA, not the latest branch tip.
+            gh api "repos/$GITHUB_REPOSITORY/contents/docs/releases/$source_sha.md?ref=cloud-build" > notes.json
+            jq -r .content notes.json | base64 -d > RELEASE_NOTES.md
+          fi
+          test -s RELEASE_NOTES.md
+          {
+            printf '\n## 构建信息\n\n'
+            printf -- '- 源码分支：`cloud-build`\n'
+            printf -- '- 源码提交：[ %s ](https://github.com/%s/commit/%s)\n' "$source_sha" "$GITHUB_REPOSITORY" "$source_sha"
+            printf -- '- 编译记录：https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$SOURCE_RUN_ID"
+          } >> RELEASE_NOTES.md
+
       - name: Download firmware artifacts
         uses: actions/download-artifact@v4
         with:
@@ -61,6 +89,8 @@ jobs:
           B_ZIP="B槽单刷文件和网页升级包.zip"
 
           mkdir -p release_packages/A release_packages/B
+          cp RELEASE_NOTES.md release_packages/A/
+          cp RELEASE_NOTES.md release_packages/B/
 
           echo "===== Copy A slot files ====="
           mkdir -p "release_packages/A/$A_FOLDER"
@@ -75,12 +105,12 @@ jobs:
           echo "===== Create A slot ZIP ====="
           cd release_packages/A
           zip -qr "$GITHUB_WORKSPACE/$A_ZIP" \
-            "$A_FOLDER" "$A_SYSUPGRADE"
+            "$A_FOLDER" "$A_SYSUPGRADE" RELEASE_NOTES.md
 
           echo "===== Create B slot ZIP ====="
           cd ../B
           zip -qr "$GITHUB_WORKSPACE/$B_ZIP" \
-            "$B_FOLDER" "$B_SYSUPGRADE"
+            "$B_FOLDER" "$B_SYSUPGRADE" RELEASE_NOTES.md
 
           echo "===== Verify ZIP contents ====="
           unzip -l "$GITHUB_WORKSPACE/$A_ZIP"
@@ -127,66 +157,17 @@ jobs:
 
           echo "===== Generated version: $VERSION ====="
 
-      - name: Delete ALL old release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: ${{ steps.version.outputs.tag_name }}
-        run: |
-          set -e
-
-          echo "===== Check existing Release ====="
-
-          if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
-            echo "Release does not exist. Nothing to delete."
-            exit 0
-          fi
-
-          echo "===== Get all old assets ====="
-
-          gh release view "$TAG_NAME" \
-            --json assets \
-            --jq '.assets[].name' > old_assets.txt
-
-          echo "===== Delete old assets one by one ====="
-
-          while IFS= read -r asset; do
-            [ -z "$asset" ] && continue
-
-            echo "Deleting: $asset"
-
-            gh release delete-asset "$TAG_NAME" "$asset" --yes
-          done < old_assets.txt
-
-          echo "===== Verify cleanup ====="
-
-          REMAINING=$(gh release view "$TAG_NAME" \
-            --json assets \
-            --jq '.assets | length')
-
-          echo "Remaining old assets: $REMAINING"
-
-          if [ "$REMAINING" -ne 0 ]; then
-            echo "ERROR: Old assets were not completely deleted."
-            exit 1
-          fi
-
-          echo "All old assets deleted successfully."
-
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          target_commitish: ${{ steps.source.outputs.sha }}
           tag_name: ${{ steps.version.outputs.tag_name }}
           name: LG6851F-Pro ${{ steps.version.outputs.version }} (Build ${{ env.SOURCE_RUN_ID }})
           files: |
             A槽单刷文件和网页升级包.zip
             B槽单刷文件和网页升级包.zip
-          body: |
-            ## 本次更新
-
-            - 新增 Vantage 主题及管理界面
-            - 新增 Nikki 代理管理插件
-            - 新增 Mihomo Meta 核心
-            - 保留原有 MT6990 设备适配功能
-          generate_release_notes: true
+            RELEASE_NOTES.md
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: false
           draft: false
           prerelease: false
