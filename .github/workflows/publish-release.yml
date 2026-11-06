@@ -89,10 +89,48 @@ jobs:
           echo "===== Final release files ====="
           ls -lh "$GITHUB_WORKSPACE"/*.zip
 
+      - name: Generate automatic version number
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+
+          echo "===== Get existing version tags ====="
+
+          TAGS=$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" \
+            --jq '.[].ref' \
+            | sed 's#refs/tags/##' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V || true)
+
+          LATEST=$(echo "$TAGS" | tail -n 1)
+
+          if [ -z "$LATEST" ]; then
+            VERSION="v1.0.8"
+            echo "No previous version found. Starting from $VERSION"
+          else
+            echo "Latest version: $LATEST"
+
+            VERSION_NUMBER="${LATEST#v}"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NUMBER"
+
+            PATCH=$((PATCH + 1))
+            VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+
+            echo "Next version: $VERSION"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$VERSION" >> "$GITHUB_OUTPUT"
+
+          echo "===== Generated version: $VERSION ====="
+
       - name: Delete ALL old release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG_NAME: LG6851F-Pro-${{ env.SOURCE_RUN_ID }}
+          TAG_NAME: ${{ steps.version.outputs.tag_name }}
         run: |
           set -e
 
@@ -137,11 +175,18 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: LG6851F-Pro-${{ env.SOURCE_RUN_ID }}
-          name: LG6851F-Pro Firmware Build ${{ env.SOURCE_RUN_ID }}
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: LG6851F-Pro ${{ steps.version.outputs.version }} (Build ${{ env.SOURCE_RUN_ID }})
           files: |
             A槽单刷文件和网页升级包.zip
             B槽单刷文件和网页升级包.zip
+          body: |
+            ## 本次更新
+
+            - 新增 Vantage 主题及管理界面
+            - 新增 Nikki 代理管理插件
+            - 新增 Mihomo Meta 核心
+            - 保留原有 MT6990 设备适配功能
           generate_release_notes: true
           draft: false
           prerelease: false
