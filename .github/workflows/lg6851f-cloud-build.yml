@@ -1,4 +1,3 @@
-
 name: LG6851F MT6990 Cloud Build
 
 on:
@@ -36,7 +35,57 @@ jobs:
             build-essential clang flex bison g++ gawk gcc-multilib \
             gettext git libncurses-dev libssl-dev python3 python3-distutils \
             rsync unzip zlib1g-dev file wget curl swig \
-            python3-setuptools jq xsltproc libelf-dev
+            python3-setuptools jq xsltproc libelf-dev xz-utils
+
+      - name: Install Zig 0.13.0
+        run: |
+          set -e
+
+          curl -sSLo /tmp/zig.tar.xz \
+            "https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz"
+
+          mkdir -p "$HOME/zig"
+          tar xf /tmp/zig.tar.xz -C "$HOME/zig" --strip-components=1
+
+          echo "$HOME/zig" >> "$GITHUB_PATH"
+
+          export PATH="$HOME/zig:$PATH"
+
+          echo "===== Verify Zig ====="
+          which zig
+          zig version
+
+      - name: Download and prepare UU Game Booster
+        run: |
+          set -e
+
+          echo "===== Download UU Game Booster source ====="
+
+          git clone --depth 1 \
+            https://github.com/xiaodoudou/luci-app-uugamebooster.git \
+            "$RUNNER_TEMP/uuplugin-src"
+
+          echo "===== Copy LuCI package ====="
+
+          mkdir -p package/vendor/luci-app-uugamebooster
+
+          cp -a \
+            "$RUNNER_TEMP/uuplugin-src/luci-app-uugamebooster/." \
+            package/vendor/luci-app-uugamebooster/
+
+          echo "===== Build architecture filters ====="
+
+          sh "$RUNNER_TEMP/uuplugin-src/tools/build-preload.sh" \
+            package/vendor/luci-app-uugamebooster/root/usr/lib/uuplugin
+
+          echo "===== Verify ARM64 filter ====="
+
+          test -s \
+            package/vendor/luci-app-uugamebooster/root/usr/lib/uuplugin/uu-view-preload-aarch64.so
+
+          ls -lh package/vendor/luci-app-uugamebooster/root/usr/lib/uuplugin/
+
+          echo "UU Game Booster preparation completed."
 
       - name: Cache OpenWrt downloads
         uses: actions/cache@v4
@@ -53,7 +102,35 @@ jobs:
 
       - name: Generate configuration
         run: |
+          set -e
+
+          echo "===== Enable UU Game Booster ====="
+          echo "CONFIG_PACKAGE_luci-app-uugamebooster=y" >> .config
+
           make defconfig
+
+          echo "===== Verify UU Game Booster configuration ====="
+          grep -n '^CONFIG_PACKAGE_luci-app-uugamebooster=y$' .config
+
+      - name: Verify UU Game Booster package discovery
+        run: |
+          set -e
+
+          echo "===== Check UU package Makefile ====="
+          test -f package/vendor/luci-app-uugamebooster/Makefile
+
+          echo "===== Generate OpenWrt package metadata ====="
+          make packageinfo
+
+          echo "===== Verify UU package discovery ====="
+          grep -n -A 12 -B 2 \
+            '^Package: luci-app-uugamebooster$' \
+            tmp/.packageinfo
+
+          echo "===== Verify UU package configuration ====="
+          grep -n '^CONFIG_PACKAGE_luci-app-uugamebooster=y$' .config
+
+          echo "UU Game Booster package discovery PASSED."
 
       - name: Build and verify LG6851F images
         run: |
