@@ -1,3 +1,4 @@
+
 name: LG6851F MT6990 Cloud Build
 
 on:
@@ -52,12 +53,48 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Generate configuration
+      - name: Diagnose Kconfig recursive dependencies
+        run: |
+          echo "===== Feed directories ====="
+          ls -lah package/feeds/
+
+          echo "===== Generated package config references ====="
+          for p in libsdl2-image libsdl3-image sdl3-doom libsdl2-compat wpewebkit-driver wpewebkit-minibrowser openappid libgtk-demos libgtk-utils qt5graphicaleffects qt5quick-controls2 qt5svg qt5script-examples qt5script-scriptTools mihomo-alpha mihomo-meta; do
+            echo "===== $p ====="
+            grep -RInE "DEPENDS.*${p}|${p}.*DEPENDS" package/feeds/ feeds/ package/ 2>/dev/null | head -30 || true
+          done
+
+          echo "===== Nikki and Vantage package files ====="
+          find package/feeds -type f \( -path '*nikki*Makefile' -o -path '*vantage*Makefile' \) -print
+
+      - name: Generate configuration and inspect Kconfig
         run: |
           echo "===== Before defconfig ====="
           grep -E '^(CONFIG_PACKAGE_(nikki|luci-app-nikki|luci-theme-vantage|luci-app-vantage|luci-i18n-nikki-zh-cn|luci-i18n-vantage-zh-cn|luci-i18n-vantage-theme-zh-cn|mihomo-meta)=y|# CONFIG_PACKAGE_(nikki|luci-app-nikki|luci-theme-vantage|luci-app-vantage|luci-i18n-nikki-zh-cn|luci-i18n-vantage-zh-cn|luci-i18n-vantage-theme-zh-cn|mihomo-meta) is not set)' .config || true
 
-          make defconfig
+          make defconfig || true
+
+          echo "===== Kconfig context: Mihomo circular dependency ====="
+          if [ -f tmp/.config-package.in ]; then
+            sed -n '129815,129845p' tmp/.config-package.in
+          else
+            echo "[ERROR] tmp/.config-package.in not found"
+          fi
+
+          echo "===== Kconfig context: SDL / WPE / GTK ====="
+          sed -n '64200,64285p' tmp/.config-package.in 2>/dev/null || true
+          sed -n '66340,66390p' tmp/.config-package.in 2>/dev/null || true
+          sed -n '107885,107910p' tmp/.config-package.in 2>/dev/null || true
+
+          echo "===== Kconfig context: SDL3 / GTK / Qt ====="
+          sed -n '138370,138425p' tmp/.config-package.in 2>/dev/null || true
+          sed -n '151040,151335p' tmp/.config-package.in 2>/dev/null || true
+
+          echo "===== Locate original Mihomo package definitions ====="
+          grep -RInE 'mihomo-alpha|mihomo-meta' feeds package/feeds package 2>/dev/null | head -100 || true
+
+          echo "===== Locate original SDL / Qt / GTK package definitions ====="
+          grep -RInE 'libsdl2-image|libsdl3-image|qt5script-examples|qt5svg|libgtk-demos|wpewebkit-driver' feeds package/feeds package 2>/dev/null | head -100 || true
 
           echo "===== After defconfig ====="
           grep -E '^(CONFIG_PACKAGE_(nikki|luci-app-nikki|luci-theme-vantage|luci-app-vantage|luci-i18n-nikki-zh-cn|luci-i18n-vantage-zh-cn|luci-i18n-vantage-theme-zh-cn|mihomo-meta)=y|# CONFIG_PACKAGE_(nikki|luci-app-nikki|luci-theme-vantage|luci-app-vantage|luci-i18n-nikki-zh-cn|luci-i18n-vantage-zh-cn|luci-i18n-vantage-theme-zh-cn|mihomo-meta) is not set)' .config || true
