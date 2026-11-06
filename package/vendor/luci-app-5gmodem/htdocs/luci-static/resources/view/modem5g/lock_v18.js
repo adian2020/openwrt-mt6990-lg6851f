@@ -1,9 +1,10 @@
 'use strict';
-/* v16: decode NR ECELL RSRP with the MT6990 3GPP offset. */
+/* Shared ECELL parsing and actual current/supported mask readback. */
 'require view';
 'require rpc';
 'require ui';
 'require modem5g.common_v5 as common';
+'require modem5g.cellular_v1 as cellular';
 
 const getLocks = rpc.declare({ object: 'luci.modem5g', method: 'get_locks', expect: {} });
 const getLockRequest = rpc.declare({ object: 'luci.modem5g', method: 'get_lock_request', expect: {} });
@@ -13,38 +14,35 @@ const resetBands = rpc.declare({ object: 'luci.modem5g', method: 'reset_band_loc
 const setCell = rpc.declare({ object: 'luci.modem5g', method: 'set_cell_lock', params: [ 'arfcn', 'pci', 'rat', 'band' ] });
 const clearCell = rpc.declare({ object: 'luci.modem5g', method: 'clear_cell_lock' });
 
-const LTE = [ 1, 3, 5, 7, 8, 20, 28, 32, 38, 40, 41, 42, 43 ];
-const NR = [ 1, 3, 5, 7, 8, 20, 28, 38, 40, 41, 77, 78 ];
+const LTE = [ 1, 3, 5, 7, 8, 20, 28, 32, 38, 40, 41, 42, 43, 46 ];
+const NR = [ 1, 3, 5, 7, 8, 20, 28, 38, 40, 41, 75, 76, 77, 78 ];
 
 function checks(id, prefix, values) {
-	return E('div', { id: id, 'class': 'm5-band-grid' }, values.map(v =>
-		E('label', { 'class': 'm5-band' }, [ E('input', { type: 'checkbox', value: v }), E('span', {}, `${prefix}${v}`) ])));
+	return E('div', { id: id, 'class': 'm5-band-grid' }, values.map(v => {
+		const readOnly = prefix == 'n' && v == 76;
+		return E('label', { 'class': 'm5-band', title: readOnly ? '模组支持；厂商工具暂不接受手动设置 n76' : '' }, [
+			E('input', { type: 'checkbox', value: v, disabled: readOnly }),
+			E('span', { style: readOnly ? 'opacity:.45;cursor:not-allowed' : '' }, `${prefix}${v}`)
+		]);
+	}));
 }
 
 function selected(id) {
-	return Array.from(document.querySelectorAll(`#${id} input:checked`)).map(el => +el.value);
+	return Array.from(document.querySelectorAll(`#${id} input:checked:not(:disabled)`)).map(el => +el.value);
 }
 
 function setChecked(id, values) {
 	let wanted = new Set(values.map(Number));
-	document.querySelectorAll(`#${id} input`).forEach(el => { el.checked = wanted.has(+el.value); });
+	document.querySelectorAll(`#${id} input`).forEach(el => { el.checked = !el.disabled && wanted.has(+el.value); });
 }
 
 function sameBands(actual, wanted) {
 	return actual.length == wanted.length && actual.every((v, i) => v == wanted[i]);
 }
 
-function maskBands(hex, allowed) {
-	let chunks = (hex || '').match(/[0-9a-fA-F]{8}/g) || [];
-	return allowed.filter(band => {
-		let bit = band - 1, chunk = chunks[Math.floor(bit / 32)];
-		return chunk && (parseInt(chunk, 16) & Math.pow(2, bit % 32)) != 0;
-	});
-}
-
 function parsedLockState(result) {
-	let raw = common.resultText(result), lte = raw.match(/lte band info\s*=\s*([0-9a-f]+)/i), nr = raw.match(/nr band info\s*=\s*([0-9a-f]+)/i);
-	let state = { raw, lte: lte ? maskBands(lte[1], LTE) : [], nr: nr ? maskBands(nr[1], NR) : [] };
+	let raw = common.resultText(result), masks = cellular.lockMasks(raw);
+	let state = { raw, lte: masks.current?.lte || [], nr: masks.current?.nr || [], supported: masks.supported };
 	let saved = raw.match(/SAVED_LOCK_STATE[\s\S]*?MODE=([^\r\n]+)/);
 	state.mode = saved ? saved[1].trim() : 'unknown';
 	for (let key of [ 'STATUS', 'RAT', 'ARFCN', 'PCI', 'BAND' ]) {
@@ -62,34 +60,7 @@ function parsedLockState(result) {
 	return state;
 }
 
-function csv(text) {
-	let out = [], value = '', quoted = false;
-	for (let c of text) {
-		if (c == '"') quoted = !quoted;
-		else if (c == ',' && !quoted) { out.push(value); value = ''; }
-		else value += c;
-	}
-	out.push(value);
-	return out;
-}
-
-function parseCells(result) {
-	let raw = common.resultText(result), match = raw.match(/\+ECELL:\s*([^\r\n]+)/);
-	if (!match) return [];
-	let fields = csv(match[1]), count = +fields.shift(), rows = [];
-	for (let i = 0; i < count && fields.length >= 15; i++) {
-		let f = fields.splice(0, 15), arfcn = +f[14], rat = +f[0], rsrp = +f[6], rsrq = +f[7], sinr = +f[11];
-		let bandNo = rat == 11 ? (arfcn >= 499200 && arfcn <= 537999 ? 41 : arfcn >= 620000 && arfcn <= 653333 ? 78 : 0) : 0;
-		let band = rat == 11 ? (bandNo ? 'n' + bandNo : 'NR') : 'LTE';
-		if (arfcn > 0 && +f[5] >= 0) rows.push({
-			serving: i == 0, rat: rat == 11 ? 'nr' : 'lte', bandNo, band, arfcn, pci: +f[5],
-			rsrp: rsrp == 255 ? null : rsrp - (rat == 11 ? 156 : 140),
-			rsrq: rsrq == 255 ? null : rsrq / 2 - 43,
-			sinr: sinr == 255 ? null : sinr / 2 - 23
-		});
-	}
-	return rows;
-}
+const parseCells = result => cellular.parseCells(result);
 
 function candidateTable(rows) {
 	if (!rows.length) return E('p', { 'class': 'm5-note' }, _('No cell measurements are currently available.'));
@@ -100,7 +71,7 @@ function candidateTable(rows) {
 			document.getElementById('m5-lock-pci').value = r.pci;
 			document.getElementById('m5-lock-rat').value = r.rat;
 			document.getElementById('m5-lock-rat').dispatchEvent(new Event('change'));
-			if (r.bandNo) document.getElementById('m5-lock-band').value = r.bandNo;
+			document.getElementById('m5-lock-band').value = r.bandNo || '';
 			document.getElementById('m5-lock-result').textContent =
 				_('Cell selected: %s / PCI %s. It has not been applied yet.').format(r.arfcn, r.pci);
 		} }, [
@@ -113,6 +84,22 @@ function candidateTable(rows) {
 
 return view.extend({
 	busy: false,
+	setSupported(supported) {
+		this.supported = supported;
+		for (const [rat,prefix] of [['lte','B'],['nr','n']]) {
+			const target = document.getElementById(`m5-${rat}-bands`);
+			if (target) target.replaceWith(checks(`m5-${rat}-bands`, prefix, supported[rat]));
+		}
+		const note = document.getElementById('m5-supported-summary');
+		if (note) note.textContent = `模组支持 LTE ${supported.lte.length} 个 / NR ${supported.nr.length} 个频段。` + (supported.nr.includes(76) ? 'n76 仅显示能力，厂商工具暂不接受手动设置；恢复默认会恢复全部支持频段。' : '');
+		this.updateBandSelect();
+	},
+	updateBandSelect() {
+		const rat = document.getElementById('m5-lock-rat')?.value || 'nr';
+		const values = this.supported?.[rat] || (rat == 'lte' ? LTE : NR);
+		const select = document.getElementById('m5-lock-band');
+		if (select) select.replaceChildren(E('option', {value:''}, '请选择频段'), ...values.filter(v => rat != 'nr' || v != 76).map(v => E('option', {value:v}, (rat == 'lte' ? 'B' : 'n') + v)));
+	},
 	load() { return Promise.all([ getLocks(), getCells() ]); },
 	setBusy(active) {
 		this.busy = active;
@@ -182,6 +169,7 @@ return view.extend({
 	},
 	syncLocks(result) {
 		let state = parsedLockState(result);
+		if (state.supported) this.setSupported(state.supported);
 		setChecked('m5-lte-bands', state.lte);
 		setChecked('m5-nr-bands', state.nr);
 		let badge = document.getElementById('m5-lock-summary');
@@ -191,6 +179,7 @@ return view.extend({
 			(state.lte.length || state.nr.length) ? `${_('Current bands')}: ${state.lte.map(x => 'B' + x).join(' ')} · ${state.nr.map(x => 'n' + x).join(' ')}` : _('Lock state unavailable');
 		if (state.mode == 'cell') {
 			document.getElementById('m5-lock-rat').value = state.rat || 'nr';
+			this.updateBandSelect();
 			document.getElementById('m5-lock-band').value = state.band || 0;
 			document.getElementById('m5-lock-arfcn').value = state.arfcn || '';
 			document.getElementById('m5-lock-pci').value = state.pci == '65535' ? '' : (state.pci || '');
@@ -222,6 +211,7 @@ return view.extend({
 		if (this.busy) return Promise.resolve();
 		this.setBusy(true);
 		return getLocks().then(state => {
+			if (+state.code != 0) throw new Error(state.error || common.resultText(state));
 			document.getElementById('m5-lock-state').textContent = common.resultText(state);
 			this.syncLocks(state);
 			document.getElementById('m5-lock-result').textContent = _('Lock state refreshed');
@@ -273,6 +263,7 @@ return view.extend({
 			E('div', { id: 'm5-pane-bands', 'class': 'm5-lock-pane' }, common.panel(_('4G / 5G band lock'), E('div', {}, [
 				E('h4', {}, _('LTE bands')), checks('m5-lte-bands', 'B', LTE),
 				E('h4', {}, _('NR bands')), checks('m5-nr-bands', 'n', NR),
+				E('p', { id: 'm5-supported-summary', 'class': 'm5-note' }, '支持频段以模组回读为准；n76 暂不支持手动设置。'),
 				E('div', { 'class': 'm5-lock-footer' }, [
 					E('button', { 'class': 'btn cbi-button m5-lock-action', click: ui.createHandlerFn(this, 'readLocks') }, _('Read')),
 					E('button', { 'class': 'btn cbi-button cbi-button-apply m5-lock-action', click: ui.createHandlerFn(this, 'applyBands') }, _('Apply band lock')),
@@ -282,10 +273,9 @@ return view.extend({
 			E('div', { id: 'm5-pane-cell', 'class': 'm5-lock-pane', hidden: true }, [
 			common.panel(_('Cell lock'), E('div', { 'class': 'm5-form' }, [
 				E('label', { 'for': 'm5-lock-rat' }, _('Radio type')), E('select', { id: 'm5-lock-rat', change: function() {
-					let values = this.value == 'lte' ? LTE : NR, select = document.getElementById('m5-lock-band');
-					select.replaceChildren(...values.map(v => E('option', { value: v }, (this.value == 'lte' ? 'B' : 'n') + v)));
+					this.dispatchEvent(new CustomEvent('modem-rat-change', {bubbles:true}));
 				} }, [ E('option', { value: 'nr' }, '5G NR'), E('option', { value: 'lte' }, '4G LTE') ]),
-				E('label', { 'for': 'm5-lock-band' }, _('Band')), E('select', { id: 'm5-lock-band' }, NR.map(v => E('option', { value: v }, 'n' + v))),
+				E('label', { 'for': 'm5-lock-band' }, _('Band')), E('select', { id: 'm5-lock-band' }, [E('option', {value:''}, '请选择频段'), ...NR.filter(v => v != 76).map(v => E('option', { value: v }, 'n' + v))]),
 				E('label', { 'for': 'm5-lock-arfcn' }, _('Channel number (ARFCN)')), E('input', { id: 'm5-lock-arfcn', type: 'number', min: 1, max: 3279165, placeholder: _('Select a cell below or enter its ARFCN') }),
 				E('label', { 'for': 'm5-lock-pci' }, _('Physical cell ID (PCI, optional)')), E('input', { id: 'm5-lock-pci', type: 'number', min: 0, max: 2000, placeholder: _('Select a cell below or enter its PCI') }),
 				E('span'), E('div', { 'class': 'm5-lock-footer' }, [
@@ -300,6 +290,7 @@ return view.extend({
 			common.panel(_('Current lock state and operation result'), E('pre', { id: 'm5-lock-result', 'class': 'm5-raw' }, '-')),
 			E('details', { 'class': 'm5-panel' }, [ E('summary', {}, _('Current lock state and operation result')), E('pre', { id: 'm5-lock-state', 'class': 'm5-raw' }, common.resultText(locks)) ])
 		]);
+		page.addEventListener('modem-rat-change', () => this.updateBandSelect());
 		requestAnimationFrame(() => this.syncLocks(locks));
 		return page;
 	},

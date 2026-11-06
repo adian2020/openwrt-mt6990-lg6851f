@@ -4,6 +4,7 @@
 'require rpc';
 'require poll';
 'require modem5g.common_v5 as common';
+'require modem5g.cellular_v1 as cellular';
 
 const callStatus = rpc.declare({ object: 'luci.modem5g', method: 'get_status', expect: {} });
 const callCells = rpc.declare({ object: 'luci.modem5g', method: 'get_cells', expect: {} });
@@ -14,46 +15,7 @@ function netValue(n, key) {
 	return Array.isArray(a) ? a.map(x => x.address ? `${x.address}/${x.mask}` : String(x)).join('\n') : (a || '-');
 }
 
-function csv(text) {
-	let out = [], value = '', quoted = false;
-	for (let c of text) {
-		if (c == '"') quoted = !quoted;
-		else if (c == ',' && !quoted) { out.push(value); value = ''; }
-		else value += c;
-	}
-	out.push(value);
-	return out;
-}
-
-function bandFor(arfcn, rat) {
-	if (rat == 11) {
-		if (arfcn >= 499200 && arfcn <= 537999) return 'n41';
-		if (arfcn >= 620000 && arfcn <= 653333) return 'n77 / n78';
-		if (arfcn >= 620000 && arfcn <= 680000) return 'n77';
-		return 'NR';
-	}
-	return 'LTE';
-}
-
-function decode(value, kind, rat) {
-	let n = +value;
-	if (!Number.isFinite(n) || n == 255) return null;
-	if (kind == 'rsrp') return n - (rat == 11 ? 156 : 140);
-	if (kind == 'rsrq') return n / 2 - 43;
-	/* MT6990 ECELL uses the same 0.5 dB SINR step as its extended CESQ. */
-	return n / 2 - 23;
-}
-
-function parseCells(result) {
-	let raw = common.resultText(result), match = raw.match(/\+ECELL:\s*([^\r\n]+)/);
-	if (!match) return [];
-	let fields = csv(match[1]), count = +fields.shift(), rows = [];
-	for (let i = 0; i < count && fields.length >= 15; i++) {
-		let f = fields.splice(0, 15), arfcn = +f[14], rat = +f[0];
-		rows.push({ serving: i == 0, rat, band: bandFor(arfcn, rat), arfcn, pci: +f[5], rsrp: decode(f[6], 'rsrp', rat), rsrq: decode(f[7], 'rsrq', rat), sinr: decode(f[11], 'sinr', rat) });
-	}
-	return rows.filter(r => r.arfcn > 0 && r.pci >= 0);
-}
+const parseCells = result => cellular.parseCells(result);
 
 function statusSignal(data, key) {
 	let m = (data.cesq || '').match(new RegExp(`${key}=(-?[0-9.]+)`));

@@ -1,6 +1,7 @@
 'use strict';
 'require view';
 'require poll';
+'require ui';
 'require modem5g.cpe_v1 as C';
 
 function graph(values){
@@ -34,9 +35,12 @@ return view.extend({
  },
  paint(data){
   const m=data.modem||{},n=data.network||{},lan=data.lan||{};
+  const cells = C.cellular.parseCells(data.cells?.serving);
+  const serving = !data.cells?.stale && cells.find(row=>row.serving);
+  const signal = serving || m;
   const header=C.card('当前连接',E('div',{'class':'cpe-hero'},[
    E('div',{},[E('strong',{},`${m.rat||'未获取'} · ${m.operator||'运营商未获取'}`),C.unavailable(`${n.up?'数据接口在线':'数据接口未连接'} · ${n.l3_device||'接口未获取'} · ${data.cached_modem_stale?'蜂窝缓存未就绪或已过期':'蜂窝缓存 '+data.cache_age+' 秒前更新'}`)]),
-   E('div',{},[E('strong',{},C.value(m.rsrp,' dBm')),C.unavailable(`RSRQ ${C.value(m.rsrq,' dB')} · SINR ${C.value(m.sinr,' dB')}`)])]));
+   E('div',{},[E('strong',{},C.value(signal.rsrp,' dBm')),C.unavailable(`RSRQ ${C.value(signal.rsrq,' dB')} · SINR ${C.value(signal.sinr,' dB')}${serving?' · 小区采样 '+data.cells.age+' 秒前':''}`)])]));
   const memory=data.memory||{},storage=data.storage||{};
   const devices=C.card('系统与设备',E('div',{},[E('div',{'class':'cpe-grid'},[
    C.metric('内存使用率',memory.percent==null?'未获取':memory.percent.toFixed(1)+'%'),C.metric('内存已用 / 总量',C.bytes(memory.used)+' / '+C.bytes(memory.total)),
@@ -49,13 +53,23 @@ return view.extend({
   const wifi=C.card('无线网络',C.table(['接口 / SSID','信道','频率','功率','加密'],(data.wireless||[]).map(row=>[`${row.device} / ${row.ssid||'未获取'}`,row.channel,C.value(row.frequency,' MHz'),C.value(row.txpower,' dBm'),row.encryption])));
   const clients=C.card('无线客户端',C.table(['设备','MAC','信号','接收协商速率','发送协商速率'],(data.clients||[]).map(row=>[row.device,row.mac,C.value(row.signal,' dBm'),C.value(row.rx_kbit==null?null:row.rx_kbit/1000,' Mbit/s'),C.value(row.tx_kbit==null?null:row.tx_kbit/1000,' Mbit/s')])));
   const leases=C.card('DHCP 租约',C.table(['名称','地址','MAC'],(data.leases||[]).map(row=>[row.hostname,row.address,row.mac])));
+  const cellCard = C.card('当前小区与邻区',E('div',{},[
+   E('button',{'class':'btn',click:async ev=>{const button=ev.currentTarget;button.disabled=true;try{const result=await C.getCells();if(result?.initializing||result?.serving?.code)throw Error(result?.serving?.output||'小区读取尚未就绪');await this.refresh();}catch(error){ui.addNotification(null,E('p',{},error.message||String(error)),'error');}finally{button.disabled=false;}}},'刷新小区'),
+   C.unavailable(data.cells ? `采样于 ${data.cells.age} 秒前${data.cells.stale ? '（已过期，点击刷新）' : ''}；频段为按频点计算的候选范围。` : '尚无小区采样，点击刷新读取。'),
+   C.table(['类型','候选频段','PCI','ARFCN','RSRP','RSRQ','SINR'],cells.map(row=>[row.serving?'服务小区':'邻区',row.band,row.pci,row.arfcn,C.value(row.rsrp,' dBm'),C.value(row.rsrq,' dB'),C.value(row.sinr,' dB')]))
+  ]));
+  const masks=C.cellular.lockMasks(data.bands?.output);
+  const bandCard=C.card('频段限制',C.rows([
+   ['当前允许 LTE',masks.current?.lte.map(v=>'B'+v).join(' · ')],['当前允许 NR',masks.current?.nr.map(v=>'n'+v).join(' · ')],
+   ['能力 / 采样',masks.supported?`LTE ${masks.supported.lte.length} 个 / NR ${masks.supported.nr.length} 个；${data.bands.age} 秒前${data.bands.stale?'（已过期）':''}`:'请在“蜂窝 → 网络锁定”读取频段']
+  ]));
   const controls=C.card('快捷控制',E('div',{'class':'cpe-actions'},[
    E('button',{'class':'btn',click:()=>C.action('建立数据连接','将按已保存的 APN 建立连接。',C.connect,()=>this.refresh())},'连接数据'),
    E('button',{'class':'btn',click:()=>C.action('断开数据连接','蜂窝网络会中断。',C.disconnect,()=>this.refresh())},'断开数据'),
    E('button',{'class':'btn',click:()=>C.action('开启射频','将开启蜂窝射频，并按现有配置请求拨号。',()=>C.setRadio(true),()=>this.refresh())},'开启射频'),
    E('button',{'class':'btn',click:()=>C.action('关闭射频','蜂窝连接、短信等服务可能中断。',()=>C.setRadio(false),()=>this.refresh())},'关闭射频')
   ]));
-  this.body.replaceChildren(header,network,devices,temperature,wifi,clients,leases,controls,C.unavailable('温度按系统提供的传感器名称展示。无线客户端速率为协商速率，实际传输速度请查看上方流量曲线。'));
+  this.body.replaceChildren(header,network,cellCard,bandCard,devices,temperature,wifi,clients,leases,controls,C.unavailable('温度按系统提供的传感器名称展示。无线客户端速率为协商速率，实际传输速度请查看上方流量曲线。'));
  },
  handleSaveApply:null,handleSave:null,handleReset:null
 });

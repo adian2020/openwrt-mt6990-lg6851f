@@ -16,6 +16,16 @@ export function cached() {
 	}
 	return row;
 }
+export function reading(name) {
+	if (index(['cells', 'bands'], name) < 0) return null;
+	let data;
+	try { data = json(text('/tmp/lg6851f-modem-' + name + '.json')); } catch (e) { return null; }
+	let boot = text('/proc/sys/kernel/random/boot_id');
+	if (!boot || type(data) != 'object' || data.boot_id != boot || num(data.updated) == null) return null;
+	data.age = time() - data.updated;
+	data.stale = data.age < 0 || data.age > 180;
+	return data;
+}
 export function mask(value) {
 	return !value ? null : length(value) > 7 ? substr(value, 0, 3) + '***' + substr(value, -3) : '***';
 }
@@ -94,6 +104,7 @@ export function snapshot() {
 			radio: identity.RADIO || null, rsrp: num(identity.RSRP), rsrq: num(identity.RSRQ), sinr: num(identity.SINR),
 			updated: num(identity.UPDATED), imei: mask(identity.IMEI), imsi: mask(identity.IMSI), iccid: mask(identity.ICCID) },
 		advanced: { ca: null, mcs: null, qci: null, ambr: null, endc: null, sa_nsa: null, ppe: null },
+		cells: reading('cells'), bands: reading('bands'),
 		capabilities: { apn: true, band_lock: true, cell_lock: true, sms: true, at: true,
 			cpu_frequency_read: length(frequencies) > 0, cpu_voltage_write: false, sim_switch: false,
 			usb_role_write: false, battery_control: false, ttl_write: false, sms_forward: false }

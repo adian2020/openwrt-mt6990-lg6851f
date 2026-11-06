@@ -9,7 +9,7 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
  const browser = await chromium.launch({headless:true,args:['--no-sandbox']});
  try {
   const files = {};
-  for (const name of ['modem5g/cpe_v1','view/modem5g/dashboard_v1','view/modem5g/apn_v1','view/modem5g/panels_v1'])
+  for (const name of ['modem5g/cellular_v1','modem5g/cpe_v1','view/modem5g/dashboard_v1','view/modem5g/apn_v1','view/modem5g/panels_v1'])
    files[name] = fs.readFileSync(path.join(base,name+'.js'),'utf8');
   const css = fs.readFileSync(path.join(root,'package/vendor/luci-theme-aurora/htdocs/luci-static/aurora/main.css'),'utf8');
   for (const width of [390,1280]) {
@@ -31,7 +31,7 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
     const data={modem:{rat:'5G',operator:'测试运营商',rsrp:-101,rsrq:-10.5,sinr:18.5,imei:'123***111'},
      network:{up:true,l3_device:'ccmni3','ipv4-address':[{address:'192.0.2.2',mask:29}]},
      memory:{percent:21.1,used:211000,total:1000000},temperatures:[{kind:'thermal',name:'cpu_little0',celsius:56.415}],
-     apn:{apn:'example.net'},wireless:[{device:'phy0-ap0',ssid:'测试无线网络',channel:36,frequency:5180,txpower:23,encryption:'psk2'}],
+     cells:{age:5,stale:false,serving:{code:0,output:'+ECELL: 1,11,0,0,460,11,321,55,65,255,255,11,82,255,,640000'}},apn:{apn:'example.net'},wireless:[{device:'phy0-ap0',ssid:'测试无线网络',channel:36,frequency:5180,txpower:23,encryption:'psk2'}],
      clients:[{device:'phy0-ap0',mac:'02:00:00:00:00:01',signal:-46,rx_kbit:1200900,tx_kbit:1134200}],
      leases:[{hostname:'synthetic-device',address:'192.0.2.3',mac:'02:00:00:00:00:01'}],cached_modem_stale:false,cache_age:5};
     window.calls=[];let ticks=0;
@@ -44,7 +44,8 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
      return Promise.resolve({code:0,output:'测试操作完成'});
     }};
     const ui={hideModal:()=>document.querySelector('#modal').replaceChildren(),showModal:(title,body)=>document.querySelector('#modal').replaceChildren(E('h2',{},title),...body),addNotification:()=>{}};
-    const C=new Function('baseclass','rpc','ui','E',files['modem5g/cpe_v1'])({extend:x=>x},rpc,ui,E);
+    const cellular=new Function('baseclass',files['modem5g/cellular_v1'])({extend:x=>x});
+    const C=new Function('baseclass','rpc','ui','cellular','E',files['modem5g/cpe_v1'])({extend:x=>x},rpc,ui,cellular,E);
     const poll={add:()=>{}};
     window.mount=async name=>{
      const view=new Function('view','poll','ui','C','E',files['view/modem5g/'+name+'_v1'])({extend:x=>x},poll,ui,C,E);
@@ -61,6 +62,8 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
    await fit('dashboard');
    const text=await page.locator('main').innerText();
    if(!text.includes('-10.5 dB')||!text.includes('25.0%')||!text.includes('未取得全球 IPv6'))throw Error('measurement text mismatch');
+   if(!text.includes('640000')||!text.includes('n77 / n78'))throw Error('cell sample missing/incorrect');
+   if(await page.evaluate(()=>calls.some(row=>row.method==='get_cells')))throw Error('dashboard issued an automatic AT query');
    await page.getByRole('button',{name:'关闭射频',exact:true}).click();
    if(await page.evaluate(()=>calls.some(row=>row.method==='set_radio')))throw Error('radio changed without confirmation');
    await page.locator('#modal').getByRole('button',{name:'取消',exact:true}).click();

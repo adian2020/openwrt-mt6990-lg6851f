@@ -6,6 +6,7 @@ import pathlib
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -81,6 +82,19 @@ class DashboardTest(unittest.TestCase):
         """)
         self.assertEqual(value, ['2001:db8::1/64'])
 
+    def test_cached_radio_readings_are_bound_to_boot_and_have_age(self):
+        self.write('/proc/sys/kernel/random/boot_id', 'test-boot')
+        path = '/tmp/lg6851f-modem-cells.json'
+        self.write(path, json.dumps(dict(boot_id='test-boot', updated=int(time.time()), serving={'output': '+ECELL: 0'})))
+        source = "import * as d from 'lg6851f.dashboard'; printf('%J', d.reading('cells'));"
+        self.assertFalse(self.run_ucode(source)['stale'])
+        self.write(path, json.dumps(dict(boot_id='test-boot', updated=int(time.time()) - 600)))
+        self.assertTrue(self.run_ucode(source)['stale'])
+        self.write(path, json.dumps(dict(boot_id='old-boot', updated=int(time.time()))))
+        self.assertIsNone(self.run_ucode(source))
+        self.write(path, '{broken')
+        self.assertIsNone(self.run_ucode(source))
+
     def rpc(self, method, args=None, **overrides):
         # Only replace the external transport/config adapters. Execute the entire
         # production method implementation in the actual ucode interpreter.
@@ -89,11 +103,22 @@ class DashboardTest(unittest.TestCase):
         source = source.replace("return { 'luci.modem5g': methods };", "export const rpc_methods = methods;")
         self.write('/rpc-under-test.uc', source)
         self.write('/testfs.uc', """
-            export function readfile(path) { return path == '/tmp/sysinfo/board_name' ? TEST_BOARD : ''; }
+            export function readfile(path) { return path == '/tmp/sysinfo/board_name' ? TEST_BOARD : path == '/proc/sys/kernel/random/boot_id' ? 'test-boot' : ''; }
             export function glob(path) { return []; }
+            export function mkdtemp(path) {return '/tmp/test-reading';}
+            export function rmdir(path) {return true;}
+            export function unlink(path) {delete TEST_CACHE[path];return true;}
+            export function open(path, mode, perm) {
+                TEST_CACHE[path] = {perm};
+                return {write:function(data) { TEST_CACHE[path].data=data; return length(data); }, close:function() { return true; }};
+            }
+            export function rename(oldpath, newpath) {TEST_CACHE[newpath]=TEST_CACHE[oldpath];delete TEST_CACHE[oldpath];return true;}
             export function popen(command, mode) {
                 push(TEST_COMMANDS, command);
-                return { read: function() { return '{}'; }, close: function() { return 0; } };
+                let output = '{}';
+                for (let needle, response in TEST_RESPONSES)
+                    if (index(command, needle) >= 0) {output=response;break;}
+                return { read: function() { return output; }, close: function() { return 0; } };
             }
         """)
         self.write('/testuci.uc', """
@@ -108,12 +133,12 @@ class DashboardTest(unittest.TestCase):
             }; }
         """)
         globals = dict(TEST_BOARD='fiberhome,lg6851f', TEST_UCI={'proto': 'ql_datacall', 'password': 'old-secret'},
-                       TEST_PENDING={}, TEST_COMMANDS=[], TEST_COMMITTED=False, METHOD=method, ARGS=args or {})
+                       TEST_PENDING={}, TEST_COMMANDS=[], TEST_COMMITTED=False, TEST_CACHE={}, TEST_RESPONSES={}, METHOD=method, ARGS=args or {})
         globals.update(overrides)
         return self.run_ucode("""
             import { rpc_methods } from 'rpc-under-test';
             let result = rpc_methods[METHOD].call({args: ARGS});
-            printf('%J', {result, config:TEST_UCI, committed:TEST_COMMITTED, commands:TEST_COMMANDS});
+            printf('%J', {result, config:TEST_UCI, committed:TEST_COMMITTED, commands:TEST_COMMANDS, cache:TEST_CACHE});
         """, **globals)
 
     @staticmethod
@@ -141,6 +166,35 @@ class DashboardTest(unittest.TestCase):
             self.assertNotIn('mipc', command)
             self.assertNotIn('modem5g-at', command)
             self.assertNotIn('lg6851f-modem-lock', command)
+
+    def test_explicit_cell_query_publishes_private_snapshot(self):
+        result = self.rpc('get_cells', TEST_RESPONSES={
+            'network.interface.modem5g': '{"up":true,"uptime":120}',
+            'AT+ECELL': '+ECELL: 0\r\nOK',
+            'AT+EINFO?': '+EINFO: 0\r\nOK',
+        })
+        cache = result['cache']['/tmp/lg6851f-modem-cells.json']
+        self.assertEqual(cache['perm'], 0o600)
+        data = json.loads(cache['data'])
+        self.assertEqual(data['serving']['output'], '+ECELL: 0\r\nOK')
+        self.assertEqual(data['boot_id'], 'test-boot')
+        self.assertGreater(data['updated'], 0)
+
+    def test_new_writable_bands_and_read_only_n76(self):
+        result = self.rpc('set_band_lock', dict(lte=[46], nr=[75]))
+        self.assertEqual(result['result']['code'], 0)
+        self.assertIn("'apply-bands' '46' '75'", result['commands'][0])
+        result = self.rpc('set_band_lock', dict(lte=[46], nr=[76]))
+        self.assertEqual(result['result']['code'], 95)
+        self.assertEqual(result['commands'], [])
+
+    def test_partial_band_read_does_not_replace_cache(self):
+        result = self.rpc('get_locks', TEST_RESPONSES={
+            'network.interface.modem5g': '{"up":true,"uptime":120}',
+            'lg6851f-modem-lock': 'get band mode success!\nlte band info = 0000000500000000\nnr band info = 000000000000000000002000\nget band mode error!',
+        })
+        self.assertEqual(result['result']['code'], 5)
+        self.assertEqual(result['cache'], {})
 
     def test_save_preserves_password_and_does_not_apply(self):
         result = self.rpc('set_apn', dict(values=self.apn(), apply=False))

@@ -2,6 +2,7 @@
 'require baseclass';
 'require rpc';
 'require ui';
+'require modem5g.cellular_v1 as cellular';
 
 const dashboard = rpc.declare({ object: 'luci.modem5g', method: 'get_dashboard', expect: {} });
 const rates = rpc.declare({ object: 'luci.modem5g', method: 'get_rates', expect: {} });
@@ -11,9 +12,10 @@ const getIdentity = rpc.declare({ object: 'luci.modem5g', method: 'get_sim_ident
 const setRadio = rpc.declare({ object: 'luci.modem5g', method: 'set_radio', params: ['enabled'], expect: {} });
 const connect = rpc.declare({ object: 'luci.modem5g', method: 'ifup', expect: {} });
 const disconnect = rpc.declare({ object: 'luci.modem5g', method: 'ifdown', expect: {} });
+const getCells = rpc.declare({ object: 'luci.modem5g', method: 'get_cells', expect: {} });
 
 return baseclass.extend({
- dashboard, rates, getApn, saveApn, getIdentity, setRadio, connect, disconnect,
+ dashboard, rates, getApn, saveApn, getIdentity, setRadio, connect, disconnect, getCells, cellular,
  value(v, unit) { return v == null || v === '' ? '未获取' : String(v) + (unit || ''); },
  bytes(v) { if (v == null) return '未获取'; const u = ['B','KiB','MiB','GiB','TiB']; let i=0; while(v>=1024&&i<4){v/=1024;i++;} return `${v.toFixed(i ? 2 : 0)} ${u[i]}`; },
  elapsed(v) { if(v==null)return '未获取'; v=Math.floor(v); return `${Math.floor(v/86400)}天 ${Math.floor(v%86400/3600)}小时 ${Math.floor(v%3600/60)}分`; },

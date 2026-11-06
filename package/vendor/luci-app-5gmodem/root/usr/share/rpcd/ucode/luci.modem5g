@@ -2,7 +2,7 @@
 
 'use strict';
 
-import { popen, readfile, glob } from 'fs';
+import { popen, readfile, glob, open, rename, mkdtemp, rmdir, unlink } from 'fs';
 import { cursor } from 'uci';
 import * as dashboard from 'lg6851f.dashboard';
 
@@ -169,6 +169,24 @@ function read_json_command(argv, seconds) {
 	let result = capture(argv, seconds || 5);
 	try { return result.code == 0 ? json(result.output) : null; } catch (e) { return null; }
 }
+function save_reading(name, result) {
+	result.updated = time();
+	result.boot_id = trim(readfile('/proc/sys/kernel/random/boot_id') || '');
+	let path = '/tmp/lg6851f-modem-' + name + '.json';
+	let directory = mkdtemp('/tmp/lg6851f-reading.XXXXXX');
+	if (!directory) return result;
+	let temporary = directory + '/reading';
+	let file = open(temporary, 'wx', 0o600);
+	if (file) {
+		let output = sprintf('%J', result);
+		let written = file.write(output);
+		let closed = file.close();
+		if (written == length(output) && closed) rename(temporary, path);
+	}
+	unlink(temporary);
+	rmdir(directory);
+	return result;
+}
 function apn_values() {
 	let uci = cursor(); uci.load('network');
 	let values = uci.get_all('network', 'modem5g') || {};
@@ -259,11 +277,15 @@ const methods = {
 	get_cells: { call: function() {
 		if (!modem_settled(network_state()))
 			return { initializing: true, serving: { output: 'Waiting for modem startup to settle' }, engineering: { output: '' } };
-		return {
+		let result = {
 			serving: at('AT+ECELL'),
 			engineering: at('AT+EINFO?'),
 			note: 'Channel information is derived from the same read-only AT+ECELL response shown below.'
 		};
+		if (result.serving.code == 0 && match(result.serving.output, /\+ECELL:/) && match(result.serving.output, /\bOK\b/))
+			return save_reading('cells', result);
+		result.serving.code = result.serving.code || 5;
+		return result;
 	} },
 	list_sms: { call: function() {
 		let mode = at('AT+CMGF=1');
@@ -319,7 +341,14 @@ const methods = {
 	get_locks: { call: function() {
 		if (!modem_settled(network_state()))
 			return { code: 11, output: 'Waiting for modem startup to settle' };
-		return capture([ LOCKCLI, 'get' ], 40);
+		let result = capture([ LOCKCLI, 'get' ], 40);
+		if (result.code != 0) return result;
+		if (length(split(result.output, 'get band mode success!')) == 3 &&
+		    length(split(result.output, 'lte band info')) == 3 && length(split(result.output, 'nr band info')) == 3)
+			return save_reading('bands', result);
+		result.code = 5;
+		result.error = '无法完整读取当前频段和模组能力，请稍后重试';
+		return result;
 	} },
 	get_lock_request: { call: function() {
 		let state = readfile(LOCKSTATE) || '';
@@ -334,8 +363,10 @@ const methods = {
 		};
 	} },
 	set_band_lock: { args: { lte: [], nr: [] }, call: function(req) {
-		let lte = band_list(req.args?.lte, [ 1, 3, 5, 7, 8, 20, 28, 32, 38, 40, 41, 42, 43 ]);
-		let nr = band_list(req.args?.nr, [ 1, 3, 5, 7, 8, 20, 28, 38, 40, 41, 77, 78 ]);
+		if (index(req.args?.nr || [], 76) >= 0)
+			return { code: 95, error: '模组报告支持 n76，但厂商工具不接受手动设置；请使用恢复默认' };
+		let lte = band_list(req.args?.lte, [ 1, 3, 5, 7, 8, 20, 28, 32, 38, 40, 41, 42, 43, 46 ]);
+		let nr = band_list(req.args?.nr, [ 1, 3, 5, 7, 8, 20, 28, 38, 40, 41, 75, 77, 78 ]);
 		if (!lte || !nr)
 			return { code: 22, error: 'Select at least one valid LTE band and one valid NR band' };
 		return launch_lock([ 'apply-bands', lte, nr ]);
