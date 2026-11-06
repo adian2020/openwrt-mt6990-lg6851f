@@ -52,6 +52,20 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
+      - name: Diagnose Kconfig recursive dependencies
+        run: |
+          echo "===== Feed directories ====="
+          ls -lah package/feeds/
+
+          echo "===== Generated package config references ====="
+          for p in libsdl2-image libsdl3-image sdl3-doom libsdl2-compat wpewebkit-driver wpewebkit-minibrowser openappid libgtk-demos libgtk-utils qt5graphicaleffects qt5quick-controls2 qt5svg; do
+            echo "===== $p ====="
+            grep -RInE "DEPENDS.*${p}|${p}.*DEPENDS" package/feeds/ feeds/ package/ 2>/dev/null | head -20 || true
+          done
+
+          echo "===== Nikki and Vantage package files ====="
+          find package/feeds -type f \( -path '*nikki*Makefile' -o -path '*vantage*Makefile' \) -print
+
       - name: Generate configuration
         run: |
           echo "===== Before defconfig ====="
