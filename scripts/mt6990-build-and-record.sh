@@ -44,6 +44,25 @@ if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_di
 		printf 'ERROR: LG6851F image is missing /usr/sbin/fsck.f2fs; refusing to sign.\n' >&2
 		exit 1
 	}
+	if grep -qx 'CONFIG_PACKAGE_luci-app-filemanager=y' "$repo_dir/.config"; then
+		[ -s "$rootfs_dir/www/luci-static/resources/view/system/filemanager.js" ] || {
+			printf 'ERROR: File Manager is selected but missing from rootfs.\n' >&2
+			exit 1
+		}
+	fi
+	if grep -qx 'CONFIG_PACKAGE_luci-app-uugamebooster=y' "$repo_dir/.config"; then
+		for program in etc/init.d/uuplugin usr/libexec/uuplugin/uu-detect usr/libexec/uuplugin/uu-view usr/libexec/uuplugin/xt/iptables; do
+			[ -x "$rootfs_dir/$program" ] || {
+				printf 'ERROR: UU program missing or not executable: %s\n' "$program" >&2
+				exit 1
+			}
+		done
+		[ -s "$rootfs_dir/usr/lib/uuplugin/uu-view-preload-aarch64.so" ] || {
+			printf 'ERROR: UU ARM64 device-view library is missing from rootfs.\n' >&2
+			exit 1
+		}
+	fi
+
 fi
 
 # The normal OpenWrt world target is the canonical LG6851F build entry point.
