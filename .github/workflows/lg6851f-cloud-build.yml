@@ -1,4 +1,3 @@
-
 name: LG6851F MT6990 Cloud Build
 
 on:
@@ -108,6 +107,26 @@ jobs:
 
           echo "===== Verify UU Game Booster configuration ====="
           grep -n '^CONFIG_PACKAGE_luci-app-uugamebooster=y$' .config
+
+      - name: Verify UU Game Booster package discovery
+        run: |
+          set -e
+
+          echo "===== Check UU package Makefile ====="
+          test -f package/vendor/luci-app-uugamebooster/Makefile
+
+          echo "===== Generate OpenWrt package metadata ====="
+          make packageinfo
+
+          echo "===== Verify UU package discovery ====="
+          grep -n -A 12 -B 2 \
+            '^Package: luci-app-uugamebooster$' \
+            tmp/.packageinfo
+
+          echo "===== Verify UU package configuration ====="
+          grep -n '^CONFIG_PACKAGE_luci-app-uugamebooster=y$' .config
+
+          echo "UU Game Booster package discovery PASSED."
 
       - name: Build and verify LG6851F images
         run: |
