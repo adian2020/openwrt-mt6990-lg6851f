@@ -1,0 +1,173 @@
+
+name: Publish LG6851F-Pro Release
+
+on:
+  workflow_run:
+    workflows:
+      - LG6851F MT6990 Cloud Build
+    types:
+      - completed
+
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "成功编译的 Actions Run ID"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+env:
+  GH_REPO: ${{ github.repository }}
+  SOURCE_RUN_ID: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.event.inputs.run_id }}
+
+jobs:
+  publish:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify successful source build and prepare release notes
+        id: source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" > source-run.json
+          jq -e '.status == "completed" and .conclusion == "success" and .head_branch == "cloud-build" and .path == ".github/workflows/lg6851f-cloud-build.yml"' source-run.json > /dev/null
+          source_sha=$(jq -r .head_sha source-run.json)
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          # Read Markdown as data. Never run code from a workflow_run artifact.
+          if gh api "repos/$GITHUB_REPOSITORY/contents/RELEASE_NOTES.md?ref=$source_sha" > notes.json; then
+            jq -r .content notes.json | base64 -d > RELEASE_NOTES.md
+          else
+            # A build already in progress may predate the notes file. The
+            # backfill is keyed by its exact SHA, not the latest branch tip.
+            gh api "repos/$GITHUB_REPOSITORY/contents/docs/releases/$source_sha.md?ref=cloud-build" > notes.json
+            jq -r .content notes.json | base64 -d > RELEASE_NOTES.md
+          fi
+          test -s RELEASE_NOTES.md
+          {
+            printf '\n## 构建信息\n\n'
+            printf -- '- 源码分支：`cloud-build`\n'
+            printf -- '- 源码提交：[ %s ](https://github.com/%s/commit/%s)\n' "$source_sha" "$GITHUB_REPOSITORY" "$source_sha"
+            printf -- '- 编译记录：https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$SOURCE_RUN_ID"
+          } >> RELEASE_NOTES.md
+
+      - name: Download firmware artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: LG6851F-MT6990-Firmware
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release_firmware
+
+      - name: Prepare A and B slot packages
+        run: |
+          set -e
+
+          echo "===== Check source folders ====="
+
+          A_SOURCE="release_firmware/A槽单刷boot和rootfs签名成功包"
+          B_SOURCE="release_firmware/B槽单刷boot和rootfs签名成功包"
+          BIN_SOURCE="release_firmware/bin/targets/mediatek/mt6990"
+
+          A_SYSUPGRADE="lg6851f-mt6990-a-signed-sysupgrade.tar.gz"
+          B_SYSUPGRADE="lg6851f-mt6990-b-signed-sysupgrade.tar.gz"
+
+          test -d "$A_SOURCE"
+          test -d "$B_SOURCE"
+          test -f "$BIN_SOURCE/$A_SYSUPGRADE"
+          test -f "$BIN_SOURCE/$B_SYSUPGRADE"
+
+          A_FOLDER="A槽单刷boot和rootfs签名成功包"
+          B_FOLDER="B槽单刷boot和rootfs签名成功包"
+
+          A_ZIP="A槽单刷文件和网页升级包.zip"
+          B_ZIP="B槽单刷文件和网页升级包.zip"
+
+          mkdir -p release_packages/A release_packages/B
+          cp RELEASE_NOTES.md release_packages/A/
+          cp RELEASE_NOTES.md release_packages/B/
+
+          echo "===== Copy A slot files ====="
+          mkdir -p "release_packages/A/$A_FOLDER"
+          cp -a "$A_SOURCE/." "release_packages/A/$A_FOLDER/"
+          cp "$BIN_SOURCE/$A_SYSUPGRADE" "release_packages/A/"
+
+          echo "===== Copy B slot files ====="
+          mkdir -p "release_packages/B/$B_FOLDER"
+          cp -a "$B_SOURCE/." "release_packages/B/$B_FOLDER/"
+          cp "$BIN_SOURCE/$B_SYSUPGRADE" "release_packages/B/"
+
+          echo "===== Create A slot ZIP ====="
+          cd release_packages/A
+          zip -qr "$GITHUB_WORKSPACE/$A_ZIP" \
+            "$A_FOLDER" "$A_SYSUPGRADE" RELEASE_NOTES.md
+
+          echo "===== Create B slot ZIP ====="
+          cd ../B
+          zip -qr "$GITHUB_WORKSPACE/$B_ZIP" \
+            "$B_FOLDER" "$B_SYSUPGRADE" RELEASE_NOTES.md
+
+          echo "===== Verify ZIP contents ====="
+          unzip -l "$GITHUB_WORKSPACE/$A_ZIP"
+          unzip -l "$GITHUB_WORKSPACE/$B_ZIP"
+
+          echo "===== Final release files ====="
+          ls -lh "$GITHUB_WORKSPACE"/*.zip
+
+      - name: Generate automatic version number
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+
+          echo "===== Get existing version tags ====="
+
+          TAGS=$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v" \
+            --jq '.[].ref' \
+            | sed 's#refs/tags/##' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V || true)
+
+          LATEST=$(echo "$TAGS" | tail -n 1)
+
+          if [ -z "$LATEST" ]; then
+            VERSION="v1.0.8"
+            echo "No previous version found. Starting from $VERSION"
+          else
+            echo "Latest version: $LATEST"
+
+            VERSION_NUMBER="${LATEST#v}"
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NUMBER"
+
+            PATCH=$((PATCH + 1))
+            VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+
+            echo "Next version: $VERSION"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$VERSION" >> "$GITHUB_OUTPUT"
+
+          echo "===== Generated version: $VERSION ====="
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          target_commitish: ${{ steps.source.outputs.sha }}
+          tag_name: ${{ steps.version.outputs.tag_name }}
+          name: LG6851F-Pro ${{ steps.version.outputs.version }} (Build ${{ env.SOURCE_RUN_ID }})
+          files: |
+            A槽单刷文件和网页升级包.zip
+            B槽单刷文件和网页升级包.zip
+            RELEASE_NOTES.md
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: false
+          draft: false
+          prerelease: false
