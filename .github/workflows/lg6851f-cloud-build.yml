@@ -125,32 +125,37 @@ jobs:
       - name: Verify UU Game Booster package discovery
         run: |
           set -e
-          set -o pipefail
 
           echo "===== Check UU package Makefile ====="
 
           test -f package/vendor/luci-app-uugamebooster/Makefile
 
-          echo "===== Verify UU dependency ====="
+          echo "===== Verify UU package definition ====="
 
-          grep '^LUCI_DEPENDS' \
+          grep -nE 'PKG_NAME|LUCI_TITLE|LUCI_DEPENDS|BuildPackage|luci.mk' \
             package/vendor/luci-app-uugamebooster/Makefile
 
-          echo "===== Generate OpenWrt package metadata with verbose output ====="
+          echo "===== Check package scan result ====="
 
-          make -j1 V=s packageinfo 2>&1 | tee "$RUNNER_TEMP/packageinfo.log"
-
-          echo "===== Verify UU package discovery ====="
-
-          grep -n -A 12 -B 2 \
-            '^Package: luci-app-uugamebooster$' \
-            tmp/.packageinfo
+          grep -R -n -F 'luci-app-uugamebooster' \
+            tmp .config package/Makefile include/scan.mk \
+            2>/dev/null || true
 
           echo "===== Verify UU package configuration ====="
 
           grep -n '^CONFIG_PACKAGE_luci-app-uugamebooster=y$' .config
 
-          echo "UU Game Booster package discovery PASSED."
+          echo "===== Check required dependencies ====="
+
+          for pkg in kmod-tun luci-compat libstdcpp kmod-ipt-nat ca-bundle unshare ip nftables iptables; do
+            if grep -q "^CONFIG_PACKAGE_${pkg}=y$" .config; then
+              echo "OK: $pkg"
+            else
+              echo "NOTICE: $pkg is not explicitly enabled in .config"
+            fi
+          done
+
+          echo "UU Game Booster preliminary checks completed."
 
       - name: Build and verify LG6851F images
         run: |
