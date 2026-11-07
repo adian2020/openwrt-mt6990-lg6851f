@@ -11,14 +11,33 @@ function graph(values){
 }
 const address=rows=>(rows||[]).map(row=>`${row.address}/${row.mask}`).join(' · ');
 const bandwidth=(row,dir)=>row[dir+'_bandwidth_mhz'] == null ? (row[dir+'_bandwidth_code'] == null ? '未获取' : '编码 '+row[dir+'_bandwidth_code']) : C.value(row[dir+'_bandwidth_mhz'],' MHz');
+const rateCacheKey='lg6851f-dashboard-rates-v1';
+function validSample(sample){return !!sample?.device&&!!sample?.boot_id&&['at','rx','tx'].every(key=>Number.isFinite(sample[key])&&sample[key]>=0);}
+function readRateCache(){try{return JSON.parse(sessionStorage.getItem(rateCacheKey));}catch(error){return null;}}
+function recentRate(cache,current){
+ return validSample(current)&&validSample(cache?.sample)&&cache.sample.boot_id===current.boot_id&&cache.sample.device===current.device&&
+  current.at>=cache.sample.at&&current.at-cache.sample.at<=10&&current.rx>=cache.sample.rx&&current.tx>=cache.sample.tx&&
+  ['rx','tx'].every(key=>Number.isFinite(cache.rate?.[key])&&cache.rate[key]>=0)?cache.rate:null;
+}
+function saveRateCache(sample,rate){try{sessionStorage.setItem(rateCacheKey,JSON.stringify({sample,rate}));}catch(error){}}
 return view.extend({
- load(){return C.dashboard();},
- render(data){
-  this.previous=null;this.history={rx:[],tx:[]};this.busy=false;this.readingRadio=false;
+ async load(){
+  const [data,first]=await Promise.all([C.dashboard(),C.rates().catch(()=>null)]),cached=readRateCache(),rate=recentRate(cached,first);
+  if(rate)return {data,current:first,rate,cpu:null,cached:true};
+  if(validSample(first)){
+   await new Promise(resolve=>setTimeout(resolve,250));
+   const current=await C.rates().catch(()=>null),measured=validSample(current)?C.delta(first,current):null;
+   return {data,current,rate:measured,cpu:C.cpu(first.cpu,current?.cpu),cached:false};
+  }
+  return {data,current:first,rate:null,cpu:null,cached:false};
+ },
+ render({data,current,rate,cpu,cached}){
+  this.previous=current;this.history={rx:[],tx:[]};this.busy=false;this.readingRadio=false;
   this.body=E('div');this.rates=E('div',{'class':'cpe-grid'});
   const root=E('div',{'class':'cpe'},[C.style(),E('div',{'class':'cpe-header'},[E('h2',{},'状态看板'),E('button',{'class':'btn',click:()=>this.refresh()},'刷新状态')]),this.rates,this.body]);
   this.paint(data);
-  poll.add(()=>this.refresh(),10);poll.add(()=>this.sample(),2);this.sample();return root;
+  this.paintRates(current,rate,cpu,cached);
+  poll.add(()=>this.refresh(),10);poll.add(()=>this.sample(),2);return root;
  },
  async refresh(){if(this.busy)return;this.busy=true;try{this.paint(await C.dashboard());}finally{this.busy=false;}},
  async readRadioDetails(){
@@ -35,16 +54,20 @@ return view.extend({
  async sample(){
   if(this.sampling)return;this.sampling=true;
   try{
-   const current=await C.rates(),delta=C.delta(this.previous,current),cpu=C.cpu(this.previous?.cpu,current?.cpu);
-   const waiting=current?.rx!=null&&current?.tx!=null&&current?.at!=null&&!!current?.device&&!!current?.boot_id;
-   if(!delta)this.history={rx:[],tx:[]};
+   const current=await C.rates(),delta=validSample(this.previous)&&validSample(current)?C.delta(this.previous,current):null,cpu=C.cpu(this.previous?.cpu,current?.cpu);
+   const cached=delta?null:recentRate(readRateCache(),current);
+   this.paintRates(current,delta||cached,cpu,!delta&&!!cached);this.previous=current;
+  }finally{this.sampling=false;}
+ },
+ paintRates(current,rate,cpu,cached){
+   if(!rate)this.history={rx:[],tx:[]};
+   if(rate&&!cached)saveRateCache(current,rate);
    const cards=['rx','tx'].map((key,index)=>{
-    if(delta){this.history[key].push(delta[key]);if(this.history[key].length>40)this.history[key].shift();}
-    return C.card(index?'上传速率':'下载速率',E('div',{},[C.metric(delta?'实时速率':waiting?'等待第二次采样':'接口计数未就绪',delta?C.bytes(delta[key])+'/s':waiting?'采样中…':'未获取'),graph(this.history[key]),C.unavailable(delta?'按蜂窝实际接口字节差与采样时间差计算':waiting?'正在采样，约 2 秒后显示实时速率':'尚未取得有效的蜂窝接口流量计数')]));
+    if(rate){this.history[key].push(rate[key]);if(this.history[key].length>40)this.history[key].shift();}
+    return C.card(index?'上传速率':'下载速率',E('div',{},[C.metric(cached?'最近一次速率':'实时速率',rate?C.bytes(rate[key])+'/s':'未获取'),graph(this.history[key]),C.unavailable(cached?'显示最近一次有效速率，新数据将在下次刷新时更新':rate?'按蜂窝实际接口字节差与采样时间差计算':'尚未取得有效的蜂窝接口流量计数')]));
    });
    cards.push(C.card('CPU',C.metric('当前利用率',cpu==null?'等待采样':cpu.toFixed(1)+'%')));
-   this.rates.replaceChildren(...cards);this.previous=current;
-  }finally{this.sampling=false;}
+   this.rates.replaceChildren(...cards);
  },
  paint(data){
   this.data=data;

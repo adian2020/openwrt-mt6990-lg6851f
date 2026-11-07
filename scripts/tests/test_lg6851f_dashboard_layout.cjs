@@ -15,7 +15,8 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
   for (const width of [390,1280]) {
    const page = await browser.newPage({viewport:{width,height:900}});
    const errors = [];page.on('pageerror',error=>errors.push(error.message));
-   await page.setContent('<html><meta name="viewport" content="width=device-width,initial-scale=1"><body><main style="padding:12px;min-width:0"></main><aside id="modal"></aside></body></html>');
+   await page.route('http://lg6851f.test/**',route=>route.fulfill({contentType:'text/html',body:'<html><meta name="viewport" content="width=device-width,initial-scale=1"><body><main style="padding:12px;min-width:0"></main><aside id="modal"></aside></body></html>'}));
+   await page.goto('http://lg6851f.test/');
    await page.addStyleTag({content:css});
    await page.evaluate(files=>{
     window.E=function(tag,attrs={},children=[]){
@@ -68,6 +69,34 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
     if(measure.scroll>width+1||measure.offscreen)throw Error(`${label} ${width}: ${JSON.stringify(measure)}`);
    };
    await page.evaluate(()=>mount('dashboard'));
+   const rateValues=()=>page.locator('main section').filter({has:page.locator('h3').filter({hasText:/^(下载速率|上传速率)$/})}).locator('.cpe-metric strong').allTextContents();
+   const initialRates=await rateValues();
+   if(initialRates.length!==2||initialRates.some(value=>!/^\d.*\/s$/.test(value)))throw Error('first dashboard paint has no measured rates');
+   const beforeReload=await page.evaluate(()=>calls.filter(row=>row.method==='get_rates').length);
+   await page.evaluate(()=>mount('dashboard'));
+   if(JSON.stringify(await rateValues())!==JSON.stringify(initialRates))throw Error('last measured rates not restored');
+   if(!await page.locator('main').getByText('最近一次速率',{exact:true}).count())throw Error('cached rate is not identified');
+   if(await page.evaluate(()=>calls.filter(row=>row.method==='get_rates').length)!==beforeReload+1)throw Error('refresh waited for a second sample despite valid cache');
+   for(const invalid of ['boot','device','expired','counter-reset','malformed']){
+    await page.evaluate(kind=>{
+     const key='lg6851f-dashboard-rates-v1',cache=JSON.parse(sessionStorage.getItem(key));
+     if(kind==='boot')cache.sample.boot_id='old-boot';
+     if(kind==='device')cache.sample.device='old-interface';
+     if(kind==='expired')cache.sample.at-=60;
+     if(kind==='counter-reset')cache.sample.rx+=1e9;
+     cache.rate={rx:999999999,tx:999999999};
+     sessionStorage.setItem(key,kind==='malformed'?'invalid json':JSON.stringify(cache));
+    },invalid);
+    await page.evaluate(()=>mount('dashboard'));
+    if(await page.locator('main').getByText('最近一次速率',{exact:true}).count())throw Error('invalid rate cache reused: '+invalid);
+    if((await rateValues()).some(value=>!/^\d.*\/s$/.test(value)||value.includes('GiB')))throw Error('invalid cache prevented fresh measured rates: '+invalid);
+   }
+   await page.evaluate(async()=>{
+    const descriptor=Object.getOwnPropertyDescriptor(window,'sessionStorage');
+    Object.defineProperty(window,'sessionStorage',{configurable:true,get(){throw Error('Storage blocked');}});
+    try{await mount('dashboard');}finally{Object.defineProperty(window,'sessionStorage',descriptor);}
+   });
+   if((await rateValues()).some(value=>!/^\d.*\/s$/.test(value)))throw Error('blocked browser storage prevented measured rates');
    await page.evaluate(()=>vm.sample());
    await fit('dashboard');
    const text=await page.locator('main').innerText();
