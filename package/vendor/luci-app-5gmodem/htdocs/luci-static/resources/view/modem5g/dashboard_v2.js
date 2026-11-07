@@ -131,8 +131,7 @@ return view.extend({
         <div class="mud-r"><span class="mud-k">调制解调器</span><span class="mud-v" id="mud-modem">--</span></div>
         <div class="mud-r"><span class="mud-k">运营商</span><span class="mud-v" id="mud-carr">--</span></div>
         <div class="mud-r"><span class="mud-k">PLMN</span><span class="mud-v" id="mud-plmn">--</span></div>
-        <div class="mud-r"><span class="mud-k mud-imei-label"><span id="mud-imei-slot1">IMEI</span><span class="mud-imei-active" id="mud-imei-active1" hidden></span></span><span class="mud-v" id="mud-imei1">--</span></div>
-        <div class="mud-r"><span class="mud-k mud-imei-label"><span id="mud-imei-slot2">IMEI2</span><span class="mud-imei-active" id="mud-imei-active2" hidden></span></span><span class="mud-v" id="mud-imei2">--</span></div>
+        <div class="mud-r"><span class="mud-k">IMEI</span><span class="mud-v" id="mud-imei">--</span></div>
         <div class="mud-r"><span class="mud-k">IMSI</span><span class="mud-v" id="mud-imsi">--</span></div>
         <div class="mud-r"><span class="mud-k">ICCID</span><span class="mud-v" id="mud-iccid">--</span></div>
         <div class="mud-r"><span class="mud-k">本机号码</span><span class="mud-v" id="mud-msisdn">--</span></div>
@@ -163,7 +162,6 @@ return view.extend({
     <button class="mud-btn" id="mud-btn-wifi">Wi-Fi 热点</button>
     <button class="mud-btn warn" id="mud-btn-modem">重启调制解调器</button>
     <button class="mud-btn warn" id="mud-btn-reboot">关机或重启</button>
-    <button class="mud-btn warn" id="mud-btn-android">切换到 Android</button>
   </div>
 </div>
 <div class="mud-sec">
@@ -178,7 +176,7 @@ return view.extend({
 
 </div><!-- /mud-body -->`;
   this.previous=current;this.history={rx:[],tx:[]};this.disposed=false;this.identShown=false;
-  this.root.querySelector('.mud-hero-meta').append(E('span',{'class':'mud-chip',title:'使用当前 modem5g 数据接口；多卡切换接口尚未确认'},'当前 SIM'));
+  this.root.querySelector('.mud-hero-meta').append(E('span',{'class':'mud-chip',title:'单 SIM，使用 modem5g 数据接口'},'当前 SIM'));
   this.paint(data);this.paintRates(current,rate,cpu,cached);this.wire();
   this.refreshTask=()=>this.refresh();this.sampleTask=()=>this.sample();
   poll.add(this.refreshTask,10);poll.add(this.sampleTask,2);return this.root;
@@ -270,8 +268,8 @@ return view.extend({
  },
  paintIdentity(){
   const m=this.identity||this.data.modem||{};
-  for(const [id,key] of [['imei1','imei'],['imsi','imsi'],['iccid','iccid']])this.set(id,m[key]);
-  this.set('imei2','未获取（第二卡槽未确认）');this.set('msisdn',m.phone||this.data.modem?.phone);this.set('fwmodel',this.data.modem?.model);this.set('fw',this.data.modem?.firmware);
+  for(const [id,key] of [['imei','imei'],['imsi','imsi'],['iccid','iccid']])this.set(id,m[key]);
+  this.set('msisdn',m.phone||this.data.modem?.phone);this.set('fwmodel',this.data.modem?.model);this.set('fw',this.data.modem?.firmware);
  },
  wire(){
   const confirm=(button,title,body,invoke)=>{button.onclick=async()=>{
@@ -291,7 +289,7 @@ return view.extend({
    };
    ui.showModal('关机或重启',[E('p',{},'请选择操作。'),E('div',{'class':'right'},['取消','关机','重启'].map((label,i)=>E('button',{'class':'btn',click:()=>choose(i===1?'poweroff':i===2?'reboot':null)},label)))]);
   };
-  for(const id of ['btn-modem','btn-android']){this.q(id).disabled=true;this.q(id).title='MT6990 尚无已验证的对应控制接口';}
+  this.q('btn-modem').disabled=true;this.q('btn-modem').title='MT6990 尚无已验证的对应控制接口';
   this.q('btn-radio-read').onclick=async()=>{try{const r=await radioRead();if(r.code)throw Error(r.error);M.toast(r.output);}catch(e){M.toast(e.message,{type:'error'});}};
   this.q('reveal').onclick=async()=>{if(this.identityBusy)return;this.identityBusy=true;
    try{const reveal=!this.identShown;this.identity=await C.getIdentity(reveal);this.identShown=reveal;this.q('reveal').textContent=reveal?'隐藏卡号信息':'显示卡号信息';this.paintIdentity();}catch(e){M.toast(e.message,{type:'error'});}finally{this.identityBusy=false;}

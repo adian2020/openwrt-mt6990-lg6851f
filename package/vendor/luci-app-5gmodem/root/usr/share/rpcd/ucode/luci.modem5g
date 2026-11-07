@@ -343,7 +343,7 @@ const methods = {
 	set_apn: { args: { values: {}, apply: false }, call: function(req) { return save_apn(req); } },
 	get_sim_identity: { args: { reveal: false }, call: function(req) {
 		let state = dashboard.cached();
-		return { sim: state.SIM, operator: state.OPERATOR, slots_confirmed: null,
+		return { sim: state.SIM, operator: state.OPERATOR, slots_confirmed: 1,
 			imei: req.args?.reveal ? state.IMEI : dashboard.mask(state.IMEI),
 			imsi: req.args?.reveal ? state.IMSI : dashboard.mask(state.IMSI),
 			iccid: req.args?.reveal ? state.ICCID : dashboard.mask(state.ICCID),

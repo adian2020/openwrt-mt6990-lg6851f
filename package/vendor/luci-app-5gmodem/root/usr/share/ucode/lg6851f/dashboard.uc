@@ -114,7 +114,7 @@ export function snapshot() {
 		radio_details,
 		cells: reading('cells'), bands: reading('bands'),
 		capabilities: { apn: true, band_lock: true, cell_lock: true, sms: true, at: true,
-			cpu_frequency_read: length(frequencies) > 0, cpu_voltage_write: false, sim_switch: false,
+			cpu_frequency_read: length(frequencies) > 0, cpu_voltage_write: false, sim_switch: false, sim_slots: 1, android_switch: false,
 			usb_role_write: false, battery_control: false, ttl_write: false, sms_forward: false }
 	};
 }
