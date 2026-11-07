@@ -32,6 +32,10 @@ printf '%s\n' "提醒：构建成功后仅追加精简产物信息；维修过�
 # Build and use the repository-pinned host interpreter before the full image
 # build, so incompatible source/test syntax fails before kernel/image work.
 if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_dir/.config"; then
+	# Package host builds assume the standard host tools are already staged.
+	# In a clean runner, libjson-c unpacking needs libdeflate-gzip and ucode
+	# needs the OpenWrt CMake/Ninja toolchain before host/compile can run.
+	make -C "$repo_dir" -j4 V=s tools/install
 	make -C "$repo_dir" -j4 V=s package/utils/ucode/host/compile
 	UCODE="$repo_dir/staging_dir/hostpkg/bin/ucode"
 	UCODE_LIBRARY="$repo_dir/staging_dir/hostpkg/lib/ucode"
