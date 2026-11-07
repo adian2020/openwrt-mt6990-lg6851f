@@ -105,7 +105,7 @@ class DashboardTest(unittest.TestCase):
         self.write('/testfs.uc', """
             export function readfile(path) { return path == '/tmp/sysinfo/board_name' ? TEST_BOARD : path == '/proc/sys/kernel/random/boot_id' ? 'test-boot' : TEST_FILES[path] || ''; }
             export function glob(path) { return []; }
-            export function mkdtemp(path) {return '/tmp/test-reading';}
+            export function mkdtemp(path) {return index(path,'lock-job')>=0?'/tmp/lg6851f-lock-job.test':'/tmp/test-reading';}
             export function rmdir(path) {return true;}
             export function unlink(path) {delete TEST_CACHE[path];return true;}
             export function open(path, mode, perm) {
@@ -443,6 +443,8 @@ scc_dl_bandwidth = 11
         result = self.rpc('set_band_lock', dict(lte=[1], nr=[75]))
         self.assertEqual(result['result']['code'], 0)
         self.assertIn("'apply-bands' '1' '75'", result['commands'][0])
+        self.assertEqual(result['result']['request_id'],'lg6851f-lock-job.test')
+        self.assertIn("'--request-id' 'lg6851f-lock-job.test'",result['commands'][0])
         result = self.rpc('set_band_lock', dict(lte=[1], nr=[76]))
         self.assertEqual(result['result']['code'], 95)
         self.assertEqual(result['commands'], [])
@@ -464,10 +466,29 @@ scc_dl_bandwidth = 11
                 result=self.rpc('set_cell_lock',dict(rat=rat,band=band,pci=pci,arfcn=640000))
                 self.assertNotEqual(result['result']['code'],0)
                 self.assertEqual(result['commands'],[])
-        for rat,band,arfcn in [('nr',78,640000),('lte',1,100)]:
+        for rat,band,arfcn in [('nr',78,640000),('lte',1,100),('lte',1,0)]:
             result=self.rpc('set_cell_lock',dict(rat=rat,band=band,pci='0',arfcn=arfcn))
             self.assertEqual(result['result']['code'],0)
             self.assertIn("'set-cell'",result['commands'][0])
+
+    def test_lock_job_progress_is_bound_to_request_id(self):
+        job='lg6851f-lock-job.sample'
+        state='OP_ID='+job+'\nBOOT_ID=test-boot\nMODE=bands\nSTATUS=verified\nPHASE=restoring_data\nLTE=1,3\nNR=78\n'
+        result=self.rpc('get_lock_request',{'request_id':job},TEST_FILES={
+            '/tmp/'+job+'/state':state,'/tmp/lg6851f-modem-control.active':'OP_ID='+job+'\n'})
+        self.assertTrue(result['result']['active'])
+        self.assertIn('PHASE=restoring_data',result['result']['output'])
+        self.assertEqual(result['commands'],[])
+        result=self.rpc('get_lock_request',{'request_id':'../etc/config/network'})
+        self.assertEqual(result['result']['code'],22)
+
+    def test_recent_verified_masks_override_older_page_cache(self):
+        self.write('/proc/sys/kernel/random/boot_id','test-boot')
+        self.write('/tmp/lg6851f-modem-bands.json',json.dumps({'boot_id':'test-boot','updated':int(time.time())-20,'code':0,'output':'old masks'}))
+        saved='BOOT_ID=test-boot\nSTATUS=verified\nUPDATED='+str(int(time.time()))+'\nMODE=bands\nlte band info = 0000000500000000\nnr band info = 000000000000000000002000\n'
+        result=self.rpc('get_lock_cache',TEST_FILES={'/etc/modem5g-lock.state':saved})
+        self.assertIn('0000000500000000',result['result']['bands']['output'])
+        self.assertEqual(result['commands'],[])
 
     def test_partial_band_read_does_not_replace_cache(self):
         result = self.rpc('get_locks', TEST_RESPONSES={

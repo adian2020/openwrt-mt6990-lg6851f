@@ -8,7 +8,7 @@
 
 const getLocks = rpc.declare({ object: 'luci.modem5g', method: 'get_locks', expect: {} });
 const getLockCache = rpc.declare({ object: 'luci.modem5g', method: 'get_lock_cache', params: [ 'refresh' ], expect: {} });
-const getLockRequest = rpc.declare({ object: 'luci.modem5g', method: 'get_lock_request', expect: {} });
+const getLockRequest = rpc.declare({ object: 'luci.modem5g', method: 'get_lock_request', params: ['request_id'], expect: {} });
 const getCells = rpc.declare({ object: 'luci.modem5g', method: 'get_cells', expect: {} });
 const setBands = rpc.declare({ object: 'luci.modem5g', method: 'set_band_lock', params: [ 'lte', 'nr' ] });
 const resetBands = rpc.declare({ object: 'luci.modem5g', method: 'reset_band_lock' });
@@ -52,7 +52,7 @@ function parsedLockState(result) {
 	let state = { raw, lte: masks.current?.lte || [], nr: masks.current?.nr || [], supported: masks.supported };
 	let saved = raw.match(/SAVED_LOCK_STATE[\s\S]*?MODE=([^\r\n]+)/);
 	state.mode = saved ? saved[1].trim() : 'unknown';
-	for (let key of [ 'STATUS', 'RAT', 'ARFCN', 'PCI', 'BAND' ]) {
+	for (let key of [ 'STATUS', 'RAT', 'ARFCN', 'PCI', 'BAND', 'OP_ID', 'PHASE', 'RESULT_CODE', 'NETWORK' ]) {
 		let m = raw.match(new RegExp(`^${key}=([^\\r\\n]+)`, 'm'));
 		if (m) state[key.toLowerCase()] = m[1].trim();
 	}
@@ -108,6 +108,7 @@ return view.extend({
 		const select = document.getElementById('m5-lock-band');
 		const pci = document.getElementById('m5-lock-pci');
 		if (pci) pci.max = rat == 'nr' ? 1007 : 503;
+		const arfcn=document.getElementById('m5-lock-arfcn');if(arfcn)arfcn.min=rat=='nr'?1:0;
 		if (select) select.replaceChildren(E('option', {value:''}, '请选择频段'), ...values.filter(v => rat != 'nr' || v != 76).map(v => E('option', {value:v}, (rat == 'lte' ? 'B' : 'n') + v)));
 	},
 	load() { return getLockCache(true).then(data=>[data.bands||{},data.cells||{},data.refresh||{}]); },
@@ -154,13 +155,31 @@ return view.extend({
 			return state;
 		});
 	},
-	waitForOperation(verify) {
-		let seenActive = false, inactiveAfterActive = 0, attempts = 0;
-		let poll = () => getLockRequest().then(state => {
+	waitForOperation(verify, requestId, sync) {
+		let seenActive = false, inactiveAfterActive = 0, attempts = 0, shownVerified=false;
+		const phases={queued:'任务已提交',waiting_recovery:'等待现有恢复任务结束',waiting_control:'等待模组控制通道',stopping_data:'暂停数据连接',applying_bands:'写入频段',verifying_bands:'回读验证频段',restoring_bands:'恢复默认频段',applying_cell:'写入小区锁定',verifying_cell:'核对实际服务小区',clearing_cell:'清除小区锁定',verified:'设置已读回确认',restoring_data:'恢复数据连接'};
+		let poll = () => getLockRequest(requestId||'').then(state => {
+			if(state.code)throw Error(state.error||common.resultText(state));
+			const parsed=parsedLockState(state),matches=!verify||verify(parsed);
+			if(requestId&&parsed.op_id===requestId){
+				if(phases[parsed.phase])document.getElementById('m5-lock-progress').textContent=phases[parsed.phase];
+				if(parsed.status==='accepted'&&parsed.phase==='verified')document.getElementById('m5-lock-progress').textContent='模组已接受清除请求';
+				if(matches&&parsed.status==='verified'&&!shownVerified){
+					shownVerified=true;this.dirty=false;this.syncLocks(state);sync?.();
+					const setting=parsed.mode==='cell'?(parsed.rat==='lte'?'B':'n')+parsed.band+' / ARFCN '+parsed.arfcn+' / PCI '+parsed.pci:parsed.lte.map(v=>'B'+v).join(' ')+' · '+parsed.nr.map(v=>'n'+v).join(' ');
+					document.getElementById('m5-lock-result').textContent='设置已读回验证：'+setting+'\n'+(phases[parsed.phase]||'正在完成操作');
+				}
+				if(parsed.phase==='failed'||parsed.phase==='complete'&&+parsed.result_code!==0)
+					throw Error((shownVerified?'锁定设置已验证，但后续联网恢复失败。':'锁定操作未完成。')+'阶段：'+parsed.phase+'，退出码：'+parsed.result_code);
+				if(parsed.phase==='complete'){
+					if(matches)return state;
+					throw Error('操作已结束，但读回结果与请求不一致');
+				}
+			}
 			seenActive = seenActive || state.active === true || /OPERATION_ACTIVE/.test(common.resultText(state));
-			if (seenActive && !state.active && (!verify || verify(parsedLockState(state))))
+			if (!requestId && seenActive && !state.active && matches)
 				return state;
-			if (seenActive && !state.active && ++inactiveAfterActive >= 3)
+			if (!requestId && seenActive && !state.active && ++inactiveAfterActive >= 3)
 				throw new Error(_('The modem finished the operation but did not report the requested lock state.'));
 			if (state.active) inactiveAfterActive = 0;
 			if (++attempts >= 60)
@@ -210,7 +229,7 @@ return view.extend({
 			setChecked('m5-nr-bands', state.nr);
 		}
 		let badge = document.getElementById('m5-lock-summary');
-		if (badge) badge.textContent = state.mode == 'cell' ? `${_('Cell lock')}: ${String(state.rat || '').toUpperCase()} ${state.arfcn || '-'} / PCI ${state.pci == '65535' ? _('Any') : (state.pci || '-')}` :
+		if (badge) badge.textContent = state.mode == 'cell' ? `${_('Cell lock')}: ${String(state.rat || '').toUpperCase()} ${state.band?(state.rat==='lte'?'B':'n')+state.band+' · ':''}${state.arfcn ?? '-'} / PCI ${state.pci == '65535' ? _('Any') : (state.pci ?? '-')}` :
 			state.mode == 'none' ? _('Cell lock cleared and state refreshed') :
 			state.mode == 'bands' ? _('Band lock applied and verified') :
 			(state.lte.length || state.nr.length) ? `${_('Current bands')}: ${state.lte.map(x => 'B' + x).join(' ')} · ${state.nr.map(x => 'n' + x).join(' ')}` : _('Lock state unavailable');
@@ -219,7 +238,7 @@ return view.extend({
 			document.getElementById('m5-lock-rat').value = state.rat || 'nr';
 			this.updateBandSelect();
 			document.getElementById('m5-lock-band').value = state.band || 0;
-			document.getElementById('m5-lock-arfcn').value = state.arfcn || '';
+			document.getElementById('m5-lock-arfcn').value = state.arfcn ?? '';
 			document.getElementById('m5-lock-pci').value = state.pci == '65535' ? '' : (state.pci || '');
 		}
 	},
@@ -234,8 +253,7 @@ return view.extend({
 			if (!result || +result.code != 0) throw new Error(common.resultText(result));
 			return result;
 		});
-		return Promise.all([ rpcCall, this.waitForOperation(verify) ]).then(results => {
-			let state = results[1];
+		return rpcCall.then(result=>this.waitForOperation(verify,result.request_id,sync)).then(state => {
 			document.getElementById('m5-lock-state').textContent = common.resultText(state);
 			this.dirty=false;this.syncLocks(state);
 			this.syncCandidatesToVerifiedState(state);
@@ -243,6 +261,7 @@ return view.extend({
 			this.refreshCellsAfterOperation();
 			return state;
 		}).catch(e => {
+			document.getElementById('m5-lock-result').textContent=e.message||String(e);
 			common.callError(_('Band and Cell Lock'), e);
 		}).finally(() => { L.env.rpctimeout = oldRpcTimeout; this.setBusy(false); });
 	},
@@ -274,10 +293,10 @@ return view.extend({
 	},
 	applyCell() {
 		let self = this;
-		let arfcn = +document.getElementById('m5-lock-arfcn').value;
+		let arfcnText=document.getElementById('m5-lock-arfcn').value.trim(),arfcn=+arfcnText;
 		let pci = document.getElementById('m5-lock-pci').value.trim();
 		let rat = document.getElementById('m5-lock-rat').value, band = +document.getElementById('m5-lock-band').value;
-		if (!Number.isInteger(arfcn) || arfcn < 1 || arfcn > 3279165 || (pci && (!/^\d+$/.test(pci) || +pci > (rat == 'nr' ? 1007 : 503))))
+		if (!/^\d+$/.test(arfcnText)||!Number.isInteger(arfcn) || arfcn < (rat=='lte'?0:1) || arfcn > 3279165 || (pci && (!/^\d+$/.test(pci) || +pci > (rat == 'nr' ? 1007 : 503))))
 			return ui.addNotification(null, E('p', {}, '请输入有效频点；PCI 范围为 LTE 0–503、NR 0–1007，可留空。'));
 		if (!band) return ui.addNotification(null, E('p', {}, _('Select the radio type and band for this cell.')));
 		return ui.showModal(_('Confirm cell lock'), [

@@ -4,6 +4,7 @@
 # Nothing calls this script at boot or from a polling status path.
 
 set -u
+umask 077
 
 readonly SAMPLE=/usr/bin/sample_nw
 readonly LOCK=/var/lock/luci-modem5g-control.lock
@@ -20,6 +21,48 @@ TRANSACTION=0
 WAS_UP=false
 RECOVERY_OWNED=0
 NETWORK_RESTORED=0
+CONTROL_OWNED=0
+REQUEST_ID="$$-$(date +%s)"
+JOB_DIR=''
+OP_STATUS=pending
+NETWORK_RESULT=unchanged
+PHASE=queued
+STARTED="$(date +%s)"
+
+write_progress() {
+	PHASE="$1"; result_code="${2:-0}"
+	if [ "$RECOVERY_OWNED" -eq 1 ]; then
+		printf 'PID=%s\nSTARTED=%s\nOP_ID=%s\nPHASE=%s\n' "$$" "$STARTED" "$REQUEST_ID" "$PHASE" >"$ACTIVE.new"
+		mv "$ACTIVE.new" "$ACTIVE"
+	fi
+	[ -n "$JOB_DIR" ] || return 0
+	{
+		printf 'OP_ID=%s\nBOOT_ID=%s\nSTATUS=%s\nPHASE=%s\nRESULT_CODE=%s\nNETWORK=%s\n' "$REQUEST_ID" "$(cat /proc/sys/kernel/random/boot_id)" "$OP_STATUS" "$PHASE" "$result_code" "$NETWORK_RESULT"
+		if grep -qx "OP_ID=$REQUEST_ID" "$STATE" 2>/dev/null; then
+			sed '/^OP_ID=/d; /^BOOT_ID=/d; /^STATUS=/d; /^PHASE=/d; /^RESULT_CODE=/d; /^NETWORK=/d' "$STATE"
+		else printf 'MODE=pending\n'; fi
+	} >"$JOB_DIR/state.new" && mv "$JOB_DIR/state.new" "$JOB_DIR/state"
+}
+
+acquire_control() {
+	local waited=0
+	while ! /usr/bin/flock -n 9; do
+		[ "$waited" -lt 30 ] || { echo 'ERROR=modem control channel remains busy'; return 75; }
+		/bin/sleep 1; waited=$((waited + 1))
+	done
+	CONTROL_OWNED=1
+}
+
+release_control() {
+	[ "$CONTROL_OWNED" -eq 0 ] || /usr/bin/flock -u 9
+	CONTROL_OWNED=0
+}
+
+uptime_seconds() {
+	local value rest
+	read -r value rest </proc/uptime
+	printf '%s\n' "${value%%.*}"
+}
 
 die() { echo "ERROR=$*"; exit 22; }
 
@@ -50,13 +93,21 @@ band_selected() {
 }
 
 bands_match() {
-	hex="$1" wanted="$2"
-	band=1; maximum=$(( ${#hex} / 8 * 32 ))
-	while [ "$band" -le "$maximum" ]; do
-		case ",$wanted," in *",$band,"*) expected=1 ;; *) expected=0 ;; esac
-		if band_selected "$hex" "$band"; then actual=1; else actual=0; fi
+	local hex="$1" wanted="$2" word=0 expected actual band shift_bits chunk oldifs
+	case "$hex" in ''|*[!0-9A-Fa-f]*) return 1 ;; esac
+	[ $(( ${#hex} % 8 )) -eq 0 ] || return 1
+	oldifs="$IFS"; IFS=,; set -- $wanted; IFS="$oldifs"
+	while [ $((word * 8)) -lt "${#hex}" ]; do
+		expected=0
+		for band in "$@"; do
+			if [ $(((band - 1) / 32)) -eq "$word" ]; then
+				shift_bits=$(((band - 1) % 32)); expected=$((expected | (1 << shift_bits)))
+			fi
+		done
+		chunk="$(printf '%s' "$hex" | cut -c "$((word * 8 + 1))-$((word * 8 + 8))")"
+		actual=$((0x$chunk))
 		[ "$actual" -eq "$expected" ] || return 1
-		band=$((band + 1))
+		word=$((word + 1))
 	done
 	return 0
 }
@@ -72,13 +123,14 @@ run_sample() {
 }
 
 network_up() {
-	/bin/ubus call network.interface.modem5g status 2>/dev/null |
+	/usr/bin/timeout 5 /bin/ubus call network.interface.modem5g status 2>/dev/null |
 		/usr/bin/jsonfilter -e '@.up' 2>/dev/null
 }
 
 wait_cli_idle() {
+	local limit="${1:-60}"
 	waited=0 quiet=0
-	while [ "$waited" -lt 60 ]; do
+	while [ "$waited" -lt "$limit" ]; do
 		if /usr/bin/pidof mipc_wan_cli >/dev/null 2>&1; then quiet=0; else quiet=$((quiet + 1)); fi
 		[ "$quiet" -ge 6 ] && return 0
 		/bin/sleep 1
@@ -89,17 +141,18 @@ wait_cli_idle() {
 }
 
 wait_network_up() {
-	waited=0
-	while [ "$waited" -lt 75 ]; do
-		[ "$(network_up)" = true ] && wait_cli_idle && return 0
+	local deadline=$(( $(uptime_seconds) + 75 )) remaining
+	while [ "$(uptime_seconds)" -lt "$deadline" ]; do
+		remaining=$((deadline - $(uptime_seconds)))
+		[ "$(network_up)" = true ] && wait_cli_idle "$remaining" && return 0
 		/bin/sleep 1
-		waited=$((waited + 1))
 	done
 	echo 'ERROR=mobile data did not recover after control operation'
 	return 70
 }
 
 begin_transaction() {
+	write_progress waiting_recovery
 	waited=0
 	while ! /bin/mkdir "$RECOVERY_LOCK" 2>/dev/null; do
 		[ "$waited" -lt 60 ] || { echo 'ERROR=automatic modem recovery is active'; return 75; }
@@ -108,7 +161,9 @@ begin_transaction() {
 	RECOVERY_OWNED=1
 	WAS_UP="$(network_up)"
 	TRANSACTION=1
-	printf 'PID=%s\nSTARTED=%s\n' "$$" "$(date +%s)" >"$ACTIVE"
+	write_progress waiting_control
+	acquire_control || return $?
+	write_progress stopping_data
 	if [ "$WAS_UP" = true ]; then
 		/sbin/ifdown modem5g || return 70
 		waited=0
@@ -120,11 +175,17 @@ begin_transaction() {
 }
 
 restore_network() {
+	local network_rc=0
 	rc="$1"
 	if [ "${WAS_UP:-false}" = true ] && [ "$NETWORK_RESTORED" -eq 0 ]; then
-		/sbin/ifup modem5g >/dev/null 2>&1 || rc=70
-		wait_network_up || rc=$?
-		[ "$rc" -ne 0 ] || NETWORK_RESTORED=1
+		# netifd's radio-on check needs this very lock. Never wait for ifup
+		# while owning it; the recovery directory and ACTIVE still gate peers.
+		release_control
+		NETWORK_RESULT=pending
+		write_progress restoring_data "$rc"
+		/sbin/ifup modem5g >/dev/null 2>&1 || network_rc=70
+		wait_network_up || network_rc=$?
+		if [ "$network_rc" -eq 0 ]; then NETWORK_RESTORED=1; NETWORK_RESULT=online; else NETWORK_RESULT=failed; rc="$network_rc"; fi
 	fi
 	return "$rc"
 }
@@ -132,6 +193,8 @@ restore_network() {
 end_transaction() {
 	rc="$1"
 	restore_network "$rc"; rc=$?
+	release_control
+	write_progress complete "$rc"
 	/bin/rm -f "$ACTIVE"
 	/bin/rmdir "$RECOVERY_LOCK" 2>/dev/null || true
 	RECOVERY_OWNED=0
@@ -140,6 +203,8 @@ end_transaction() {
 }
 
 cleanup() {
+	local final_rc="${1:-1}"
+	release_control
 	if [ "$TRANSACTION" -eq 1 ]; then
 		[ "$WAS_UP" != true ] || /sbin/ifup modem5g >/dev/null 2>&1
 		/bin/rm -f "$ACTIVE"
@@ -147,6 +212,10 @@ cleanup() {
 	if [ "$RECOVERY_OWNED" -eq 1 ]; then
 		/bin/rmdir "$RECOVERY_LOCK" 2>/dev/null || true
 		RECOVERY_OWNED=0
+	fi
+	if [ "$final_rc" -ne 0 ]; then
+		[ "$OP_STATUS" != pending ] || OP_STATUS=failed
+		write_progress failed "$final_rc"
 	fi
 }
 
@@ -163,9 +232,13 @@ report_state() {
 }
 
 verify_cell() {
-	wanted_arfcn="$1" wanted_pci="$2" waited=0
-	while [ "$waited" -lt 45 ]; do
-		raw="$(/usr/bin/timeout 8 "$CLI" --at_cmd 'AT+ECELL' 2>/dev/null)"
+	local deadline=$(( $(uptime_seconds) + 45 )) remaining query_timeout
+	wanted_arfcn="$1" wanted_pci="$2" actual_arfcn='' actual_pci=''
+	while [ "$(uptime_seconds)" -lt "$deadline" ]; do
+		remaining=$((deadline - $(uptime_seconds) - 6))
+		[ "$remaining" -gt 0 ] || break
+		query_timeout=8; [ "$remaining" -ge 8 ] || query_timeout="$remaining"
+		raw="$(/usr/bin/timeout "$query_timeout" "$CLI" --at_cmd 'AT+ECELL' 2>/dev/null)"
 		/bin/sleep 6
 		line="$(printf '%s\n' "$raw" | tr -d '\r' | sed -n 's/^+ECELL:[[:space:]]*//p' | head -n 1)"
 		actual_pci="$(printf '%s\n' "$line" | awk -F, '{ gsub(/ /, "", $7); print $7 }')"
@@ -174,7 +247,8 @@ verify_cell() {
 			printf 'VERIFIED_SERVING_ARFCN=%s\nVERIFIED_SERVING_PCI=%s\n' "$actual_arfcn" "$actual_pci"
 			return 0
 		fi
-		/bin/sleep 3; waited=$((waited + 3))
+		[ $((deadline - $(uptime_seconds))) -ge 3 ] || break
+		/bin/sleep 3
 	done
 	echo "ERROR=requested cell not serving (actual ARFCN=${actual_arfcn:-unknown} PCI=${actual_pci:-unknown})"
 	return 5
@@ -211,17 +285,34 @@ save_state() {
 	tmp="${STATE}.new"
 	{
 		printf 'MODE=%s\n' "$1"
+		printf 'OP_ID=%s\n' "$REQUEST_ID"
+		printf 'UPDATED=%s\n' "$(date +%s)"
 		shift
 		for item in "$@"; do printf '%s\n' "$item"; done
-	} >"$tmp" && mv "$tmp" "$STATE"
+	} >"$tmp" && mv "$tmp" "$STATE" || return 5
+	case " $* " in *' STATUS=verified '*) OP_STATUS=verified ;; *' STATUS=accepted '*) OP_STATUS=accepted ;; esac
+	write_progress verified
 }
 
 action="${1:-}"
+if [ "$action" = --request-id ]; then
+	REQUEST_ID="${2:-}"
+	case "$REQUEST_ID" in lg6851f-lock-job.*) ;; *) die 'invalid request id' ;; esac
+	case "$REQUEST_ID" in *[!A-Za-z0-9._-]*) die 'invalid request id' ;; esac
+	JOB_DIR="/tmp/$REQUEST_ID"
+	[ -d "$JOB_DIR" ] && [ ! -L "$JOB_DIR" ] || die 'missing private request directory'
+	shift 2; action="${1:-}"
+fi
 exec 9>"$LOCK"
-/usr/bin/flock 9 || { echo 'ERROR=unable to lock modem control channel'; exit 75; }
-trap cleanup EXIT INT TERM
+trap 'cleanup "$?"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+write_progress queued
 case "$action" in
 	get)
+		[ ! -e "$ACTIVE" ] || { echo 'ERROR=modem transaction active'; exit 75; }
+		acquire_control || exit $?
+		[ ! -e "$ACTIVE" ] || { echo 'ERROR=modem transaction active'; exit 75; }
 		# Current and supported masks are authoritative.  The vendor list-lock
 		# API has no getter, so also report our persisted requested list.
 		printf '0\n19\n0\n19\n1\n1\n-1\n' | run_sample
@@ -234,6 +325,7 @@ case "$action" in
 		validate_bands "$lte" "$LTE_ALLOWED"
 		validate_bands "$nr" "$NR_ALLOWED"
 		begin_transaction || exit $?
+		write_progress applying_bands
 		output="$({
 			# Official UI makes cell lock and band lock mutually exclusive.
 			printf '0\n44\n0\n20\n1\n1\n'
@@ -245,15 +337,19 @@ case "$action" in
 		printf '%s\n' "$output"
 		[ "$rc" -eq 0 ] && [ "$(printf '%s\n' "$output" | grep -Fc 'set or restore band success!')" -ge 2 ] || rc=5
 		if [ "$rc" -eq 0 ]; then
+			write_progress verifying_bands
 			verified="$(verify_bands "$lte" "$nr")"; rc=$?
 			printf '%s\n' "$verified"
 		fi
+		if [ "$rc" -eq 0 ]; then
+			save_state bands "BOOT_ID=$(cat /proc/sys/kernel/random/boot_id)" "STATUS=verified" "LTE=$lte" "NR=$nr" "$verified" || exit $?
+		fi
 		end_transaction "$rc"; rc=$?
 		[ "$rc" -eq 0 ] || exit "$rc"
-		save_state bands "BOOT_ID=$(cat /proc/sys/kernel/random/boot_id)" "STATUS=verified" "LTE=$lte" "NR=$nr" "$verified"
 		;;
 	reset-bands)
 		begin_transaction || exit $?
+		write_progress restoring_bands
 		output="$(printf '0\n20\n2\n3\n1\n-1\n' | run_sample)"; rc=$?
 		printf '%s\n' "$output"
 		[ "$rc" -eq 0 ] && printf '%s\n' "$output" | grep -Fq 'set or restore band success!' || rc=5
@@ -261,9 +357,9 @@ case "$action" in
 			verified="$(verify_bands __supported__ __supported__)"; rc=$?
 			printf '%s\n' "$verified"
 		fi
+		if [ "$rc" -eq 0 ]; then save_state none "BOOT_ID=$(cat /proc/sys/kernel/random/boot_id)" "STATUS=verified" "$verified" || exit $?; fi
 		end_transaction "$rc"; rc=$?
 		[ "$rc" -eq 0 ] || exit "$rc"
-		save_state none "BOOT_ID=$(cat /proc/sys/kernel/random/boot_id)" "STATUS=verified" "$verified"
 		;;
 	set-cell)
 		arfcn="${2:-}"; pci="${3:-}"; rat="${4:-}"; band="${5:-0}"
@@ -271,12 +367,14 @@ case "$action" in
 		[ "$arfcn" -le 3279165 ] || die 'ARFCN out of range'
 		case "$pci" in ''|*[!0-9]*) [ -z "$pci" ] || die 'invalid PCI' ;; esac
 		case "$rat" in lte|nr) ;; *) die 'cell RAT must be lte or nr' ;; esac
+		[ "$rat" != nr ] || [ "$arfcn" -gt 0 ] || die 'NR ARFCN out of range'
 		if [ "$rat" = nr ]; then maximum_pci=1007; else maximum_pci=503; fi
 		[ -z "$pci" ] || [ "$pci" -le "$maximum_pci" ] || die 'PCI out of range'
 		case "$band" in ''|*[!0-9]*) die 'invalid cell band' ;; esac
 		if [ "$rat" = nr ]; then validate_bands "$band" "$NR_ALLOWED"; else validate_bands "$band" "$LTE_ALLOWED"; fi
 		[ -n "$pci" ] || pci=65535
 		begin_transaction || exit $?
+		write_progress applying_cell
 		# Match the official firmware: restore band mask, then program the
 		# list-lock API (one LTE or NR entry; 65535 means ARFCN-only).
 		if [ "$rat" = lte ]; then
@@ -289,20 +387,23 @@ case "$action" in
 		[ "$rc" -eq 0 ] && printf '%s\n' "$output" | grep -Fq 'set cell arfcn list lock success!' || rc=5
 		restore_network "$rc"; rc=$?
 		[ "$rc" -eq 0 ] || exit "$rc"
+		write_progress verifying_cell
+		acquire_control || exit $?
 		verified="$(verify_cell "$arfcn" "$pci")"; rc=$?
 		printf '%s\n' "$verified"
+		if [ "$rc" -eq 0 ]; then save_state cell "BOOT_ID=$(cat /proc/sys/kernel/random/boot_id)" "STATUS=verified" "RAT=$rat" "ARFCN=$arfcn" "PCI=$pci" "BAND=$band" "$verified" || exit $?; fi
 		end_transaction "$rc"; rc=$?
 		[ "$rc" -eq 0 ] || exit "$rc"
-		save_state cell "BOOT_ID=$(cat /proc/sys/kernel/random/boot_id)" "STATUS=verified" "RAT=$rat" "ARFCN=$arfcn" "PCI=$pci" "BAND=$band" "$verified"
 		;;
 	clear-cell)
 		begin_transaction || exit $?
+		write_progress clearing_cell
 		output="$(printf '0\n44\n0\n1\n-1\n' | run_sample)"; rc=$?
 		printf '%s\n' "$output"
 		[ "$rc" -eq 0 ] && printf '%s\n' "$output" | grep -Fq 'set cell arfcn list lock success!' || rc=5
+		if [ "$rc" -eq 0 ]; then save_state none "BOOT_ID=$(cat /proc/sys/kernel/random/boot_id)" "STATUS=accepted" || exit $?; fi
 		end_transaction "$rc"; rc=$?
 		[ "$rc" -eq 0 ] || exit "$rc"
-		save_state none "BOOT_ID=$(cat /proc/sys/kernel/random/boot_id)" "STATUS=accepted"
 		;;
 	*) die 'usage: get|apply-bands LTE NR|reset-bands|set-cell ARFCN [PCI] RAT BAND|clear-cell' ;;
 esac

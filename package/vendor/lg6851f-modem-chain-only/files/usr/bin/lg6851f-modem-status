@@ -23,8 +23,10 @@ clean_value() {
 
 query() {
 	local option="$1" output rc
+	[ ! -e /tmp/lg6851f-modem-control.active ] || return 75
 	exec 9>"$LOCK"
 	flock -n 9 || return 75
+	[ ! -e /tmp/lg6851f-modem-control.active ] || { flock -u 9; return 75; }
 	output="$(timeout 6 "$CLI" --"$option" 2>/dev/null)"
 	rc=$?
 	# ttyCMIPC6 closes asynchronously. Keep the shared lock throughout the
@@ -37,6 +39,7 @@ query() {
 
 at_query() {
 	local command="$1"
+	[ ! -e /tmp/lg6851f-modem-control.active ] || return 75
 	# modem5g-at owns the same lock, has an 8 second hard timeout and a
 	# circuit breaker.  Informational failures retain the last good cache.
 	timeout 10 "$ATCLI" "$command" 2>/dev/null

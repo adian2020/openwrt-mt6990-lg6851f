@@ -15,6 +15,17 @@ assert.deepEqual(rows[0].bandCandidates,[77,78]);
 assert.equal(rows[0].bandNo,null);
 assert.deepEqual([rows[1].rsrp,rows[1].rsrq,rows[1].sinr],[-114,-12,4.5]);
 assert.equal(rows[1].serving,false);
+const lte=earfcn=>['7','00001','00001','460','11','123','55','65','255','255','11','82','255','',String(earfcn)];
+for(const [band,start,end] of [[1,0,599],[3,1200,1949],[5,2400,2649],[7,2750,3449],[8,3450,3799],
+ [20,6150,6449],[28,9210,9659],[32,9920,10359],[38,37750,38249],[40,38650,39649],
+ [41,39650,41589],[42,41590,43589],[43,43590,45589],[46,46790,54539]]){
+ for(const earfcn of [start,end]){
+  const result=c.parseCells(record([lte(earfcn)]))[0];
+  assert.equal(result.band,'B'+band);assert.equal(result.bandNo,band);assert.equal(result.rat,'lte');
+ }
+}
+assert.equal(c.parseCells(record([lte(600)]))[0].bandNo,null);
+assert.equal(c.parseCells(record([lte(39650),lte(1300)]))[1].band,'B3');
 const missing=[...serving];missing[6]='';missing[7]='255';missing[11]='';
 assert.deepEqual(c.parseCells(record([missing])).map(row=>[row.rsrp,row.rsrq,row.sinr]),[[null,null,null]]);
 const missingPCI=[...serving];missingPCI[5]='';assert.deepEqual(c.parseCells(record([missingPCI])),[]);

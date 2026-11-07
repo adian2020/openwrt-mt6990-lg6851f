@@ -70,6 +70,7 @@ jobs:
           python3 scripts/tests/test_lg6851f_apk_feed.py
           python3 scripts/tests/test_lg6851f_radio_details.py
           python3 scripts/tests/test_lg6851f_band_verify.py
+          python3 scripts/tests/test_lg6851f_lock_transaction.py
           python3 scripts/tests/test_lg6851f_sms_send.py
           python3 scripts/lg6851f-check-cpe-package.py
 

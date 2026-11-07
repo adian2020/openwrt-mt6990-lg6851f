@@ -52,6 +52,14 @@ function nrCandidates(arfcn) {
 		[77,620000,680000],[78,620000,653333]];
 	return ranges.filter(([,first,last])=>arfcn >= first && arfcn <= last).map(([band])=>band);
 }
+function lteCandidates(earfcn) {
+	// 3GPP TS 36.101 downlink EARFCN ranges for this device's LTE bands.
+	const ranges=[[1,0,599],[3,1200,1949],[5,2400,2649],[7,2750,3449],
+		[8,3450,3799],[20,6150,6449],[28,9210,9659],[32,9920,10359],
+		[38,37750,38249],[40,38650,39649],[41,39650,41589],
+		[42,41590,43589],[43,43590,45589],[46,46790,54539]];
+	return ranges.filter(([,first,last])=>earfcn>=first&&earfcn<=last).map(([band])=>band);
+}
 function parseCells(result) {
 	if (result?.code != null && +result.code !== 0) return [];
 	const match = (result?.output || '').match(/\+ECELL:\s*([^\r\n]+)/);
@@ -64,10 +72,10 @@ function parseCells(result) {
 	const rows = [];
 	for (let i = 0; i < count; i++) {
 		const f = fields.slice(i * 15, i * 15 + 15), rat = integer(f[0]), arfcn = integer(f[14]), pci = integer(f[5]);
-		if (![7,11].includes(rat) || arfcn == null || arfcn < 1 || arfcn > 3279165 || pci == null || pci > (rat === 11 ? 1007 : 503)) continue;
-		const candidates = rat === 11 ? nrCandidates(arfcn) : [];
+		if (![7,11].includes(rat) || arfcn == null || arfcn < (rat===11?1:0) || arfcn > 3279165 || pci == null || pci > (rat === 11 ? 1007 : 503)) continue;
+		const candidates = rat === 11 ? nrCandidates(arfcn) : lteCandidates(arfcn);
 		rows.push({serving:i === 0, rat:rat === 11 ? 'nr' : 'lte', bandNo:candidates.length === 1 ? candidates[0] : null,
-			band:candidates.length ? candidates.map(n=>'n'+n).join(' / ') : rat === 11 ? 'NR' : 'LTE',
+			band:candidates.length ? candidates.map(n=>(rat===11?'n':'B')+n).join(' / ') : rat === 11 ? 'NR（频段未确认）' : 'LTE（频段未确认）',
 			bandCandidates:candidates, arfcn, pci,
 			rsrp:signal(f[6],'rsrp',rat), rsrq:signal(f[7],'rsrq',rat), sinr:signal(f[11],'sinr',rat)});
 	}

@@ -7,7 +7,7 @@ const {chromium} = require('playwright');
  const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
  const base=path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static/resources');
  const common=fs.readFileSync(base+'/modem5g/common_v5.js','utf8');
- const view=fs.readFileSync(base+'/view/modem5g/lock_v20.js','utf8');
+ const view=fs.readFileSync(base+'/view/modem5g/lock_v21.js','utf8');
  const cells=fs.readFileSync(base+'/modem5g/cellular_v1.js','utf8');
  const css=fs.readFileSync(path.join(root, 'package/vendor/luci-theme-aurora/htdocs/luci-static/aurora/main.css'),'utf8');
  let cols=[];
@@ -17,7 +17,7 @@ const {chromium} = require('playwright');
   await page.addStyleTag({content:css});
   await page.evaluate(({common,view,cells})=>{
    window._=x=>x; String.prototype.format=function(...args){let i=0;return this.replace(/%s/g,()=>args[i++]);};
-   window.L={bind:(fn,ctx)=>fn.bind(ctx)};
+   window.L={env:{rpctimeout:30},bind:(fn,ctx)=>fn.bind(ctx)};
    // Match LuCI dom.attr(): false becomes the attribute string "false".
    // Treating booleans as DOM properties hid the real disabled=false bug.
    window.E=function(tag,attrs={},children=[]){const el=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(v==null)continue;if(typeof v==='function')el.addEventListener(k,v);else el.setAttribute(k,v);}const add=x=>{if(Array.isArray(x))x.forEach(add);else if(x!=null)el.append(x instanceof Node?x:document.createTextNode(String(x)));};add(children);return el;};
@@ -25,12 +25,20 @@ const {chromium} = require('playwright');
    const c=new Function('baseclass','ui','E',common)({extend:x=>x},ui,E);
    const cellular=new Function('baseclass',cells)({extend:x=>x});
    window.rpcCalls=[];
-   const v=new Function('view','rpc','ui','common','cellular','E',view)({extend:x=>x},{declare:spec=>(...args)=>{rpcCalls.push({method:spec.method,args});return Promise.resolve({});}},ui,c,cellular,E);
+   const v=new Function('view','rpc','ui','common','cellular','E',view)({extend:x=>x},{declare:spec=>(...args)=>{
+    rpcCalls.push({method:spec.method,args});
+    if(spec.method==='get_lock_request'&&window.jobStates?.length){
+     window.earlyFeedback=window.earlyFeedback||document.getElementById('m5-lock-result').textContent.includes('已读回验证');
+     return Promise.resolve(window.jobStates.shift());
+    }
+    return Promise.resolve({});
+   }},ui,c,cellular,E);
    window.vm=v;
    const row='11,0,0,0,0,23,100,80,0,0,0,100,0,0,627264';
+   const lte='7,0,0,460,11,123,55,65,255,255,11,82,255,,1300';
    const masks='lte band info = 0000000500000000\nnr band info = 000000000000000000002000\nlte band info = 880800d5000027a0\nnr band info = 080800d5000001a000003c00';
    window.maskResult={code:0,output:masks};
-   document.querySelector('main').append(v.render([{code:0,output:masks}, {serving:{output:'+ECELL: 1,'+row}}]));
+   document.querySelector('main').append(v.render([{code:0,output:masks}, {serving:{output:'+ECELL: 2,'+row+','+lte}}]));
   },{common,view,cells});
   await page.waitForTimeout(100);
   const grid=await page.locator('#m5-lte-bands').evaluate(e=>getComputedStyle(e).gridTemplateColumns.split(' ').length);
@@ -58,8 +66,29 @@ const {chromium} = require('playwright');
   await page.locator('#m5-cell-candidates tbody tr').first().click();
   if(await page.locator('#m5-lock-arfcn').inputValue()!=='627264')throw Error('cell selection failed');
   if(await page.locator('#m5-lock-band').inputValue()!=='')throw Error('overlapping NR band was guessed');
+  await page.locator('#m5-cell-candidates tbody tr').nth(1).click();
+  if(await page.locator('#m5-lock-band').inputValue()!=='3'||await page.locator('#m5-lock-rat').inputValue()!=='lte'||await page.locator('#m5-lock-arfcn').inputValue()!=='1300')throw Error('LTE EARFCN did not select B3');
+  if(!await page.locator('#m5-cell-candidates tbody tr').nth(1).innerText().then(text=>text.includes('B3')))throw Error('LTE candidate table omitted band');
   if(await page.locator('#m5-lte-bands input').count()!==13||await page.locator('#m5-nr-bands input').count()!==12)throw Error('original band counts not restored');
   if(await page.locator('.m5-band input:disabled').count())throw Error('selectable bands unexpectedly disabled');
+  await page.evaluate(async()=>{
+   const timer=window.setTimeout;window.setTimeout=(fn,ms,...args)=>timer(fn,ms===2000?0:ms,...args);
+   const id='lg6851f-lock-job.test';
+   const state=(op,phase,active=false,status='verified',code=0)=>({active,code:0,output:`SAVED_LOCK_STATE\nOP_ID=${op}\nMODE=bands\nSTATUS=${status}\nPHASE=${phase}\nRESULT_CODE=${code}\nLTE=1,3\nNR=78\n`});
+   const verify=s=>s.mode==='bands'&&s.status==='verified';
+   try{
+    window.earlyFeedback=false;
+    window.jobStates=[state('lg6851f-lock-job.previous','complete'),state(id,'restoring_data',true),state(id,'complete')];
+    await vm.runAction(()=>Promise.resolve({code:0,request_id:id}),[],()=>{},verify);
+    if(jobStates.length||!earlyFeedback)throw Error('verified masks were not shown before network recovery');
+    window.jobStates=[state(id,'complete')];
+    await vm.runAction(()=>Promise.resolve({code:0,request_id:id}),[],()=>{},verify);
+    if(jobStates.length)throw Error('already completed operation required seeing active state');
+    window.jobStates=[state(id,'failed',false,'failed',5)];
+    await vm.runAction(()=>Promise.resolve({code:0,request_id:id}),[],()=>{},verify);
+    if(!document.getElementById('m5-lock-result').textContent.includes('退出码：5')||vm.busy)throw Error('operation failure did not report promptly');
+   }finally{window.setTimeout=timer;}
+  });
   await page.screenshot({path:path.join(os.tmpdir(), `lg6851f-lock-${width}.png`),fullPage:true});
   console.log(`PASS ${width}px: bands=${grid} columns; cell actions fit; cell selection works`);
   await page.close();

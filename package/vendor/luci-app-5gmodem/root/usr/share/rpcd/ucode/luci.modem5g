@@ -34,10 +34,14 @@ function capture(argv, seconds) {
 }
 
 function launch_lock(argv) {
-	let command = [ '/sbin/start-stop-daemon', '-S', '-b', '-x', LOCKCLI, '--' ];
+	let directory=mkdtemp('/tmp/lg6851f-lock-job.XXXXXX');
+	if(!directory)return {code:5,error:'无法创建锁定任务'};
+	let id=replace(directory,/^.*\//,'');
+	let command = [ '/sbin/start-stop-daemon', '-S', '-b', '-x', LOCKCLI, '--', '--request-id', id ];
 	for (let arg in argv)
 		push(command, arg);
-	return capture(command, 5);
+	let result=capture(command,5);result.request_id=id;
+	return result;
 }
 
 function cli(option, arg) {
@@ -354,7 +358,12 @@ const methods = {
 			let child=popen('/usr/bin/lg6851f-lock-status-collect >/dev/null 2>&1 </dev/null &','r');
 			child?.close?.();state={status:'pending'};
 		}
-		return {bands:dashboard.reading('bands'),cells:dashboard.reading('cells'),refresh:state};
+		let bands=dashboard.reading('bands'),saved=readfile(LOCKSTATE)||'',stamp=match('\n'+saved,/\nUPDATED=([0-9]+)/);
+		if(stamp&&+stamp[1]<=time()&&(!bands||+stamp[1]>bands.updated)&&
+		   index('\n'+saved,'\nBOOT_ID='+boot+'\n')>=0&&index('\n'+saved,'\nSTATUS=verified\n')>=0&&
+		   match(saved,/lte band info\s*=/)&&match(saved,/nr band info\s*=/))
+			bands={code:0,output:'SAVED_LOCK_STATE\n'+saved,boot_id:boot,updated:+stamp[1],age:time()-stamp[1],stale:time()-stamp[1]>180};
+		return {bands,cells:dashboard.reading('cells'),refresh:state};
 	} },
 	get_locks: { call: function() {
 		if (!modem_settled(network_state()))
@@ -368,9 +377,18 @@ const methods = {
 		result.error = '无法完整读取当前频段和模组能力，请稍后重试';
 		return result;
 	} },
-	get_lock_request: { call: function() {
+	get_lock_request: { args: { request_id: '' }, call: function(req) {
 		let state = readfile(LOCKSTATE) || '';
 		let active = readfile('/tmp/lg6851f-modem-control.active') || '';
+		let id=req.args?.request_id||'';
+		if(id){
+			if(!match(id,/^lg6851f-lock-job\.[A-Za-z0-9_-]+$/))return {code:22,error:'无效锁定任务编号'};
+			state=readfile('/tmp/'+id+'/state')||'';
+			let boot=trim(readfile('/proc/sys/kernel/random/boot_id')||'');
+			if(state&&index('\n'+state,'\nBOOT_ID='+boot+'\n')<0)return {code:11,error:'锁定任务不属于本次启动'};
+			return {code:0,request_id:id,active:index('\n'+active,'\nOP_ID='+id+'\n')>=0,
+				output:state?'SAVED_LOCK_STATE\n'+trim(state):'等待任务启动',pending:!length(state)};
+		}
 		if (!length(state)) return { code: 0, active: length(active) > 0, output: length(active) ? 'OPERATION_ACTIVE' : '' };
 		let boot = trim(readfile('/proc/sys/kernel/random/boot_id') || '');
 		let saved = match(`\n${state}`, /\nBOOT_ID=([^\r\n]+)/);
@@ -397,8 +415,8 @@ const methods = {
 		let arfcn = +arfcnText;
 		let pciText = '' + (req.args?.pci ?? '');
 		let rat = '' + (req.args?.rat || '');
-		if (!match(arfcnText, /^[0-9]+$/) || arfcn < 1 || arfcn > 3279165)
-			return { code: 22, error: 'ARFCN must be an integer from 1 to 3279165' };
+		if (!match(arfcnText, /^[0-9]+$/) || arfcn < (rat=='lte'?0:1) || arfcn > 3279165)
+			return { code: 22, error: rat=='lte'?'LTE EARFCN须为0至3279165的整数':'NR ARFCN须为1至3279165的整数' };
 		if (length(pciText) && (!match(pciText, /^[0-9]+$/) || +pciText > (rat == 'nr' ? 1007 : 503)))
 			return { code: 22, error: 'PCI 超出当前制式范围（LTE 0–503，NR 0–1007）' };
 		let band = +(req.args?.band || 0);
