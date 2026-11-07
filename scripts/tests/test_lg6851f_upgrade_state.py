@@ -58,6 +58,25 @@ class UpgradeStateTest(unittest.TestCase):
         self.assertNotEqual(self.migrate().returncode, 0)
         self.assertTrue((self.root / 'upper/usr/bin/old-plugin').exists())
 
+    def adopt(self, slot='a'):
+        return subprocess.run(['sh','-c','. "$1"; lg6851f_adopt_legacy_reset_overlay "$2" "$3"','test',str(HELPER),str(self.root),slot],capture_output=True,text=True)
+
+    def test_legacy_reset_policy_adopts_then_archives_old_software(self):
+        (self.root/'.mt6990-extroot-managed').unlink()
+        (self.root/'openwrt-sysupgrade/overlay-policy').write_text('mode=reset\nslot=a\n')
+        self.assertEqual(self.adopt().returncode,0)
+        self.assertEqual(self.migrate().returncode,0)
+        self.assertFalse((self.root/'upper/usr/bin/old-plugin').exists())
+        self.assertTrue((self.root/'openwrt-extroot-backups/upgrade-new-root/upper/usr/bin/old-plugin').exists())
+
+    def test_legacy_without_matching_reset_policy_is_untouched(self):
+        (self.root/'.mt6990-extroot-managed').unlink()
+        for policy in ['','mode=keep\nslot=a\n','mode=reset\nslot=b\n']:
+            (self.root/'openwrt-sysupgrade/overlay-policy').write_text(policy)
+            self.assertNotEqual(self.adopt().returncode,0)
+            self.assertFalse((self.root/'.mt6990-extroot-managed').exists())
+            self.assertTrue((self.root/'upper/usr/bin/old-plugin').exists())
+
 class PreinitOrderTest(unittest.TestCase):
     def test_overlay_is_prepared_before_mount_and_backup_after_mount(self):
         tree = pathlib.Path(__file__).resolve().parents[2] / 'target/linux/mediatek/mt6990/base-files'

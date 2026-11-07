@@ -1,5 +1,20 @@
 #!/bin/sh
 # Called before mount_root; the caller validates and mounts the P46 partition.
+lg6851f_adopt_legacy_reset_overlay() {
+	local mnt="$1" slot="$2" pending="$1/openwrt-sysupgrade/overlay-policy"
+	# Only the board-validated, explicitly requested reset for this boot slot
+	# can adopt an old extroot. Never infer authorization merely from upper/.
+	case "$slot" in a|b) ;; *) return 1 ;; esac
+	[ ! -e "$mnt/.mt6990-extroot-managed" ] || return 1
+	[ -f "$pending" ] && [ ! -L "$pending" ] || return 1
+	grep -qx 'mode=reset' "$pending" || return 1
+	grep -qx "slot=$slot" "$pending" || return 1
+	[ -d "$mnt/upper" ] && [ -d "$mnt/work" ] || return 1
+	[ ! -L "$mnt/upper" ] && [ ! -L "$mnt/work" ] || return 1
+	printf '%s\n' legacy-explicit-reset > "$mnt/.mt6990-extroot-managed" || return 1
+	echo 'LG6851F: adopted legacy overlay with explicit reset policy for current slot'
+}
+
 lg6851f_fresh_upgrade_upper() {
 	local mnt="$1" rootuuid="$2" policy="$3" archive led_config
 	case "$rootuuid" in ''|*[!a-zA-Z0-9-]*) return 1 ;; esac

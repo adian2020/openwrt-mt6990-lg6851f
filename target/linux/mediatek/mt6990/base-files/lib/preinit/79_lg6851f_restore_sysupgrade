@@ -19,6 +19,9 @@ lg6851f_prepare_sysupgrade() {
 		mount -o rw,noatime /dev/mmcblk0p46 "$mnt" 2>/dev/null || return 0
 		mounted_here=1
 	fi
+	. /lib/functions/lg6851f-upgrade-state.sh
+	current_slot="$(sed -n 's/.*[[:space:]]bootslot=\([^[:space:]]*\).*/\1/p' /proc/cmdline)"
+	lg6851f_adopt_legacy_reset_overlay "$mnt" "$current_slot" || :
 	reset_marker="$mnt/.mt6990-factory-reset-pending"
 	# LuCI's generic firstboot cannot erase an ext4 extroot.  The board wrapper
 	# records a reset request on verified user_data, then preinit performs the
