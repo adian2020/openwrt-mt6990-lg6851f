@@ -84,7 +84,8 @@ export function snapshot() {
 	}
 	let power_supplies = [];
 	for (let dir in paths('/sys/class/power_supply/*'))
-		push(power_supplies, { name: basename(dir), type: text(dir + '/type'), status: text(dir + '/status'), capacity: number(dir + '/capacity') });
+		push(power_supplies, { name: basename(dir), type: text(dir + '/type'), status: text(dir + '/status'), capacity: number(dir + '/capacity'),
+			online: number(dir + '/online'), voltage_uv: number(dir + '/voltage_now'), current_ua: number(dir + '/current_now') });
 	let identity = cached();
 	let radio_details = reading('radio-details'), details = radio_details?.parsed;
 	let operators = { '46000': '中国移动', '46002': '中国移动', '46007': '中国移动',
@@ -92,9 +93,10 @@ export function snapshot() {
 		'46003': '中国电信', '46005': '中国电信', '46011': '中国电信' };
 	let usage = total && available != null && available <= total ? total - available : null;
 	return {
-		model: text('/tmp/sysinfo/model'), board: text('/tmp/sysinfo/board_name'),
+		hostname: text('/proc/sys/kernel/hostname'), model: text('/tmp/sysinfo/model'), board: text('/tmp/sysinfo/board_name'),
 		firmware_id: text('/etc/mt6990-firmware-id'), release: text('/etc/openwrt_release'),
 		uptime: num(split(text('/proc/uptime'), /\s+/)[0]),
+		cpu_ticks: ticks(split(text('/proc/stat'), '\n')[0]),
 		memory: { total, available, used: usage, percent: usage != null ? 100.0 * usage / total : null },
 		temperatures, frequencies, power_supplies,
 		network_defaults: { ipv4_ttl: number('/proc/sys/net/ipv4/ip_default_ttl'), ipv6_hop_limit: number('/proc/sys/net/ipv6/conf/default/hop_limit') },
@@ -103,7 +105,9 @@ export function snapshot() {
 			operator: operators[identity.OPERATOR] || identity.OPERATOR || null,
 			plmn: identity.OPERATOR || null, sim: identity.SIM || null, registered: identity.REGISTERED == 'YES',
 			radio: identity.RADIO || null, rsrp: num(identity.RSRP), rsrq: num(identity.RSRQ), sinr: num(identity.SINR),
-			updated: num(identity.UPDATED), imei: mask(identity.IMEI), imsi: mask(identity.IMSI), iccid: mask(identity.ICCID) },
+			updated: num(identity.UPDATED), imei: mask(identity.IMEI), imsi: mask(identity.IMSI), iccid: mask(identity.ICCID),
+			model: identity.MODEM_MODEL || null, firmware: identity.MODEM_FIRMWARE || null, phone: mask(identity.PHONE),
+			roaming: identity.ROAMING == '1' ? '是' : identity.ROAMING == '0' ? '否' : null },
 		advanced: { ca: details?.carriers || null,
 			mcs: details ? map(details.carriers || [], row => ({ type: row.type, dl: row.dl_mcs, ul: row.ul_mcs })) : null,
 			qci: null, ambr: details?.ambr || null, endc: details?.endc || null, sa_nsa: details?.sa_nsa || null, ppe: null },

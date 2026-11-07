@@ -77,6 +77,8 @@ function parseCells(result) {
 		rows.push({serving:i === 0, rat:rat === 11 ? 'nr' : 'lte', bandNo:candidates.length === 1 ? candidates[0] : null,
 			band:candidates.length ? candidates.map(n=>(rat===11?'n':'B')+n).join(' / ') : rat === 11 ? 'NR（频段未确认）' : 'LTE（频段未确认）',
 			bandCandidates:candidates, arfcn, pci,
+			tac:/^[0-9a-f]{1,6}$/i.test(f[2]) ? f[2] : null,
+			cellId:/^[0-9a-f]{1,9}$/i.test(f[1]) ? f[1] : null,
 			rsrp:signal(f[6],'rsrp',rat), rsrq:signal(f[7],'rsrq',rat), sinr:signal(f[11],'sinr',rat)});
 	}
 	return rows;

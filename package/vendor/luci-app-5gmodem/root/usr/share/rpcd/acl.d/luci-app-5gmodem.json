@@ -17,7 +17,9 @@
 					"get_apn",
 					"get_sim_identity",
 					"get_radio_details",
-					"get_forward_status"
+					"get_forward_status",
+					"apn_get",
+					"traffic_get"
 				]
 			}
 		},
@@ -40,7 +42,12 @@
 					"get_forward_config",
 					"set_forward_config",
 					"test_forward",
-					"retry_forward"
+					"retry_forward",
+					"apn_set",
+					"traffic_set",
+					"traffic_clear",
+					"dashboard_action",
+					"request_radio_details"
 				]
 			},
 			"uci": [

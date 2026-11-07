@@ -1,0 +1,118 @@
+import * as a from 'lg6851f.apn';
+import * as fs from 'fs';
+import { cursor } from 'uci';
+let n=0;
+function check(ok,label) { if(!ok)die('FAIL '+label+'\n');n++; }
+let requests=[];
+check(a.reconnect({call:(object,method)=>{push(requests,[object,method]);return null;}},()=>null,'modem5g'),'empty successful ubus reply accepted');
+check(length(requests)==3 && requests[2][1]=='up','reload down up all requested');
+requests=[];
+check(!a.reconnect({call:(object,method)=>{push(requests,[object,method]);return null;}},()=>4,'modem5g') && length(requests)==1,'real ubus error stops reconnect');
+let pipe=fs.popen('mktemp -d /tmp/mu300-apn-test.XXXXXX','r');
+let dir=trim(pipe.read('all'));pipe.close();
+check(match(dir,/^\/tmp\/mu300-apn-test\.[a-zA-Z0-9]+$/),'private fixture');
+fs.mkdir(dir+'/delta',448);
+fs.writefile(dir+'/unisoc_modem',"config modem 'main'\n option data_interface 'modem5g'\n option data_sim '1'\n");
+fs.writefile(dir+'/network',"config interface 'modem5g'\n option proto 'ql_datacall'\n option apn 'old.apn'\n option iptype '3'\n option peerdns '0'\n list dns '1.1.1.1'\nconfig interface 'lan'\n option proto 'static'\n option ipaddr '192.168.77.1'\n");
+fs.writefile(dir+'/lg6851f_apn',"config profile 'automatic'\n option name 'SIM default'\n option apn ''\n option pdptype 'IPV4V6'\n");
+let c=cursor(dir,dir+'/delta'), calls=0;
+function reload(iface) { check(iface=='modem5g','only selected iface');calls++;return true; }
+let s=a.get(c);check(s.ok && s.data_sim==0 && s.current.apn=='old.apn','current SIM and APN');
+check(calls==0,'read never reconnects');
+for(let apn in ['internet','3gnet','a-b.example','a--b.example',''])check(a.validate({name:'x',apn,pdptype:'IPV4V6'}),'valid APN');
+for(let apn in ['a";AT','bad\nAT','a b','a..b','.foo','$(reboot)'])check(!a.validate({name:'x',apn,pdptype:'IP'}),'invalid APN '+sprintf('%J',apn));
+check(!a.validate({name:' ',apn:'a',pdptype:'IP'}),'empty name');
+check(!a.validate({name:'x',apn:'a',pdptype:'IPV6'}),'unsupported IPv6-only');
+let r=a.change(c,'save',{name:'Carrier',apn:'new.apn',pdptype:'IP'},reload);
+check(r.ok && r.id && calls==0,'save does not apply');let id=r.id;
+c=cursor(dir,dir+'/delta');check(length(a.get(c).profiles)==2,'profile persisted');
+check(c.get('network','modem5g','apn')=='old.apn','save leaves bearer alone');
+check(a.change(c,'save',{name:'Duplicate',apn:'new.apn',pdptype:'IP'},reload).error=='apn_duplicate','duplicate denied');
+check(a.change(c,'delete',{id:'../../../network'},reload).error=='apn_invalid','invalid id');
+check(a.change(c,'apply',{id:'missing'},reload).error=='apn_missing','missing profile');
+r=a.change(c,'apply',{id},reload);check(r.ok && calls==1,'apply reconnects once');
+c=cursor(dir,dir+'/delta');check(c.get('network','modem5g','apn')=='new.apn','APN persisted');
+check(c.get('network','modem5g','peerdns')=='0' && c.get('network','modem5g','dns')[0]=='1.1.1.1','DNS preserved');
+check(c.get('network','lan','ipaddr')=='192.168.77.1','LAN preserved');
+check(c.get('unisoc_modem','main','data_sim')=='1','SIM unchanged');
+check(a.change(c,'delete',{id},reload).error=='apn_current','active delete denied');
+r=a.change(c,'apply',{id:'automatic'},reload);check(r.ok && calls==2,'SIM default applies');
+c=cursor(dir,dir+'/delta');check(!c.get('network','modem5g','apn'),'old APN cleared');
+r=a.change(c,'delete',{id},reload);check(r.ok && calls==2,'inactive deleted without reconnect');
+c.set('network','lan','ipaddr','192.168.9.1');c.save('network');
+c=cursor(dir,dir+'/delta');r=a.change(c,'apply',{id:'automatic'},reload);
+check(r.error=='apn_unsaved' && calls==2,'pending user changes protected');
+c.revert('network');
+r=a.change(c,'apply',{id:'automatic'},()=>false);check(!r.ok && r.saved && r.error=='apn_reload','apply failure reported');
+check(fs.mkdir(dir+'/lock',448),'lock acquired');check(!fs.mkdir(dir+'/lock',448),'parallel writer denied');
+fs.rmdir(dir+'/lock');check(fs.mkdir(dir+'/lock',448),'lock released');
+printf('apn: %d checks passed\n',n);
+// Android-derived authentication, privacy and per-card persistence.
+let card1={iccid:'89860012345678901234',imsi:'460001234567890'};
+let card2={iccid:'89860112345678901234',imsi:'460011234567890'};
+r=a.change(c,'save',{name:'Private',apn:'private.apn',pdptype:'IPV4V6',auth:'chap',username:'account',password:'secret'},reload);
+check(r.ok,'authenticated profile');let privateId=r.id;
+c=cursor(dir,dir+'/delta');
+check(index(sprintf('%J',a.get(c)),'secret')<0,'password absent from public state');
+check(a.change(c,'save',{id:privateId,name:'Private edited',apn:'private.apn',pdptype:'IPV4V6',auth:'chap',username:'account'},reload).ok,'edit keeps password');
+check(c.get('lg6851f_apn',privateId,'password')=='secret','password retained');
+c=cursor(dir,dir+'/delta');
+for(let text in ['quote"','slash\\','line\n','非ASCII'])check(!a.validate({name:'x',apn:'internet',pdptype:'IP',username:text}),'credential injection denied');
+check(a.change(c,'apply',{id:privateId,remember:true},reload,{}).error=='apn_identity','identity mandatory');
+c=cursor(dir,dir+'/delta');
+check(a.change(c,'apply',{id:privateId,remember:true},reload,card1).ok,'card one assigned');
+c=cursor(dir,dir+'/delta');
+let selected=a.resolve(c,card1,{apn:'global',pdptype:'IP'});
+check(selected.ok && selected.settings.password=='secret' && selected.settings.apn=='private.apn','dialer gets card one credentials');
+check(a.resolve(c,card2,{apn:'global',pdptype:'IP'}).settings.apn=='global','other SIM does not inherit private APN');
+check(a.change(c,'delete',{id:privateId},reload,card2).error=='apn_bound','other card binding protected');
+check(a.change(c,'apply',{id:'automatic'},reload,card1).error=='apn_scope','global cannot override binding');
+check(a.change(c,'auto',{},reload,card2).ok,'second card auto assigned');
+c=cursor(dir,dir+'/delta');
+check(a.resolve(c,card2,{}).settings.apn=='3gnet','China Unicom public rule');
+check(a.resolve(c,card1,{}).settings.apn=='private.apn','first card binding persists');
+check(a.resolve(c,{iccid:card2.iccid,imsi:'999991234567890'},{}).settings.apn=='','unknown operator not guessed');
+check(a.automatic('460151234567890').apn=='cbnet','CBN rule');
+check(!a.automatic('garbage'),'invalid IMSI');
+check(a.change(c,'save',{id:privateId,name:'Private cleared',apn:'private.apn',pdptype:'IPV4V6',auth:'chap',username:'account',password:''},reload).ok,'explicit password clear');
+check(!a.resolve(c,card1,{}).settings.password,'cleared secret persisted');
+printf('apn extended: %d checks passed\n',n);
+
+// Vendor identifiers are opaque alphanumeric card keys, never digit-filtered.
+for(let value in ['898604E112345678901F','898604Z11234567890af'])
+    check(a.valid_identity({iccid:value}),'letter ICCID accepted intact');
+for(let value in ['', 'short', 'x12345678901234567890123', '898604/112345678901F', '898604Z11234567890af\n', 1234567890123456789, null, {}, '卡卡卡卡卡卡卡卡卡卡卡卡卡卡卡卡卡卡卡卡'])
+    check(!a.valid_identity({iccid:value}),'malformed ICCID rejected');
+let letterCard={iccid:'898604Z112345678901F',imsi:'460001234567890'};
+let otherLetterCard={iccid:'898604Y112345678901F',imsi:'460001234567890'};
+c=cursor(dir,dir+'/delta');
+let letterProfile=a.change(c,'save',{name:'Letter card',apn:'letter.apn',pdptype:'IP'},reload);
+check(letterProfile.ok,'letter card profile saved');
+c=cursor(dir,dir+'/delta');
+check(a.change(c,'apply',{id:letterProfile.id,remember:true},reload,letterCard).ok,'letter card binding applied');
+c=cursor(dir,dir+'/delta');
+check(a.get(c,letterCard).identity_ready && a.get(c,letterCard).remembered,'letter identity visible and bound');
+check(a.resolve(c,letterCard,{}).settings.apn=='letter.apn','letter binding used by dialer');
+check(a.resolve(c,otherLetterCard,{apn:'other.apn',pdptype:'IP'}).settings.apn=='other.apn','different letter is a different SIM');
+check(a.change(c,'auto',{},reload,otherLetterCard).ok,'letter card automatic selection applied');
+c=cursor(dir,dir+'/delta');
+check(a.resolve(c,otherLetterCard,{}).settings.apn=='cmnet','letter auto binding survives reload');
+check(a.resolve(c,letterCard,{}).settings.apn=='letter.apn','other letter binding unchanged');
+printf('alphanumeric APN identities: %d checks passed\n',n);
+
+// Dashboard status follows the per-SIM selection, without public credentials.
+let summary=a.status(c,letterCard);
+check(summary.ok && summary.apn=='letter.apn' && summary.source=='sim','dashboard follows remembered profile');
+check(!('username' in summary) && !('password' in summary) && !('profiles' in summary) && !('identity' in summary),'dashboard status exposes no credentials or SIM identity');
+check(a.status(c,otherLetterCard).apn=='cmnet','dashboard follows automatic profile for the other SIM');
+check(c.get('network','modem5g','apn')!='letter.apn','dashboard read does not rewrite global WAN APN');
+printf('dashboard APN selection: %d checks passed\n',n);
+
+let globalBefore=c.get('network','modem5g','apn');
+check(a.change(c,'apply',{id:letterProfile.id,remember:true},reload,letterCard).ok,'remembered apply');
+check(c.get('network','modem5g','apn')==globalBefore,'binding does not overwrite global APN');
+check(a.write_network(c,{apn:'test.apn',pdptype:'IPV4V6',auth:'papchap',roaming:'IP',attach:'1',username:'u',password:'p'}),'MTK mapping writes');
+check(c.get('network','modem5g','iptype')=='3' && c.get('network','modem5g','roamingtype')=='1' && c.get('network','modem5g','auth')=='3','PDP authentication enum mapping');
+check(c.get('network','modem5g','iaapn')=='test.apn' && c.get('network','modem5g','lg6851f_attach')=='1','initial attach opt-in');
+check(a.from_network(c.get_all('network','modem5g')).pdptype=='IPV4V6','MTK config readback');
+printf('MT6990 APN：%d 项通过\n',n);

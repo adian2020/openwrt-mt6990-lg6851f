@@ -10,6 +10,8 @@ const record = rows => ({code:0,output:'+ECELL: '+rows.length+','+rows.map(row=>
 const rows = c.parseCells(record([serving,...[111,222,333,444].map(neighbor)]));
 assert.equal(rows.length,5);
 assert.equal(rows[0].serving,true);
+assert.equal(rows[0].tac,'000001');
+assert.equal(rows[0].cellId,'000000001');
 assert.deepEqual([rows[0].pci,rows[0].arfcn,rows[0].rsrp,rows[0].rsrq,rows[0].sinr],[321,640000,-101,-10.5,18]);
 assert.deepEqual(rows[0].bandCandidates,[77,78]);
 assert.equal(rows[0].bandNo,null);

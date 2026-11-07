@@ -52,6 +52,8 @@ acl = json.loads(acl_path.read_text())['luci-app-5gmodem']
 rpc_source = rpc_path.read_text()
 methods = set(re.findall(r'^\t(\w+):\s*\{\s*(?:call|args):', rpc_source, re.M))
 permitted = set(acl['read']['ubus']['luci.modem5g'] + acl['write']['ubus']['luci.modem5g'])
+for removed in ['admin/modem5g/cpu','admin/modem5g/sim']:
+    if removed in menu: errors.append('已移除的页面重新出现在菜单：'+removed)
 for name, entry in menu.items():
     action = entry.get('action', {})
     if action.get('type') == 'view':
@@ -63,7 +65,7 @@ for path in assets.glob('**/*.js'):
     for method in re.findall(r"rpc\.declare\(\{[^}]*object:\s*['\"]luci\.modem5g['\"][^}]*method:\s*['\"](\w+)['\"]", source):
         if method not in methods or method not in permitted:
             errors.append(f'RPC 或权限未接入：{path.name} → {method}')
-for module in re.findall(r"from '(lg6851f\.\w+)'", rpc_source):
+for module in re.findall(r"from '(lg6851f\.[\w-]+)'", rpc_source):
     required(root/('usr/share/ucode/'+module.replace('.', '/')+'.uc'))
 for name in ['usr/share/ucode/lg6851f/forward.uc','etc/config/lg6851f_sms_forward',
              'lib/upgrade/keep.d/lg6851f-sms-forward','usr/libexec/lg6851f-sms-forward.uc']:
@@ -74,6 +76,13 @@ required(root/'usr/bin/lg6851f-lock-status-collect',executable=True)
 required(root/'usr/libexec/lg6851f-lock-status-collect.uc')
 required(root/'usr/libexec/lg6851f-dashboard-collect.uc')
 required(root/'usr/share/ucode/lg6851f/dashboard-collect.uc')
+for name in ['usr/libexec/lg6851f-traffic.uc','usr/libexec/lg6851f-apn-resolve.uc',
+             'usr/share/ucode/lg6851f/traffic-core.uc','usr/share/ucode/lg6851f/apn.uc',
+             'etc/config/lg6851f_apn','lib/upgrade/keep.d/lg6851f-traffic-apn',
+             'usr/libexec/lg6851f-radio-collect.uc','usr/share/licenses/luci-app-5gmodem/MU300-NOTICE']:
+    required(root/name)
+required(root/'etc/init.d/lg6851f-traffic',executable=True)
+required(root/'usr/bin/lg6851f-radio-collect',executable=True)
 if not args.rootfs:
     required(root/'etc/uci-defaults/99-lg6851f-sms-forward',executable=True)
 for name in ['usr/bin/lg6851f-radio-control','usr/bin/lg6851f-modem-details',
@@ -86,7 +95,7 @@ if args.rootfs:
     required(root/'usr/bin/iwinfo',executable=True)
     required(root/'usr/bin/curl',executable=True)
     required(root/'usr/bin/sha256sum',executable=True)
-    for module in ['fs','uci']:
+    for module in ['fs','uci','ubus','uloop']:
         required(root/('usr/lib/ucode/'+module+'.so'))
     # The SDK also ships an old unversioned /usr/lib/libuci.so for its own
     # processes. Native ucode must bind to the modern versioned system ABI.

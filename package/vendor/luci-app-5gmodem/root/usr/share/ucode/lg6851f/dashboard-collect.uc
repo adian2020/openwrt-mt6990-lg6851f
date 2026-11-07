@@ -15,7 +15,8 @@ function network_state(){return read_json_command(['/bin/ubus','call','network.i
 function apn_values(){let u=cursor();u.load('network');let v=u.get_all('network','modem5g')||{};return {apn:v.apn||'',proto:v.proto,mtu:+(v.mtu||1500),password_set:!!v.password};}
 export function parse_info(text){
  let channel=match(text,/Channel:\s*([0-9]+)/),frequency=match(text,/\(([0-9.]+) GHz\)/),power=match(text,/Tx-Power:\s*(-?[0-9.]+) dBm/);
- return {channel:channel?+channel[1]:null,frequency:frequency?+frequency[1]*1000:null,txpower:power?+power[1]:null};
+ let mode=match(text,/HT Mode:\s*([^\r\n]+)/);
+ return {channel:channel?+channel[1]:null,frequency:frequency?+frequency[1]*1000:null,txpower:power?+power[1]:null,width:mode?trim(mode[1]):null};
 }
 export function parse_clients(text){
  let rows=[],current=null;
@@ -34,6 +35,7 @@ export function collect(publish) {
 	data.network = network_state();
 	data.ipv6_global = dashboard.global_ipv6(data.network);
 	data.apn = apn_values();
+	if(data.network?.up && data.network?.data?.apn != null)data.apn.apn=data.network.data.apn;
 	data.lan = read_json_command([ '/bin/ubus', 'call', 'network.interface.lan', 'status' ]);
 	let wireless = read_json_command([ '/bin/ubus', 'call', 'network.wireless', 'status' ]);
 	publish(data, "network");
@@ -48,6 +50,7 @@ export function collect(publish) {
 			let info=raw_info.code==0?parse_info(raw_info.output):null;
 			push(data.wireless, { radio, device: dev, up: entry.up, ssid: iface.config?.ssid || info?.ssid,
 				channel: info?.channel, frequency: info?.frequency, txpower: info?.txpower,
+				width: info?.width,
 				country: info?.country || entry.config?.country, encryption: iface.config?.encryption,
 				hidden: !!+iface.config?.hidden, information_available: info != null });
 			let raw_clients=capture(['/usr/bin/iwinfo',dev,'assoclist']);

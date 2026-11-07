@@ -39,6 +39,7 @@ proto_ql_datacall_init_config() {
     proto_config_add_int vlan
     proto_config_add_int mode
     proto_config_add_int auto_conf
+    proto_config_add_int lg6851f_attach
     proto_config_add_int retry
     proto_config_add_int ql_conf
     proto_config_add_int ql_monitor
@@ -487,7 +488,7 @@ wait_modem_stack_ready() {
 # This is a reference design by Mediatek
 proto_ql_datacall_setup() {
     local interface="$1"
-    local sim_state timeout retry imei
+    local sim_state timeout retry imei ia_applied=0 has_apn_selection=0
 
     sensitive_log=`uci get system.@system[0].enable_sensitive_log`
 
@@ -523,7 +524,7 @@ proto_ql_datacall_setup() {
     done
 
     # Read from /etc/config/network
-    json_get_vars apn auth mtu username password roamingtype iptype staticip staticgw staticmask staticdns staticipv6 staticgwv6 staticipv6prefix staticdnsv6 iaapn iaiptype iaroamingtype rattype plmn vlan mode auto_conf retry bearer_bitmask iabearer_bitmask dataroaming ql_conf ql_monitor
+    json_get_vars apn auth mtu username password roamingtype iptype staticip staticgw staticmask staticdns staticipv6 staticgwv6 staticipv6prefix staticdnsv6 iaapn iaiptype iaroamingtype rattype plmn vlan mode auto_conf retry bearer_bitmask iabearer_bitmask dataroaming ql_conf ql_monitor lg6851f_attach
     [ -z "$timeout" ] && timeout="5"
     # Match the vendor SDK default: five data-call attempts, spaced by the
     # existing three-second recovery/check-IA interval below.
@@ -599,8 +600,16 @@ proto_ql_datacall_setup() {
         echo 1 > /proc/ccmni/bridge_mode_control
     fi
 
-    echo "Radio on ia:[${iaapn} ${rattype} ${iaiptype} ${iaroamingtype} ${dataroaming}]"
-    mipc_wan_cli --check_ia ${iaapn} ${rattype} ${iaiptype} ${iaroamingtype} "${username}" "${password}" ${auth} ${iabearer_bitmask} ${dataroaming}
+    # Preserve the proven vendor ordering for existing/global configurations.
+    # Only a per-SIM selection defers IA until the target card is identified.
+    if [ "$interface" = modem5g ] && uci -q show lg6851f_apn | grep -q '=selection$'; then
+        has_apn_selection=1
+    else
+        if [ "$lg6851f_attach" != 0 ]; then
+            mipc_wan_cli --check_ia "${iaapn}" "${rattype}" "${iaiptype}" "${iaroamingtype}" "${username}" "${password}" "${auth}" "${iabearer_bitmask}" "${dataroaming}"
+        fi
+        ia_applied=1
+    fi
 
     imei=$(cat /tmp/imei) >/dev/null 2>&1
     [ -z "$imei" ] && imei=$(mipc_wan_cli --get_imei)
@@ -650,6 +659,36 @@ proto_ql_datacall_setup() {
         fi
         sim_status=$(mipc_wan_cli --show_sim_status)
     done
+
+    # Only configured per-SIM selections need identity reads. Keep ownership
+    # in the existing atcid client, including its timeout, lock and breaker.
+    if [ "$has_apn_selection" = 1 ]; then
+        local raw_identity apn_identity apn_imsi resolved_apn resolved_source
+        raw_identity="$(timeout 10 /usr/bin/modem5g-at 'AT+ICCID')" || {
+            proto_notify_error "$interface" APN_IDENTITY_PENDING; return 1;
+        }
+        apn_identity="$(printf '%s\n' "$raw_identity" | tr -d '\r' | sed -n 's/^+ICCID:[[:space:]]*\([0-9A-Fa-f]\{18,22\}\).*/\1/p; /^[0-9A-Fa-f]\{18,22\}$/p' | head -n 1)"
+        raw_identity="$(timeout 10 /usr/bin/modem5g-at 'AT+CIMI')" || {
+            proto_notify_error "$interface" APN_IDENTITY_PENDING; return 1;
+        }
+        apn_imsi="$(printf '%s\n' "$raw_identity" | tr -d '\r' | sed -n '/^[0-9]\{14,16\}$/p' | head -n 1)"
+        resolved_apn="$(LG6851F_APN_ICCID="$apn_identity" LG6851F_APN_IMSI="$apn_imsi" /usr/libexec/lg6851f-apn-resolve.uc)" || {
+            proto_notify_error "$interface" APN_SELECTION_FAILED; return 1;
+        }
+        json_load "$resolved_apn"
+        json_get_var resolved_source source
+        if [ "$resolved_source" != network ]; then
+            json_select settings
+            json_get_vars apn iptype roamingtype auth username password
+            json_get_var lg6851f_attach attach
+            iaapn="$apn"; iaiptype="$iptype"; iaroamingtype="$roamingtype"
+        fi
+    fi
+    # Legacy configuration keeps the vendor initial-attach behavior; the new
+    # APN editor explicitly controls it without touching IMS.
+    if [ "$ia_applied" != 1 ] && [ "$lg6851f_attach" != 0 ]; then
+        mipc_wan_cli --check_ia "${iaapn}" "${rattype}" "${iaiptype}" "${iaroamingtype}" "${username}" "${password}" "${auth}" "${iabearer_bitmask}" "${dataroaming}"
+    fi
 
     # Wait network registartion status
     echo "Check Network status"
@@ -742,6 +781,7 @@ proto_ql_datacall_setup() {
 
         proto_add_data
         json_add_string "cid" "$cid"
+        json_add_string "apn" "$apn"
         json_add_string "mode" "$mode"
         json_add_string "clatd" "$clatd"
         json_add_string "vlan" "$vlan"
@@ -769,6 +809,7 @@ proto_ql_datacall_setup() {
 
         proto_add_data
         json_add_string "cid" "$cid"
+        json_add_string "apn" "$apn"
         json_add_string "mode" "$mode"
         json_add_string "clatd" "$clatd"
         json_add_string "vlan" "$vlan"
@@ -859,6 +900,7 @@ proto_ql_datacall_setup() {
 
         proto_add_data
         json_add_string "cid" "$cid"
+        json_add_string "apn" "$apn"
         json_add_string "mode" "$mode"
         json_add_string "clatd" "$clatd"
         json_add_string "vlan" "$vlan"

@@ -6,6 +6,7 @@ import { popen, readfile, glob, open, rename, mkdtemp, rmdir, unlink } from 'fs'
 import { cursor } from 'uci';
 import * as dashboard from 'lg6851f.dashboard';
 import * as radio from 'lg6851f.radio';
+import * as apn_profiles from 'lg6851f.apn';
 
 const CLI = '/usr/bin/mipc_wan_cli';
 const ATCLI = '/usr/bin/modem5g-at';
@@ -234,7 +235,39 @@ function dashboard_state() {
   model:trim(readfile('/tmp/sysinfo/model')||''),board:trim(readfile('/tmp/sysinfo/board_name')||''),
   collector_phase:'pending'};
  frame.collector_age=age;frame.collector_stale=age==null||age<0||age>60;
+ try {frame.traffic=json(readfile('/var/run/lg6851f-traffic/view.json')||'null');}catch(e){frame.traffic=null;}
+ try {frame.radio_request=json(readfile('/tmp/lg6851f-radio-request.json')||'null');}catch(e){}
+ if(frame.radio_request?.boot_id!=boot)frame.radio_request=null;
  return frame;
+}
+
+function apn_identity() {
+ let state=dashboard.cached();
+ if(!state.UPDATED || time()-int(state.UPDATED)<0 || time()-int(state.UPDATED)>180)return null;
+ return {iccid:state.ICCID,imsi:state.IMSI};
+}
+function apn_get() {
+ let result=apn_profiles.get(cursor(),apn_identity()),net=network_state();
+ result.connected=!!net?.up;result.connecting=!!net?.pending;
+ return result;
+}
+function apn_change(req) {
+ if(!board_ok())return {ok:0,error:'apn_unsupported'};
+ let payload=req.args?.payload,input;
+ if(type(payload)!='string'||length(payload)>4096)return {ok:0,error:'apn_invalid'};
+ try{input=json(payload);}catch(e){return {ok:0,error:'apn_invalid'};}
+ let c=cursor(),identity=apn_identity();
+ return apn_profiles.change(c,req.args?.action,input,function(iface){
+  // Per-SIM profiles are resolved by netifd at dial time. Keep the global
+  // network settings intact, so another SIM cannot inherit private credentials.
+  // netifd owns reconnection. Never hold an RPC or modem lock while it dials.
+  let p=popen('(ubus call network reload; ifdown modem5g; ifup modem5g) >/dev/null 2>&1 </dev/null &','r');p?.close?.();
+  return true;
+ },identity);
+}
+function traffic_call(method,args) {
+ let result=read_json_command(['/bin/ubus','-t','2','call','lg6851f.traffic',method,sprintf('%J',args||{})],3);
+ return result || {ok:0,error:'traffic_unavailable'};
 }
 
 function save_apn(req) {
@@ -265,6 +298,30 @@ function save_apn(req) {
 }
 
 const methods = {
+	dashboard_action: {args:{operation:''},call:function(req){
+		if(!board_ok())return {code:95,error:'当前设备不支持此操作'};
+		let op=req.args?.operation;
+		if(op=='wifi_on'||op=='wifi_off'){
+			let c=cursor(),disabled=op=='wifi_off'?'1':'0',count=0,ok=true,pending=c.changes('wireless');
+			if(pending==null)return {code:5,error:'无法读取无线配置状态'};
+			if(length(pending))return {code:16,error:'无线配置有未保存更改'};
+			c.foreach('wireless','wifi-device',s=>{if(!c.set('wireless',s['.name'],'disabled',disabled))ok=false;count++;});
+			if(!count||!ok||!c.commit('wireless'))return {code:5,error:'无线配置保存失败'};
+			let p=popen('(sleep 2; /sbin/wifi reload) >/dev/null 2>&1 </dev/null &','r');p?.close?.();
+			return {code:0,output:'已保存无线开关，正在应用'};
+		}
+		if(op=='reboot'||op=='poweroff'){
+			let command=op=='reboot'?'/sbin/reboot':'/sbin/poweroff';
+			let p=popen('(sleep 2; '+command+') >/dev/null 2>&1 </dev/null &','r');p?.close?.();
+			return {code:0,output:op=='reboot'?'设备即将重启':'设备即将关机'};
+		}
+		return {code:95,error:'尚无已验证的对应接口'};
+	}},
+	apn_get: {call: function(){return apn_get();}},
+	apn_set: {args:{action:'',payload:''},call:apn_change},
+	traffic_get: {call:function(){return traffic_call('get');}},
+	traffic_set: {args:{payload:''},call:function(req){return traffic_call('set',req.args);}},
+	traffic_clear: {args:{confirm:false},call:function(req){return traffic_call('clear',req.args);}},
 	get_radio_details: { call: function() {
 		if (!board_ok()) return { code: 95, error: '当前设备不支持此查询' };
 		if (!modem_settled(network_state())) return { code: 11, error: '请等待蜂窝网络完成启动后再读取' };
@@ -274,6 +331,12 @@ const methods = {
 		if (!result.parsed.complete) return { code: 5, error: '高级参数读取不完整，请稍后重试', output: result.output };
 		return save_reading('radio-details', result);
 	} },
+	request_radio_details: {call:function(){
+		if(!board_ok())return {code:95,error:'不支持的设备'};
+		if(!modem_settled(network_state()))return {code:11,error:'请等待蜂窝网络完成启动后再读取'};
+		let p=popen('/usr/bin/lg6851f-radio-collect >/dev/null 2>&1 </dev/null &','r');p?.close?.();
+		return {code:0,output:'已提交后台读取，请等待看板自动更新'};
+	}},
 	get_dashboard: { call: function() { return dashboard_state(); } },
 	get_rates: { call: function() { return dashboard.rate_sample(network_state()?.l3_device); } },
 	get_apn: { call: function() { return apn_values(); } },
@@ -283,7 +346,8 @@ const methods = {
 		return { sim: state.SIM, operator: state.OPERATOR, slots_confirmed: null,
 			imei: req.args?.reveal ? state.IMEI : dashboard.mask(state.IMEI),
 			imsi: req.args?.reveal ? state.IMSI : dashboard.mask(state.IMSI),
-			iccid: req.args?.reveal ? state.ICCID : dashboard.mask(state.ICCID) };
+			iccid: req.args?.reveal ? state.ICCID : dashboard.mask(state.ICCID),
+			phone: req.args?.reveal ? state.PHONE : dashboard.mask(state.PHONE) };
 	} },
 	get_status: { call: function() { return status(); } },
 	get_cells: { call: function() {

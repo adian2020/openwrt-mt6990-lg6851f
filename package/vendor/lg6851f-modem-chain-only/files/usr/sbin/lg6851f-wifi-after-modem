@@ -1,17 +1,17 @@
 #!/bin/sh
 
-# Keep the management AP quiet while the integrated modem completes its
-# official startup/data-call sequence.  Always fall back to Wi-Fi after the
-# deadline so a missing SIM or weak mobile signal cannot lock users out.
+# 首次管理 Wi-Fi 只等待真实 PHY，不等待蜂窝注册或拨号。
+# 正常重启由 netifd 启动，已完成首次配置后尊重用户的开关。
 
 TAG="lg6851f-wifi"
-MODEM_SETTLE=30
 WIFI_DETECT_TIMEOUT=90
-MODEM_TIMEOUT=180
+PROVISIONED=/etc/lg6851f-wifi-provisioned
 
 log() {
-	logger -t "$TAG" "$*"
-	echo "$TAG: $*"
+	local stamp rest
+	read -r stamp rest < /proc/uptime
+	logger -t "$TAG" "[uptime ${stamp}s] $*"
+	echo "$TAG: [uptime ${stamp}s] $*"
 }
 
 wireless_sections() {
@@ -65,81 +65,56 @@ ensure_wireless_config() {
 	[ -n "$(wireless_sections)" ]
 }
 
-modem_processes_ready() {
-	local daemon
-
-	for daemon in atcid mtk_netagent scd ql_netd ql_ril_service; do
-		pidof "$daemon" >/dev/null 2>&1 || return 1
-	done
-	return 0
-}
-
-modem_is_settled() {
-	local state up uptime
-
-	state="$(ubus call network.interface.modem5g status 2>/dev/null)" || return 1
-	up="$(printf '%s' "$state" | jsonfilter -e '@.up' 2>/dev/null)"
-	uptime="$(printf '%s' "$state" | jsonfilter -e '@.uptime' 2>/dev/null)"
-	[ "$up" = "true" ] || return 1
-	case "$uptime" in
-		''|*[!0-9]*) return 1 ;;
-	esac
-	[ "$uptime" -ge "$MODEM_SETTLE" ] || return 1
-	modem_processes_ready
-}
-
 enable_management_wifi() {
 	local section radio_count=0 ap_count=0 changed=0
 
 	for section in $(wireless_sections); do
-		uci -q set "wireless.$section.disabled=0"
-		uci -q set "wireless.$section.country=CN"
+		uci -q set "wireless.$section.disabled=0" || return 1
+		uci -q set "wireless.$section.country=CN" || return 1
 		changed=1
 		radio_count=$((radio_count + 1))
 	done
 
 	for section in $(wireless_interfaces); do
 		[ "$(uci -q get "wireless.$section.mode")" = "ap" ] || continue
-		uci -q set "wireless.$section.disabled=0"
+		uci -q set "wireless.$section.disabled=0" || return 1
 		changed=1
 		ap_count=$((ap_count + 1))
 	done
 
 	[ "$changed" = 1 ] && [ "$ap_count" -gt 0 ] || return 1
-	uci -q commit wireless
+	uci -q commit wireless || return 1
 
 	# One `wifi up` performs the required network reload and brings all enabled
 	# radios up.  Calling it once per radio is not selective: every invocation
 	# reloads the entire network and tears down/recreates the first AP again.
-	wifi up
+	wifi up || return 1
 	log "Wi-Fi enabled automatically on $radio_count radio(s), $ap_count AP(s)"
 }
 
 main() {
-	local elapsed=0 reason="modem stable"
-
-	ensure_wireless_config || return 1
-	if persistent_wifi_is_enabled; then
-		log "preserved Wi-Fi configuration is enabled; leaving single startup to netifd"
-		return 0
-	fi
-
-	# A fresh/default configuration is still disabled.  Keep it down until the
-	# modem settles, then enable it once as the first-boot management fallback.
-	wifi down >/dev/null 2>&1
-	log "Wi-Fi held down until modem is stable (fallback ${MODEM_TIMEOUT}s)"
-
-	while ! modem_is_settled; do
-		if [ "$elapsed" -ge "$MODEM_TIMEOUT" ]; then
-			reason="fallback timeout"
-			break
-		fi
-		sleep 2
-		elapsed=$((elapsed + 2))
-	done
-
-	log "enabling Wi-Fi: $reason"
-	enable_management_wifi
+ log "management Wi-Fi helper started"
+ ensure_wireless_config || return 1
+ # Older firmware has no provisioning marker. A staged, explicitly kept
+ # wireless configuration must retain even an all-disabled user choice.
+ if [ ! -e "$PROVISIONED" ] && [ -s /tmp/lg6851f-sysupgrade.tgz ] &&
+    tar -tzf /tmp/lg6851f-sysupgrade.tgz 2>/dev/null | grep -Eq '^(\./)?etc/config/wireless$'; then
+  : > "$PROVISIONED"
+  log "wireless configuration restored from sysupgrade; preserving saved Wi-Fi switches"
+  return 0
+ fi
+ if [ -e "$PROVISIONED" ]; then
+  log "Wi-Fi already provisioned; preserving user configuration and netifd startup"
+  return 0
+ fi
+ if persistent_wifi_is_enabled; then
+  : > "$PROVISIONED"
+  log "preserved Wi-Fi enabled; leaving startup to netifd"
+  return 0
+ fi
+ log "wireless PHY ready; enabling first-boot management Wi-Fi without waiting for cellular data"
+ enable_management_wifi || return 1
+ : > "$PROVISIONED"
 }
 
 main "$@"

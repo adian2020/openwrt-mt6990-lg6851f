@@ -1,0 +1,4 @@
+#!/bin/sh
+chmod 600 /etc/config/lg6851f_apn
+/etc/init.d/lg6851f-traffic enable
+exit 0

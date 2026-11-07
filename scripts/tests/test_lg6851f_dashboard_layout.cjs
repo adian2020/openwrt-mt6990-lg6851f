@@ -133,12 +133,7 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
    await page.locator('#modal').getByRole('button',{name:'确认执行',exact:true}).click();
    const save=await page.evaluate(()=>calls.find(row=>row.method==='set_apn'));
    if(save.args[1]!==false||save.args[0].password!=='')throw Error('save-only/password contract mismatch');
-   await page.evaluate(()=>mount('panels'));
-   await fit('sim');
-   if((await page.locator('main').innerText()).includes('123456789000111'))throw Error('SIM identity revealed by default');
-   await page.getByRole('button',{name:'显示完整号码',exact:true}).click();
-   if(!(await page.locator('main').innerText()).includes('123456789000111'))throw Error('explicit identity reveal failed');
-   for (const key of ['device','settings','cpu','ttl','traffic']) {
+   for (const key of ['device','settings','ttl','battery']) {
     await page.evaluate(async key=>{L.env.requestpath[2]=key;await mount('panels');},key);
     await fit(key);
    }

@@ -81,7 +81,7 @@
 		"order": 5,
 		"action": {
 			"type": "view",
-			"path": "modem5g/dashboard_v1"
+			"path": "modem5g/dashboard_v2"
 		},
 		"depends": {
 			"acl": [
@@ -103,11 +103,11 @@
 		}
 	},
 	"admin/modem5g/traffic": {
-		"title": "流量统计",
+		"title": "流量管理",
 		"order": 50,
 		"action": {
 			"type": "view",
-			"path": "modem5g/panels_v1"
+			"path": "modem5g/traffic_v2"
 		},
 		"depends": {
 			"acl": [
@@ -141,35 +141,9 @@
 			]
 		}
 	},
-	"admin/modem5g/cpu": {
-		"title": "CPU 状态",
-		"order": 80,
-		"action": {
-			"type": "view",
-			"path": "modem5g/panels_v1"
-		},
-		"depends": {
-			"acl": [
-				"luci-app-5gmodem"
-			]
-		}
-	},
 	"admin/modem5g/ttl": {
 		"title": "TTL",
 		"order": 90,
-		"action": {
-			"type": "view",
-			"path": "modem5g/panels_v1"
-		},
-		"depends": {
-			"acl": [
-				"luci-app-5gmodem"
-			]
-		}
-	},
-	"admin/modem5g/sim": {
-		"title": "SIM 卡管理",
-		"order": 100,
 		"action": {
 			"type": "view",
 			"path": "modem5g/panels_v1"
@@ -185,7 +159,7 @@
 		"order": 110,
 		"action": {
 			"type": "view",
-			"path": "modem5g/apn_v1"
+			"path": "modem5g/apn_v2"
 		},
 		"depends": {
 			"acl": [

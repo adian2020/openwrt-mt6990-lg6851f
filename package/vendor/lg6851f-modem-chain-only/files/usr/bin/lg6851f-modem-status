@@ -46,6 +46,7 @@ at_query() {
 }
 
 write_state() {
+	now="$(date +%s)"
 	{
 		printf 'UPDATED=%s\n' "$now"
 		printf 'UP=%s\n' "$UP"
@@ -64,6 +65,10 @@ write_state() {
 		printf 'IMSI=%s\n' "$IMSI"
 		printf 'ICCID=%s\n' "$ICCID"
 		printf 'OPERATOR=%s\n' "$OPERATOR"
+		printf 'MODEM_MODEL=%s\n' "$MODEM_MODEL"
+		printf 'MODEM_FIRMWARE=%s\n' "$MODEM_FIRMWARE"
+		printf 'PHONE=%s\n' "$PHONE"
+		printf 'ROAMING=%s\n' "$ROAMING"
 		printf 'CESQ=%s\n' "$CESQ"
 		printf 'RSSI=%s\n' "$RSSI"
 		printf 'RSRQ=%s\n' "$RSRQ"
@@ -90,6 +95,10 @@ IMEI=
 IMSI=
 ICCID=
 OPERATOR=
+MODEM_MODEL=
+MODEM_FIRMWARE=
+PHONE=
+ROAMING=
 CESQ=
 RSSI=
 RSRQ=
@@ -122,6 +131,7 @@ while :; do
 			esac
 		fi
 		last_registration="$now"
+		write_state
 	fi
 
 	if [ $((now - last_radio)) -ge "$radio_interval" ]; then
@@ -140,6 +150,7 @@ while :; do
 		value="$(query nw_radio_state_get)"
 		[ -n "$value" ] && RADIO="$(clean_value "$value")"
 		last_radio="$now"
+		write_state
 	fi
 
 	if [ $((now - last_identity)) -ge "$identity_interval" ]; then
@@ -154,7 +165,22 @@ while :; do
 		value="$(at_query 'AT+COPS?')"
 		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+COPS:[[:space:]]*[^,]*,[^,]*,"\([^"]*\)".*/\1/p' | head -n 1)"
 		[ -n "$parsed" ] && OPERATOR="$parsed"
+		# 标准只读身份接口，复用现有 AT 所有者；型号/版本每次开机只取成功的一份。
+		if [ -z "$MODEM_MODEL" ]; then
+			value="$(at_query 'AT+CGMM')"
+			parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed '/^$/d; /^OK$/d; /^AT+/d; /^ERROR/d; /^+CME ERROR/d' | head -n 1)"
+			[ -n "$parsed" ] && MODEM_MODEL="$parsed"
+		fi
+		if [ -z "$MODEM_FIRMWARE" ]; then
+			value="$(at_query 'AT+CGMR')"
+			parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed '/^$/d; /^OK$/d; /^AT+/d; /^ERROR/d; /^+CME ERROR/d' | head -n 1)"
+			[ -n "$parsed" ] && MODEM_FIRMWARE="$parsed"
+		fi
+		value="$(at_query 'AT+CNUM')"
+		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+CNUM:[^,]*,"\([+0-9]*\)".*/\1/p' | head -n 1)"
+		[ -n "$parsed" ] && PHONE="$parsed"
 		last_identity="$now"
+		write_state
 	fi
 
 	if [ $((now - last_detail)) -ge "$detail_interval" ]; then
@@ -172,6 +198,17 @@ while :; do
 			SINR="$(printf '%s\n' "$parsed" | awk -F, '{ if (NF >= 9 && $9 >= 0 && $9 <= 127) printf "%.1f", ($9 / 2) - 23 }')"
 			[ -n "$cesq_rsrp" ] && RSRP="$cesq_rsrp"
 		fi
+		value="$(at_query 'AT+C5GREG?')"
+		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+C5GREG:[[:space:]]*[0-9]*,\([0-9]*\).*/\1/p' | head -n 1)"
+		case "$parsed" in
+			1|9) ROAMING=0 ;;
+			5|10) ROAMING=1 ;;
+			*)
+				value="$(at_query 'AT+CEREG?')"
+				parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+CEREG:[[:space:]]*[0-9]*,\([0-9]*\).*/\1/p' | head -n 1)"
+				case "$parsed" in 1|9) ROAMING=0 ;; 5|10) ROAMING=1 ;; *) ROAMING= ;; esac
+				;;
+		esac
 		last_detail="$now"
 	fi
 
