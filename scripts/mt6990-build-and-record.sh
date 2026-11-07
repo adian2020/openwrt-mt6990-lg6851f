@@ -29,15 +29,10 @@ if [ "$#" -eq 0 ]; then
 fi
 
 printf '%s\n' "提醒：构建成功后仅追加精简产物信息；维修过程需按结构化主线记录。"
-make -C "$repo_dir" "$@"
-
-# A fresh LG6851F rootfs uses the unused tail of rootfs_b through a loop
-# device as its persistent F2FS overlay.  Refuse to sign an image that would
-# silently fall back to a volatile /tmp overlay on first boot.
+# Build and use the repository-pinned host interpreter before the full image
+# build, so incompatible source/test syntax fails before kernel/image work.
 if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_dir/.config"; then
-	rootfs_dir="$repo_dir/build_dir/target-aarch64_cortex-a55+neon-vfpv4_musl/root-mediatek"
-	python3 "$repo_dir/scripts/lg6851f-check-cpe-package.py" --rootfs "$rootfs_dir"
-	# Use this build's host interpreter; target aarch64 modules cannot run here.
+	make -C "$repo_dir" -j4 V=s package/utils/ucode/host/compile
 	UCODE="$repo_dir/staging_dir/hostpkg/bin/ucode"
 	UCODE_LIBRARY="$repo_dir/staging_dir/hostpkg/lib/ucode"
 	[ -x "$UCODE" ] && [ -s "$UCODE_LIBRARY/fs.so" ] || {
@@ -48,6 +43,14 @@ if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_di
 	python3 "$repo_dir/scripts/tests/test_lg6851f_dashboard.py"
 	python3 "$repo_dir/scripts/tests/test_lg6851f_qos_probe.py"
 	python3 "$repo_dir/scripts/tests/test_lg6851f_sms_forward.py"
+fi
+
+make -C "$repo_dir" "$@"
+
+# Inspect the assembled image before accepting artifacts for publication.
+if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_dir/.config"; then
+	rootfs_dir="$repo_dir/build_dir/target-aarch64_cortex-a55+neon-vfpv4_musl/root-mediatek"
+	python3 "$repo_dir/scripts/lg6851f-check-cpe-package.py" --rootfs "$rootfs_dir"
 	[ -x "$rootfs_dir/usr/sbin/mkfs.f2fs" ] || {
 		printf 'ERROR: LG6851F image is missing /usr/sbin/mkfs.f2fs; refusing to sign.\n' >&2
 		exit 1

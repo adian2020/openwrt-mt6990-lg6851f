@@ -36,9 +36,9 @@ export function connect(path,timeout){return {call:function(object,method,args){
  if(object=='network.interface.modem5g'&&method=='status'){
   status_reads++;return {up:true,uptime:120+status_reads,l3_device:'ccmni9',data:{cid:CHANGED&&status_reads>1?'5':'4'}};
  }
- if(object!='ql-netd'||method!='datacall'||index([8,12,13],args.id)<0)throw 'unexpected non-read request';
- if(args.len!=4||length(args.data)!=3||ord(args.data,1)!=0||ord(args.data,2)!=0)throw 'bad binary request length or zeros';
- if(ord(args.data,0)!=(args.id==8?0:4))throw 'wrong active CID';
+ if(object!='ql-netd'||method!='datacall'||index([8,12,13],args.id)<0)die('unexpected non-read request');
+ if(args.len!=4||length(args.data)!=3||ord(args.data,1)!=0||ord(args.data,2)!=0)die('bad binary request length or zeros');
+ if(ord(args.data,0)!=(args.id==8?0:4))die('wrong active CID');
  let fixture=RESPONSES[''+args.id];
  let data=bytes(fixture.hex);
  return {cmd:fixture.cmd??args.id,result:fixture.result??0,data_len:fixture.len??length(data),
@@ -47,6 +47,7 @@ export function connect(path,timeout){return {call:function(object,method,args){
 ''')
             result=subprocess.run([UCODE,'-L',name,'-D','RESPONSES='+json.dumps(responses),'-D','CHANGED='+json.dumps(change),str(root/'probe.uc')],text=True,capture_output=True)
             self.assertNotEqual(result.returncode,254,result.stderr)
+            self.assertTrue(result.stdout.strip(),f'ucode退出码={result.returncode}\n{result.stderr}')
             return result.returncode,json.loads(result.stdout)
 
     def test_binary_zero_bytes_and_only_three_read_opcodes(self):
