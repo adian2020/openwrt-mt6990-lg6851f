@@ -36,10 +36,11 @@ return view.extend({
   if(this.sampling)return;this.sampling=true;
   try{
    const current=await C.rates(),delta=C.delta(this.previous,current),cpu=C.cpu(this.previous?.cpu,current?.cpu);
+   const waiting=current?.rx!=null&&current?.tx!=null&&current?.at!=null&&!!current?.device&&!!current?.boot_id;
    if(!delta)this.history={rx:[],tx:[]};
    const cards=['rx','tx'].map((key,index)=>{
     if(delta){this.history[key].push(delta[key]);if(this.history[key].length>40)this.history[key].shift();}
-    return C.card(index?'上传速率':'下载速率',E('div',{},[C.metric(delta?'实时速率':'等待第二次采样',delta?C.bytes(delta[key])+'/s':'未获取'),graph(this.history[key]),C.unavailable('按蜂窝实际接口字节差与采样时间差计算')]));
+    return C.card(index?'上传速率':'下载速率',E('div',{},[C.metric(delta?'实时速率':waiting?'等待第二次采样':'接口计数未就绪',delta?C.bytes(delta[key])+'/s':waiting?'采样中…':'未获取'),graph(this.history[key]),C.unavailable(delta?'按蜂窝实际接口字节差与采样时间差计算':waiting?'正在采样，约 2 秒后显示实时速率':'尚未取得有效的蜂窝接口流量计数')]));
    });
    cards.push(C.card('CPU',C.metric('当前利用率',cpu==null?'等待采样':cpu.toFixed(1)+'%')));
    this.rates.replaceChildren(...cards);this.previous=current;
