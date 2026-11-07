@@ -42,3 +42,7 @@ const masks=c.lockMasks('lte band info = 0000000500000000\nnr band info = 000000
 assert.deepEqual(masks.current,{lte:[1,3],nr:[78]});
 assert.equal(masks.supported.nr.length,14);
 console.log('PASS ECELL: 5 rows, NR units, missing fields and overlap; masks: 32-bit word order and all supported bands');
+
+const confirmed=c.parseCells({...record([serving]),carriers:[{rat:'nr',band:78,arfcn:640000,pci:321}]});
+assert.equal(confirmed[0].band,'n78');
+assert.equal(c.parseCells({...record([serving]),carriers:[{rat:'nr',band:78,arfcn:633984}]})[0].band,'n77 / n78');

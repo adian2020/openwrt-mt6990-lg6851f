@@ -274,7 +274,7 @@ class DashboardTest(unittest.TestCase):
     def test_background_collector_publishes_progress_and_avoids_rpcd_iwinfo(self):
         source=(PACKAGE/'root/usr/share/ucode/lg6851f/dashboard-collect.uc').read_text()
         self.write('/collector-test.uc',source.replace("from 'uci'","from 'collectoruci'").replace("from 'fs'","from 'collectorfs'"))
-        self.write('/collectoruci.uc',"export function cursor(){return {load:function(){},get_all:function(){return {apn:'example.net',password:'private'};}};}")
+        self.write('/collectoruci.uc',"export function cursor(){return {foreach:function(){},load:function(){},get_all:function(){return {apn:'example.net',password:'private'};}};}")
         self.write('/collectorfs.uc',r'''
 export function glob(path){return [];}
 export function readfile(path){return '';}
@@ -291,6 +291,37 @@ export function popen(command,mode){
         self.assertEqual(result['data']['wireless'][0]['frequency'],5180)
         self.assertEqual(result['data']['clients'][0]['tx_kbit'],1500)
         self.assertNotIn('private',json.dumps(result))
+
+    def test_qos_readback_is_bound_to_actual_context(self):
+        value=self.run_ucode("""
+import * as r from 'lg6851f.radio';
+printf('%J',[r.parse_qos('+C5GQOSRDP: 2,8,,,,,512000,102400',2),
+ r.parse_qos('+C5GQOSRDP: 1,5',2),r.parse_qos('+CME ERROR: 100',2),
+ r.parse_qos('+C5GQOSRDP: 2,9',2)]);
+""")
+        self.assertEqual(value[0]['value'],8)
+        self.assertEqual(value[1:3],[None,None])
+        self.assertEqual(value[3]['value'],9)
+
+    def test_partial_collection_keeps_previous_wireless_and_clients(self):
+        source=(PACKAGE/'root/usr/share/ucode/lg6851f/dashboard-collect.uc').read_text()
+        self.write('/collector-test.uc',source.replace("from 'uci'","from 'collectoruci'").replace("from 'fs'","from 'collectorfs'"))
+        self.write('/collectoruci.uc',"export function cursor(){return {foreach:function(){},load:function(){},get_all:function(){return {};}};}")
+        self.write('/collectorfs.uc',r'''
+export function glob(path){return [];}
+export function readfile(path){
+ if(path=='/proc/sys/kernel/random/boot_id')return 'one';
+ if(path=='/tmp/lg6851f-dashboard-v2.json')return '{"boot_id":"one","wireless":[{"ssid":"kept","up":true}],"clients":[{"mac":"02:00:00:00:00:01"}],"leases":[{"hostname":"pixel7PRO"}]}';
+ return null;
+}
+export function popen(command,mode){return {read:function(){return '';},close:function(){return 124;}};}
+''')
+        data=self.run_ucode("import * as c from 'collector-test';let frames=[];let d=c.collect((r,p)=>push(frames,{p,wireless:r.wireless,clients:r.clients}));printf('%J',{frames,d});")
+        for frame in data['frames']:
+            self.assertEqual(frame['wireless'][0]['ssid'],'kept')
+            self.assertEqual(len(frame['clients']),1)
+        self.assertEqual(data['d']['leases'][0]['hostname'],'pixel7PRO')
+        self.assertTrue(data['d']['wireless_error'])
 
     @staticmethod
     def radio_report():

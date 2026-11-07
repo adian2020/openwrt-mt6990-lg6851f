@@ -1,0 +1,7 @@
+#!/bin/sh
+# 页面的读请求仅看缓存；慢查询在独立进程串行刷新，不注册BLER订阅。
+trap 'exit 0' TERM INT
+while :; do
+ /usr/bin/lg6851f-radio-collect --auto
+ sleep 15
+done

@@ -16,7 +16,7 @@
 		"order": 5,
 		"action": {
 			"type": "view",
-			"path": "modem5g/overview_v8"
+			"path": "modem5g/overview_v9"
 		},
 		"depends": {
 			"acl": [
@@ -81,7 +81,7 @@
 		"order": 5,
 		"action": {
 			"type": "view",
-			"path": "modem5g/dashboard_v2"
+			"path": "modem5g/dashboard_v3"
 		},
 		"depends": {
 			"acl": [

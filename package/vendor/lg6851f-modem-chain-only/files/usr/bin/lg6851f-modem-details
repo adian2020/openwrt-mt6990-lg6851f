@@ -1,7 +1,7 @@
 #!/bin/sh
 
 # Explicit read-only session verified against the bundled vendor sample_nw.
-# No boot hook, polling caller, user-supplied menu input or radio setter.
+# 固定菜单仅用于后台只读采集，不接收网页菜单输入，不执行射频设置。
 set -u
 
 board="$(cat /tmp/sysinfo/board_name 2>/dev/null)"
@@ -9,7 +9,7 @@ case "$board" in fiberhome,lg6851f|fiberhome_lg6851f) ;; *) echo 'Unsupported bo
 [ -x /usr/bin/sample_nw ] || { echo 'Vendor sample_nw is missing'; exit 2; }
 
 exec 9>/var/lock/luci-modem5g-control.lock
-/usr/bin/flock -n 9 || { echo 'Modem command channel is busy; retry shortly'; exit 75; }
+/usr/bin/flock -w 15 9 || { echo 'Modem command channel is busy; retry shortly'; exit 75; }
 trap '/bin/sleep 6; /usr/bin/flock -u 9' EXIT
 
 # 0 init; 7 data registration; 21 band/AMBR; 25/5 CA; 33 EN-DC; 1 release.

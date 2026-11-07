@@ -10,7 +10,7 @@ CLI=/usr/bin/mipc_wan_cli
 ATCLI=/usr/bin/modem5g-at
 
 config_load lg6851f_modem_status
-config_get start_delay main start_delay 35
+config_get start_delay main start_delay 10
 config_get poll_seconds main poll_seconds 5
 config_get registration_interval main registration_interval 20
 config_get radio_interval main radio_interval 60
@@ -23,6 +23,8 @@ clean_value() {
 
 query() {
 	local option="$1" output rc
+	# 首次拨号优先，状态读取不抢占 netifd 的 CMIPC6 初始化通道。
+	[ "${UP:-false}" = true ] || return 75
 	[ ! -e /tmp/lg6851f-modem-control.active ] || return 75
 	exec 9>"$LOCK"
 	flock -n 9 || return 75
@@ -153,7 +155,10 @@ while :; do
 		write_state
 	fi
 
-	if [ $((now - last_identity)) -ge "$identity_interval" ]; then
+	identity_wait="$identity_interval"
+	[ -n "$IMEI" ] && [ -n "$IMSI" ] && [ -n "$ICCID" ] || identity_wait=60
+	if [ $((now - last_identity)) -ge "$identity_wait" ]; then
+		[ -n "$IMEI" ] || IMEI="$(cat /tmp/imei 2>/dev/null)"
 		value="$(query get_imei)"
 		[ -n "$value" ] && IMEI="$(clean_value "$value")"
 		value="$(at_query 'AT+CIMI')"
@@ -177,7 +182,7 @@ while :; do
 			[ -n "$parsed" ] && MODEM_FIRMWARE="$parsed"
 		fi
 		value="$(at_query 'AT+CNUM')"
-		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+CNUM:[^,]*,"\([+0-9]*\)".*/\1/p' | head -n 1)"
+		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+CNUM:[^,]*,[[:space:]]*"\([+0-9]*\)".*/\1/p' | head -n 1)"
 		[ -n "$parsed" ] && PHONE="$parsed"
 		last_identity="$now"
 		write_state

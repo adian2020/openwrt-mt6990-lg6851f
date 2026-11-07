@@ -87,7 +87,7 @@ return view.extend({
       <div class="mud-rows" id="mud-lteanchor"></div>
       <div class="mud-rows" id="mud-radio-metrics">
         <div class="mud-r"><span class="mud-k">调制方式 下/上</span><span class="mud-v">-- / --</span></div>
-        <div class="mud-r"><span class="mud-k">MCS 下/上</span><span class="mud-v">-- / --</span></div>
+        <div class="mud-r"><span class="mud-k">载波聚合</span><span class="mud-v">-- / --</span></div>
         <div class="mud-r"><span class="mud-k">BLER 下/上</span><span class="mud-v">-- / --</span></div>
       </div>
       <div class="mud-rows">
@@ -107,7 +107,6 @@ return view.extend({
     <div class="mud-kpi"><b id="mud-cpu">--</b><span>CPU 占用</span><div class="mud-meter"><i id="mud-cpu-bar" style="background:var(--brand,var(--primary,#3b82f6))"></i></div></div>
     <div class="mud-kpi"><b id="mud-ram">--</b><span>内存 · <span class="mud-sub" id="mud-ram-sub">--</span></span><div class="mud-meter"><i id="mud-ram-bar" style="background:var(--info,#0ea5e9)"></i></div></div>
     <div class="mud-kpi"><b id="mud-disk">--</b><span>存储</span><div class="mud-meter"><i id="mud-disk-bar" style="background:var(--warning,#f59e0b)"></i></div></div>
-    <div class="mud-kpi"><b id="mud-batt">--</b><span id="mud-batt-l" title="功率和电流均为电池净值，不是 USB 输入值；充放电方向按电池电流判断。">电源</span><div class="mud-meter" id="mud-batt-meter" hidden aria-hidden="true"><i id="mud-batt-bar" style="width:0%;background:var(--success,#16a34a)"></i></div></div>
   </div>
   <div id="mud-freqs" class="mud-freqs"></div>
   <div class="mud-cols">
@@ -119,7 +118,6 @@ return view.extend({
         <div class="mud-r"><span class="mud-k">隐藏 SSID</span><span class="mud-v" id="mud-whid">--</span></div>
         <div class="mud-r"><span class="mud-k">国家</span><span class="mud-v" id="mud-wcountry">--</span></div>
         <div class="mud-r"><span class="mud-k">AP 状态</span><span class="mud-v" id="mud-whostapd">--</span></div>
-        <div class="mud-r"><span class="mud-k">USB 网络</span><span class="mud-v" id="mud-wusb">--</span></div>
         <div class="mud-r"><span class="mud-k">连接跟踪</span><span class="mud-v" id="mud-conntrack">--</span></div>
         <div class="mud-r"><span class="mud-k">LAN 地址</span><span class="mud-v" id="mud-lanip">--</span></div>
         <div class="mud-r"><span class="mud-k">系统</span><span class="mud-v" id="mud-fwos">--</span></div>
@@ -161,7 +159,7 @@ return view.extend({
     <button class="mud-btn" id="mud-btn-radio">蜂窝射频</button>
     <button class="mud-btn" id="mud-btn-wifi">Wi-Fi 热点</button>
     <button class="mud-btn warn" id="mud-btn-modem">重启调制解调器</button>
-    <button class="mud-btn warn" id="mud-btn-reboot">关机或重启</button>
+    <button class="mud-btn warn" id="mud-btn-reboot">重启</button>
   </div>
 </div>
 <div class="mud-sec">
@@ -206,15 +204,16 @@ return view.extend({
  paint(data){
   const systemCpu=C.cpu(this.systemTicks,data.cpu_ticks);this.systemTicks=data.cpu_ticks;
   if(systemCpu!=null){this.set('cpu',systemCpu.toFixed(1)+'%');this.q('cpu-bar').style.width=systemCpu+'%';}
-  this.data=data;const m=data.modem||{},n=data.network||{},radio=data.radio_details?.stale?null:data.radio_details?.parsed;
-  const cells=data.cells?.stale?[]:C.cellular.parseCells(data.cells?.serving),serving=cells.find(x=>x.serving),sig=serving||m;
+  this.data=data;const m=data.modem||{},n=data.network||{},radio=data.radio_details?.parsed;
+  const cells=C.cellular.parseCells({...data.cells?.serving,carriers:radio?.carriers||data.cells?.serving?.carriers}),serving=cells.find(x=>x.serving),sig=serving||m;
   const carriers=radio?.carriers||[],primary=carriers.find(x=>x.type==='NR PCC')||carriers[0];
   const label=M.qLabel(sig.rsrp,sig.rsrq,sig.sinr),score=M.qScore(sig),color=M.qCol(label);
   this.set('host',data.hostname||'OpenWrt');this.set('uptime','已运行 '+C.elapsed(data.uptime));this.q('dot').classList.toggle('on',!!n.up);
-  this.q('rat').firstChild.nodeValue=(radio?.sa_nsa?'5G '+radio.sa_nsa:m.rat||'未获取');this.q('rat').style.color=color;
+  const currentRat=['4G','5G'].includes(m.rat)?m.rat:serving?.rat==='nr'?'5G':serving?.rat==='lte'?'4G':'正在注册';
+  this.q('rat').firstChild.nodeValue=(currentRat==='5G'&&radio?.sa_nsa?'5G '+radio.sa_nsa:currentRat);this.q('rat').style.color=color;
   [...this.q('bars').children].forEach((el,i)=>el.classList.toggle('on',score!=null&&i<Math.round(score/2)));
   this.set('op',text(m.operator)+(score==null?'':' · 信号 '+label+' '+score.toFixed(1)+' 分'));
-  this.set('cellline',serving?serving.band+' · PCI '+text(serving.pci)+' · ARFCN '+text(serving.arfcn)+(primary?.dl_bandwidth_mhz==null?'':' · '+primary.dl_bandwidth_mhz+' MHz'):'未驻留小区');
+  this.set('cellline',serving?serving.band+' · PCI '+text(serving.pci)+' · ARFCN '+text(serving.arfcn)+(primary?.dl_bandwidth_mhz==null?'':' · '+primary.dl_bandwidth_mhz+' MHz'):(n.up?'小区数据更新中':'蜂窝未连接'));
   this.q('rsrp').replaceChildren(document.createTextNode(sig.rsrp==null?'未获取':sig.rsrp.toFixed(1)),E('small',{},sig.rsrp==null?'':' dBm'));this.q('rsrp').style.color=color;
   this.q('metric-chips').replaceChildren(...[['',label],['RSRQ',sig.rsrq],['SINR',sig.sinr]].map(([k,v])=>E('span',{'class':'mud-tag'},k+' '+text(v))));
   const traffic=data.traffic;
@@ -229,41 +228,42 @@ return view.extend({
   this.set('roaming',m.roaming);this.set('reg',m.registered?'已注册'+(serving?.tac?' · TAC '+serving.tac:''):'未注册');
   const rows=carriers.length?carriers:[{}];this.q('radio-metrics').replaceChildren(...rows.flatMap(r=>[
    [r.type||'','调制方式 下/上',this.pair(r.dl_modulation_code,r.ul_modulation_code)+'（原始编码）'],
-   [r.type||'','MCS 下/上',this.pair(r.dl_mcs,r.ul_mcs)],
+   [r.type||'','载波聚合',(r.band?(r.rat==='lte'?'B':'n')+r.band+' '+text(r.arfcn):'未获取')],
    [r.type||'','BLER 下/上',this.pair(r.dl_bler,r.ul_bler,'%')]
   ].map(([prefix,key,val])=>E('div',{'class':'mud-r'},[E('span',{'class':'mud-k'},prefix+' '+key),E('span',{'class':'mud-v'},val)]))));
-  this.set('bw',this.pair(primary?.dl_bandwidth_mhz,primary?.ul_bandwidth_mhz,' MHz'));
-  this.set('qci',null);this.q('qci').title='QCI/5QI 实机排查暂停，CQI 不作 QCI 使用';
+  this.set('bw',primary?.dl_bandwidth_mhz!=null && primary.dl_bandwidth_mhz===primary.ul_bandwidth_mhz?primary.dl_bandwidth_mhz+' MHz':this.pair(primary?.dl_bandwidth_mhz,primary?.ul_bandwidth_mhz,' MHz'));
+  this.set('qci',data.qos?.cid==+n.data?.cid ? data.qos?.value : null);
   const ambr=radio?.ambr?.network;this.set('ambr',C.mbps(ambr?.dl?.bps)+' / '+C.mbps(ambr?.ul?.bps));
   this.q('lteanchor').replaceChildren(...carriers.filter(r=>r.rat==='lte').map(r=>E('div',{'class':'mud-r'},[E('span',{'class':'mud-k'},'LTE 链路'),E('span',{'class':'mud-v'},'B'+r.band+' · PCI '+r.pci+' · EARFCN '+r.arfcn)])));
   const memory=data.memory||{},storage=data.storage||{};
   this.set('ram',C.value(memory.percent?.toFixed(1),'%'));this.set('ram-sub','共 '+C.bytes(memory.total)+' · 余 '+C.bytes(memory.available));this.q('ram-bar').style.width=(memory.percent||0)+'%';
   this.set('disk',C.value(storage.percent,'%'));this.q('disk-bar').style.width=(storage.percent||0)+'%';
-  this.q('temps').replaceChildren(...(data.temperatures||[]).map(t=>E('span',{},t.name+' '+t.celsius.toFixed(1)+'°C')));
+  const temps=data.temperatures||[],pick=rx=>temps.filter(t=>rx.test(t.label||t.name)).map(t=>t.celsius).filter(Number.isFinite);
+  const group=(name,values)=>E('span',{style:'color:#e9bf68;background:#0c111b;border-radius:999px;padding:3px 9px'},name+' '+(values.length?Math.max(...values).toFixed(1)+'°C':'未获取'));
+  this.q('temps').replaceChildren(group('SoC',pick(/^soc_max$/i)),group('CPU',pick(/^cpu_/i)),group('主板',pick(/^(board|board_temp|pcb|pcb_temp|mainboard)$/i)),group('调制解调器',pick(/^md[0-9]+$/i)));
   this.q('freqs').replaceChildren(...(data.frequencies||[]).map(f=>E('div',{'class':'mud-freq'},[
    E('span',{'class':'mud-k'},f.policy),E('div',{'class':'mud-meter',style:'flex:1;margin:4px 8px'},E('i',{style:'width:'+(f.maximum_mhz?100*f.current_mhz/f.maximum_mhz:0)+'%'})),
    E('span',{'class':'mud-v'},C.value(f.current_mhz)+' / '+C.value(f.maximum_mhz)+' MHz')])));
-  const supply=(data.power_supplies||[]).find(s=>s.type==='Battery'),source=(data.power_supplies||[]).find(s=>s.online===1);
-  this.set('batt',supply?.capacity!=null?supply.capacity+'%':source?.type||'未获取');
-  this.set('batt-l',source?.voltage_uv!=null?'电源 · '+(source.voltage_uv/1e6).toFixed(2)+' V':'电源');this.q('batt-meter').hidden=supply?.capacity==null;
-  this.q('batt-bar').style.width=(supply?.capacity||0)+'%';
-  const wireless=data.wireless||[],join=(key,format=text)=>wireless.length?wireless.map(w=>(w.device||w.radio)+': '+format(w[key])).join(' · '):'未获取';
-  this.set('ssid',join('ssid'));this.set('chan',wireless.map(w=>text(w.channel)+' ('+text(w.frequency)+' MHz'+(w.width?' · '+w.width:'')+')').join(' · '));
-  this.set('wenc',join('encryption'));this.set('whid',join('hidden',v=>v?'已隐藏':'否'));this.set('wcountry',join('country'));
-  this.set('whostapd',wireless.length?wireless.some(w=>w.up)?'运行中':'未运行':null);this.set('wusb',data.usb?.length?data.usb.map(x=>x.controller+': '+x.state+'（控制器状态）').join(' · '):'未取得 USB 网卡状态');
+  const wireless=data.wireless||[],preferred=wireless.find(w=>w.frequency>=4900&&w.frequency<5925)||wireless[0],unique=key=>[...new Set(wireless.map(w=>w[key]).filter(v=>v!=null&&v!==''))].join(' · ');
+  this.set('ssid',unique('ssid'));this.set('chan',preferred?text(preferred.channel)+' ('+(preferred.frequency>=4900?'5 GHz':'2.4 GHz')+(preferred.width?'-'+preferred.width:'')+')':null);
+  this.set('wenc',preferred?.encryption);this.set('whid',preferred?(preferred.hidden?'是':'否'):null);this.set('wcountry',preferred?.country?.toLowerCase());
+  this.set('whostapd',wireless.length?wireless.some(w=>w.up)?'运行中':'未运行':null);
   this.set('conntrack',this.pair(data.conntrack?.count,data.conntrack?.maximum));this.set('lanip',address(data.lan?.['ipv4-address']));
-  this.set('fwos',data.release);this.set('model',data.model);this.set('modem',m.updated?'在线':'未取得状态');this.set('carr',m.operator);this.set('plmn',m.plmn);
+  this.set('fwos',data.release?.match(/DISTRIB_DESCRIPTION=['"]([^'"]+)/)?.[1]||data.release);this.set('model',data.model);this.set('modem',m.updated?'在线':'未取得状态');this.set('carr',m.operator);this.set('plmn',m.plmn);
   this.paintIdentity();
   const leases=data.leases||[],clients=data.clients||[];this.set('wcl',clients.length+' 台');this.set('wleases',leases.length+' 条');
   const client=(name,detail)=>E('div',{'class':'mud-cli'},[E('div',{'class':'t'},E('b',{},name)),E('div',{'class':'s'},detail)]);
-  this.q('clist').replaceChildren(...clients.map(c=>{const l=leases.find(l=>l.mac?.toLowerCase()===c.mac?.toLowerCase());return client(l?.hostname||c.mac,[l?.address,c.mac,C.value(c.signal,' dBm'),'↑'+C.value(c.tx_kbit,' kbit/s'),'↓'+C.value(c.rx_kbit,' kbit/s')].filter(Boolean).join(' · '));}));
-  this.q('leases').replaceChildren(...leases.map(l=>client(l.hostname||l.address,[l.address,l.mac,l.expires==null?'剩余时间未获取':l.expires===0?'永久':C.elapsed(Math.max(0,l.expires-Date.now()/1000))].join(' · '))));
+  this.q('clist').replaceChildren(...clients.map(c=>{const l=leases.find(l=>l.mac?.toLowerCase()===c.mac?.toLowerCase());return client((l?.hostname&&l.hostname!=='*'?l.hostname:l?.address)||c.mac,[l?.address,c.mac,C.value(c.signal,' dBm'),'↑'+C.value(c.rx_kbit==null?null:(c.rx_kbit/1000).toFixed(1),' Mbps'),'↓'+C.value(c.tx_kbit==null?null:(c.tx_kbit/1000).toFixed(1),' Mbps')].filter(Boolean).join(' · '));}));
+  this.q('leases').replaceChildren(...leases.map(l=>client((l.hostname&&l.hostname!=='*'?l.hostname:l.address),[l.address,l.mac,l.expires==null?'剩余时间未获取':l.expires===0?'永久':C.elapsed(Math.max(0,l.expires-Date.now()/1000))].join(' · '))));
   this.q('neigh').replaceChildren(...(cells.length?cells.map(row=>E('tr',{},[
    ...[row.band+(row.serving?' *':''),row.pci,row.arfcn,row.rsrp,row.rsrq,row.sinr].map(v=>E('td',{},text(v))),E('td',{},E('a',{'class':'mud-btn',href:L.url('admin/modem5g/lock')},'锁定'))
   ])):[E('tr',{},E('td',{colspan:7},'暂无小区数据'))]));
   const requestAge=Date.now()/1000-data.radio_request?.updated,readExpired=data.radio_request?.status==='reading' && !(requestAge>=0 && requestAge<75);
   this.q('btn-radio-read').disabled=data.radio_request?.status==='reading' && !readExpired;
   this.q('slow-progress').textContent=(readExpired?'后台读取未完成，请重新读取':data.radio_request?.message) || (data.initializing?'后台正在采集状态':data.collector_stale?'后台采集暂未更新，当前显示缓存数据':'');
+  this.q('btn-modem').disabled=data.modem_restart==='running';
+  if(data.modem_restart==='failed')this.q('slow-progress').textContent='模组协议栈重启失败，请查看模组重启日志';
+  if(data.radio_details?.stale || data.cells?.stale)this.q('slow-progress').textContent+=' · 显示上次有效数据，后台继续更新';
   this.q('btn-data').classList.toggle('on',!!n.up);this.q('btn-radio').classList.toggle('on',/STATE_ON/.test(m.radio||''));this.q('btn-wifi').classList.toggle('on',wireless.some(w=>w.up));
  },
  paintIdentity(){
@@ -280,16 +280,8 @@ return view.extend({
   confirm(this.q('btn-data'),'切换数据连接','蜂窝连接会短暂中断。',()=>this.data.network?.up?C.disconnect():C.connect());
   confirm(this.q('btn-radio'),'切换蜂窝射频','关闭射频后无法收发短信或使用蜂窝网络。',()=>C.setRadio(!/STATE_ON/.test(this.data.modem?.radio||'')));
   confirm(this.q('btn-wifi'),'切换 Wi-Fi 热点','关闭后无线客户端会断开，需重新连接才能管理设备。',()=>action((this.data.wireless||[]).some(w=>w.up)?'wifi_off':'wifi_on'));
-  this.q('btn-reboot').onclick=()=>{
-   if(this.pending||this.disposed)return;this.pending=true;
-   const choose=async op=>{ui.hideModal();if(!op||this.disposed){this.pending=false;return;}
-    try{if(!await M.confirmBox(op==='reboot'?'重启设备':'关闭设备','所有连接会断开。确认后执行。')||this.disposed)return;
-     const r=await action(op);if(r.code)throw Error(r.error);M.toast(r.output);
-    }catch(e){M.toast(e.message,{type:'error'});}finally{this.pending=false;}
-   };
-   ui.showModal('关机或重启',[E('p',{},'请选择操作。'),E('div',{'class':'right'},['取消','关机','重启'].map((label,i)=>E('button',{'class':'btn',click:()=>choose(i===1?'poweroff':i===2?'reboot':null)},label)))]);
-  };
-  this.q('btn-modem').disabled=true;this.q('btn-modem').title='MT6990 尚无已验证的对应控制接口';
+  confirm(this.q('btn-reboot'),'重启设备','所有连接会断开，请等待设备重新启动。',()=>action('reboot'));
+  confirm(this.q('btn-modem'),'重启调制解调器','将重新启动模组无线协议栈并重建蜂窝连接，期间蜂窝网络会中断。WiFi保持开启。',()=>action('modem_restart'));
   this.q('btn-radio-read').onclick=async()=>{try{const r=await radioRead();if(r.code)throw Error(r.error);M.toast(r.output);}catch(e){M.toast(e.message,{type:'error'});}};
   this.q('reveal').onclick=async()=>{if(this.identityBusy)return;this.identityBusy=true;
    try{const reveal=!this.identShown;this.identity=await C.getIdentity(reveal);this.identShown=reveal;this.q('reveal').textContent=reveal?'隐藏卡号信息':'显示卡号信息';this.paintIdentity();}catch(e){M.toast(e.message,{type:'error'});}finally{this.identityBusy=false;}

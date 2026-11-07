@@ -137,7 +137,7 @@ rebuild_modem_chain() {
 }
 
 main() {
-	local state up uptime device failures=0 stage=0
+	local state up uptime device failures=0 stage=0 down_failures=0 pending
 
 	while true; do
 		sleep "$CHECK_INTERVAL"
@@ -150,7 +150,25 @@ main() {
 		uptime="$(link_value "$state" '@.uptime')"
 		device="$(link_value "$state" '@.l3_device')"
 
-		[ "$up" = "true" ] || { failures=0; continue; }
+		if [ "$up" != true ]; then
+            failures=0
+            pending="$(link_value "$state" '@.pending')"
+            [ "$pending" != true ] || { down_failures=0; continue; }
+            [ "$(uci -q get network.modem5g.auto)" != 0 ] || { down_failures=0; continue; }
+            down_failures=$((down_failures + 1))
+            if [ "$down_failures" -ge "$FAIL_LIMIT" ]; then
+                down_failures=0
+                if recovery_lock; then
+                    [ "$(uci -q get network.modem5g.radio_enabled)" = 0 ] || {
+                        log "initial data call is down; request netifd retry without RF reset"
+                        timeout 10 /sbin/ifup modem5g
+                    }
+                    recovery_unlock
+                fi
+            fi
+            continue
+        fi
+        down_failures=0
 		case "$uptime" in ''|*[!0-9]*) continue ;; esac
 		[ "$uptime" -ge "$SETTLE_TIME" ] || continue
 		[ -n "$device" ] || continue

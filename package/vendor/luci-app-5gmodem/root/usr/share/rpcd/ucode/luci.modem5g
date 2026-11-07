@@ -234,7 +234,10 @@ function dashboard_state() {
  if(!frame)frame={initializing:true,modem:{},network:{},apn:apn_values(),cached_modem_stale:true,
   model:trim(readfile('/tmp/sysinfo/model')||''),board:trim(readfile('/tmp/sysinfo/board_name')||''),
   collector_phase:'pending'};
+ frame.modem_restart=trim(readfile('/tmp/lg6851f-modem-restart.state')||'');
  frame.collector_age=age;frame.collector_stale=age==null||age<0||age>60;
+ try {frame.qos=json(readfile('/tmp/lg6851f-modem-qos.json')||'null');}catch(e){}
+ if(frame.qos?.boot_id!=boot)frame.qos=null;
  try {frame.traffic=json(readfile('/var/run/lg6851f-traffic/view.json')||'null');}catch(e){frame.traffic=null;}
  try {frame.radio_request=json(readfile('/tmp/lg6851f-radio-request.json')||'null');}catch(e){}
  if(frame.radio_request?.boot_id!=boot)frame.radio_request=null;
@@ -301,6 +304,12 @@ const methods = {
 	dashboard_action: {args:{operation:''},call:function(req){
 		if(!board_ok())return {code:95,error:'当前设备不支持此操作'};
 		let op=req.args?.operation;
+		if(op=='modem_restart'){
+		 if(cursor().get('network','modem5g','radio_enabled')=='0')return {code:16,error:'请先开启蜂窝射频'};
+		 if(trim(readfile('/tmp/lg6851f-modem-restart.state')||'')=='running')return {code:16,error:'模组重启正在执行'};
+		 let p=popen('/usr/bin/timeout -k 10 120 /usr/bin/lg6851f-modem-restart >/tmp/lg6851f-modem-restart.log 2>&1 </dev/null &','r');p?.close?.();
+		 return {code:0,output:'已提交模组协议栈重启，请等待蜂窝网络恢复'};
+		}
 		if(op=='wifi_on'||op=='wifi_off'){
 			let c=cursor(),disabled=op=='wifi_off'?'1':'0',count=0,ok=true,pending=c.changes('wireless');
 			if(pending==null)return {code:5,error:'无法读取无线配置状态'};
@@ -359,7 +368,7 @@ const methods = {
 			note: 'Channel information is derived from the same read-only AT+ECELL response shown below.'
 		};
 		if (result.serving.code == 0 && match(result.serving.output, /\+ECELL:/) && match(result.serving.output, /\bOK\b/))
-			return save_reading('cells', result);
+			{let r=dashboard.reading('radio-details');if(r && !r.stale)result.serving.carriers=r.parsed?.carriers;return save_reading('cells', result);}
 		result.serving.code = result.serving.code || 5;
 		return result;
 	} },

@@ -82,6 +82,9 @@ for name in ['usr/libexec/lg6851f-traffic.uc','usr/libexec/lg6851f-apn-resolve.u
              'usr/libexec/lg6851f-radio-collect.uc','usr/share/licenses/luci-app-5gmodem/MU300-NOTICE']:
     required(root/name)
 required(root/'etc/init.d/lg6851f-traffic',executable=True)
+required(root/'etc/init.d/lg6851f-cellular-refresh',executable=True)
+required(root/'usr/bin/lg6851f-cellular-refresh',executable=True)
+required(chain/'usr/bin/lg6851f-modem-restart',executable=True)
 required(root/'usr/bin/lg6851f-radio-collect',executable=True)
 if not args.rootfs:
     required(root/'etc/uci-defaults/99-lg6851f-sms-forward',executable=True)

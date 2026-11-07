@@ -117,3 +117,12 @@ export function parse(output) {
 		nr_point_a_arfcn: positive(fields.nr_point_a_arfcn)
 	};
 }
+
+export function parse_qos(output,cid){
+ if(type(output)!='string' || !cid)return null;
+ for(let line in split(output,'\n')){
+  let m=match(trim(line),/^\+C5GQOSRDP:\s*([0-9]+),([0-9]+)(,|$)/);
+  if(m && +m[1]==cid && +m[2]>0 && +m[2]<=255)return {cid,value:+m[2],kind:'5QI'};
+ }
+ return null;
+};

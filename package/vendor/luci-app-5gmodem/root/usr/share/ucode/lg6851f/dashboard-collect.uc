@@ -8,7 +8,7 @@ function capture(argv){
  if(time()>=deadline)return {code:124,output:''};
  let pipe=popen('/usr/bin/timeout 2 '+join(' ',map(argv,quote))+' 2>/dev/null','r');
  let output=pipe?.read?.('all')||'', code=pipe?.close?.();
- return {output,code:code||0};
+ return {output,code:code ?? 5};
 }
 function read_json_command(argv){let r=capture(argv);try{return r.code==0?json(r.output):null;}catch(e){return null;}}
 function network_state(){return read_json_command(['/bin/ubus','call','network.interface.modem5g','status']);}
@@ -31,48 +31,57 @@ export function parse_clients(text){
 export function collect(publish) {
 	deadline=time()+18;
 	let data = dashboard.snapshot();
+	let previous=null;try{previous=json(readfile('/tmp/lg6851f-dashboard-v2.json')||'null');}catch(e){}
+	if(previous?.boot_id!=trim(readfile('/proc/sys/kernel/random/boot_id')||''))previous=null;
+	for(let k in ['network','lan','wireless','clients','leases','storage','ipv6_global'])if(previous?.[k]!=null)data[k]=previous[k];
 	publish(data, "system");
-	data.network = network_state();
+	let current_network=network_state();if(current_network!=null)data.network=current_network;
 	data.ipv6_global = dashboard.global_ipv6(data.network);
 	data.apn = apn_values();
 	if(data.network?.up && data.network?.data?.apn != null)data.apn.apn=data.network.data.apn;
-	data.lan = read_json_command([ '/bin/ubus', 'call', 'network.interface.lan', 'status' ]);
+	let current_lan=read_json_command([ '/bin/ubus', 'call', 'network.interface.lan', 'status' ]);if(current_lan!=null)data.lan=current_lan;
 	let wireless = read_json_command([ '/bin/ubus', 'call', 'network.wireless', 'status' ]);
 	publish(data, "network");
-	data.wireless = []; data.clients = [];
+	let next_wireless=[],next_clients=[],clients_ok=true;
 	for (let radio, entry in wireless || {}) {
 		for (let iface in entry.interfaces || []) {
-			if (length(data.wireless) >= 8) break;
+			if (length(next_wireless) >= 8) break;
 			let dev = iface.ifname;
 			if (!dev || !match(dev, /^[A-Za-z0-9_.:-]{1,15}$/)) continue;
 			// Do not call rpcd's own iwinfo object from its request path.
 			let raw_info=capture(['/usr/bin/iwinfo',dev,'info']);
 			let info=raw_info.code==0?parse_info(raw_info.output):null;
-			push(data.wireless, { radio, device: dev, up: entry.up, ssid: iface.config?.ssid || info?.ssid,
-				channel: info?.channel, frequency: info?.frequency, txpower: info?.txpower,
-				width: info?.width,
+			let old=filter(previous?.wireless||[],w=>w.device==dev)[0];
+			push(next_wireless, { radio, device: dev, up: entry.up, ssid: iface.config?.ssid || info?.ssid,
+				channel: info?.channel ?? old?.channel, frequency: info?.frequency ?? old?.frequency, txpower: info?.txpower ?? old?.txpower,
+				width: info?.width ?? old?.width,
 				country: info?.country || entry.config?.country, encryption: iface.config?.encryption,
 				hidden: !!+iface.config?.hidden, information_available: info != null });
 			let raw_clients=capture(['/usr/bin/iwinfo',dev,'assoclist']);
-			let clients=raw_clients.code==0?parse_clients(raw_clients.output):null;
+			let clients=raw_clients.code==0?parse_clients(raw_clients.output):null;if(clients==null)clients_ok=false;
 			for (let row in clients?.results || [])
-				push(data.clients, { device: dev, mac: row.mac, signal: row.signal,
+				push(next_clients, { device: dev, mac: row.mac, signal: row.signal,
 					rx_kbit: row.rx?.rate, tx_kbit: row.tx?.rate, connected: row.connected_time });
 		}
 	}
+	if(wireless!=null){data.wireless=next_wireless;if(clients_ok)data.clients=next_clients;data.wireless_updated=time();data.wireless_error=!clients_ok;}else data.wireless_error=true;
 	publish(data, "wireless");
-	data.leases = [];
-	for (let line in split(trim(readfile('/tmp/dhcp.leases') || ''), '\n')) {
+	let lease_text=readfile('/tmp/dhcp.leases');
+	if(lease_text!=null)data.leases = [];
+	for (let line in split(trim(lease_text || ''), '\n')) {
 		let fields = split(line, /\s+/);
-		if (length(fields) >= 4) push(data.leases, { expires: +fields[0], mac: fields[1], address: fields[2], hostname: fields[3] });
+		if (length(fields) >= 4) push(data.leases, { expires: +fields[0], mac: fields[1], address: fields[2], hostname: fields[3]=='*'?null:fields[3] });
 	}
+	let hints=read_json_command(['/bin/ubus','-t','2','call','luci-rpc','getHostHints']);
+	for(let l in data.leases||[])if(!l.hostname){let h=hints?.[lc(l.mac||'')]||hints?.[uc(l.mac||'')];if(h?.name && h.name!='*')l.hostname=h.name;else {let old=filter(previous?.leases||[],x=>lc(x.mac)==lc(l.mac))[0];if(old?.hostname && old.hostname!='*')l.hostname=old.hostname;}}
+	let cfg=cursor();cfg.foreach('dhcp','host',h=>{for(let l in data.leases||[])if(!l.hostname && h.name && lc(h.mac||'')==lc(l.mac||''))l.hostname=h.name;});
 	let storage = capture([ '/bin/df', '-Pk', '/overlay' ], 5);
 	let rows = split(trim(storage.output), '\n');
 	let columns = split(trim(rows[length(rows) - 1] || ''), /\s+/);
-	data.storage = storage.code == 0 && length(columns) >= 6 ? {
+	if(storage.code == 0 && length(columns) >= 6)data.storage = {
 		device: columns[0], total: +columns[1] * 1024, used: +columns[2] * 1024,
 		available: +columns[3] * 1024, percent: +replace(columns[4], '%', ''), mount: '/overlay'
-	} : null;
+	};
 	data.usb = map(glob('/sys/class/udc/*') || [], path => ({ controller: replace(path, /^.*\//, ''), state: trim(readfile(path + '/state') || '') }));
 	data.cache_age = data.modem.updated == null ? null : time() - data.modem.updated;
 	data.cached_modem_stale = data.cache_age == null || data.cache_age < 0 || data.cache_age > 180;

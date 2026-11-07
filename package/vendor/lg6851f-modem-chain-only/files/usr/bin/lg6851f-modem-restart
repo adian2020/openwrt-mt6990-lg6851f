@@ -1,0 +1,29 @@
+#!/bin/sh
+# 复用已验证的射频 API 重启无线协议栈；不重启路由器，不关闭 WiFi。
+. /lib/functions/lg6851f-radio.sh
+lock=/var/lock/lg6851f-modem-recovery.lock
+state=/tmp/lg6851f-modem-restart.state
+[ "$(uci -q get network.modem5g.radio_enabled)" != 0 ] || exit 16
+mkdir "$lock" 2>/dev/null || exit 75
+switched=0
+restore=1
+dial=0
+if [ "$(uci -q get network.modem5g.auto)" != 0 ] || [ "$(ubus -t 2 call network.interface.modem5g status 2>/dev/null | jsonfilter -e '@.up')" = true ]; then dial=1;fi
+cleanup() {
+ if [ "$switched" = 1 ] && [ "$(uci -q get network.modem5g.radio_enabled)" != 0 ]; then lg6851f_ensure_radio_on >/dev/null 2>&1; fi
+ if [ "$restore" = 1 ] && [ "$dial" = 1 ] && [ "$(uci -q get network.modem5g.radio_enabled)" != 0 ]; then timeout 10 /sbin/ifup modem5g >/dev/null 2>&1;fi
+ rmdir "$lock" 2>/dev/null
+}
+trap cleanup EXIT
+trap 'echo failed > "$state"; exit 143' TERM INT
+echo running > "$state"
+if timeout 10 /sbin/ifdown modem5g; then
+ # 即使off命令发送后返回失败，也按可能已关闭处理，退出时尝试恢复。
+ switched=1
+ if lg6851f_radio_transaction --nw_radio_state_set 0 && lg6851f_ensure_radio_on; then
+  switched=0
+  if [ "$dial" = 0 ] || timeout 10 /sbin/ifup modem5g; then restore=0;echo complete > "$state";exit 0;fi
+ fi
+fi
+echo failed > "$state"
+exit 1
