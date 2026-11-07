@@ -67,6 +67,7 @@ jobs:
           python3 scripts/tests/test_lg6851f_radio_control.py
           python3 scripts/tests/test_lg6851f_radio_setup.py
           python3 scripts/tests/test_lg6851f_network_defaults.py
+          python3 scripts/tests/test_lg6851f_apk_feed.py
           python3 scripts/tests/test_lg6851f_radio_details.py
           python3 scripts/tests/test_lg6851f_band_verify.py
           python3 scripts/tests/test_lg6851f_sms_send.py

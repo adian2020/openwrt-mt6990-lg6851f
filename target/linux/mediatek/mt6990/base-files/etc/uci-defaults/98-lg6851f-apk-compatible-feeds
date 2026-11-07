@@ -12,6 +12,15 @@ custom_file=/etc/apk/repositories.d/customfeeds.list
 # served inconsistently by different CDN edges immediately after publication.
 feed_root=https://cdn.jsdelivr.net/gh/13179415360/openwrt-mt6990-lg6851f@760d829021769a0aff5d713e7316c7d36ff40c71
 
+# This snapshot uses its own signing key, separate from each new build's key.
+# Verify the bundled public key before enabling its repositories.
+key=/etc/apk/keys/mt6990-760d829.pem
+expected_key=fee65298978c37b71198b8472673e6a73c5f7c0c99be6a85d030c4dc4a879d84
+if [ "$(sha256sum "$key" 2>/dev/null | cut -d ' ' -f 1)" != "$expected_key" ]; then
+	echo 'MT6990专用软件源公钥缺失或不匹配，未修改软件源' >&2
+	exit 1
+fi
+
 if [ -f "$arch_file" ]; then
 	sed -i '/^aarch64_cortex-a53$/d' "$arch_file"
 fi

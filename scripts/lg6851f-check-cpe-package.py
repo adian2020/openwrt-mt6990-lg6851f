@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """发布前核验蜂窝菜单、资源、RPC/ACL 和可执行控制脚本。不会运行模组命令。"""
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -16,6 +17,11 @@ root = args.rootfs or package/'root'
 assets = root/'www/luci-static/resources' if args.rootfs else package/'htdocs/luci-static/resources'
 chain = args.rootfs or repo/'package/vendor/lg6851f-modem-chain-only/files'
 errors = []
+
+feed_root = args.rootfs or repo/'target/linux/mediatek/mt6990/base-files'
+feed_key = feed_root/'etc/apk/keys/mt6990-760d829.pem'
+if not feed_key.is_file() or hashlib.sha256(feed_key.read_bytes()).hexdigest() != 'fee65298978c37b71198b8472673e6a73c5f7c0c99be6a85d030c4dc4a879d84':
+    errors.append('MT6990专用软件源公钥缺失或指纹不匹配')
 
 
 def required(path, executable=False):
