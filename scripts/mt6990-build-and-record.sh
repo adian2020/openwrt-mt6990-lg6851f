@@ -47,6 +47,7 @@ if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_di
 	export UCODE UCODE_LIBRARY
 	python3 "$repo_dir/scripts/tests/test_lg6851f_dashboard.py"
 	python3 "$repo_dir/scripts/tests/test_lg6851f_qos_probe.py"
+	python3 "$repo_dir/scripts/tests/test_lg6851f_sms_forward.py"
 	[ -x "$rootfs_dir/usr/sbin/mkfs.f2fs" ] || {
 		printf 'ERROR: LG6851F image is missing /usr/sbin/mkfs.f2fs; refusing to sign.\n' >&2
 		exit 1

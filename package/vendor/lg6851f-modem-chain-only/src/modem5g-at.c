@@ -99,7 +99,9 @@ int main(int argc, char **argv)
 		.sin_addr.s_addr = htonl(INADDR_LOOPBACK),
 	};
 	struct pollfd pfd = { .events = POLLIN };
-	char output[16384] = { 0 };
+	/* A full SIM inbox in UCS2 can exceed 16 KiB. Keep a hard limit and
+	 * fail on truncation instead of exposing a partial list as complete. */
+	char output[131072] = { 0 };
 	size_t used = 0;
 	bool body_sent = argc == 2;
 	int fd, lockfd, ret;

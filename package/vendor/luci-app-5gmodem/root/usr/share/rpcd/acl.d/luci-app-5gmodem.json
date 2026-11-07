@@ -15,7 +15,8 @@
 					"get_rates",
 					"get_apn",
 					"get_sim_identity",
-					"get_radio_details"
+					"get_radio_details",
+					"get_forward_status"
 				]
 			}
 		},
@@ -34,7 +35,11 @@
 					"reset_band_lock",
 					"set_cell_lock",
 					"clear_cell_lock",
-					"set_apn"
+					"set_apn",
+					"get_forward_config",
+					"set_forward_config",
+					"test_forward",
+					"retry_forward"
 				]
 			},
 			"uci": [

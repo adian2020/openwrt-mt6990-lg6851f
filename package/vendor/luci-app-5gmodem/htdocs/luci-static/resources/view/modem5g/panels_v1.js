@@ -3,7 +3,7 @@
 'require poll';
 'require modem5g.cpe_v1 as C';
 
-const titles={cpu:'CPU 状态',device:'设备管理',sim:'SIM 卡管理',settings:'适配设置',ttl:'TTL',battery:'电池与电量',forward:'短信转发',traffic:'流量统计'};
+const titles={cpu:'CPU 状态',device:'设备管理',sim:'SIM 卡管理',settings:'适配设置',ttl:'TTL',battery:'电池与电量',traffic:'流量统计'};
 return view.extend({
  load(){return C.dashboard();},
  render(data){
@@ -28,9 +28,6 @@ return view.extend({
    refresh();poll.add(refresh,5);
    root.append(C.card('当前接口累计',counters),
     C.unavailable('计数来自内核接口，本机重启或接口重建后可能归零。当前尚未保存跨重启历史，不能作为套餐用量或运营商账单。'));
-  }else if(key==='forward'){
-   root.append(C.card('短信转发状态',C.rows([['自动转发','关闭'],['发送后台','未接入可靠的本地短信事件池']])),
-    C.unavailable('短信自动转发尚未开放。查看与发送短信请使用“短信”页面。'));
   }else if(key==='ttl'){
    root.append(C.card('IP 数据包 TTL',C.rows([['当前 IPv4 默认 TTL',data.network_defaults?.ipv4_ttl],['当前 IPv6 默认 Hop Limit',data.network_defaults?.ipv6_hop_limit]])),
     C.unavailable('本页显示路由器本机发包的默认值，不代表转发流量的值。转发 TTL 重写暂不支持。'));
@@ -39,7 +36,7 @@ return view.extend({
     C.unavailable('仅支持查看系统电源信息，暂不支持调整充电策略。'));
   }else{
    root.append(C.card('MT6990 平台适配',C.rows([['板型',data.board],['固件提交',data.firmware_id],['蜂窝协议',data.network?.proto],['实际数据接口',data.network?.l3_device],['AT 所有者','现有 atcid / modem5g-at'],['RIL 控制','现有 mipc_wan_cli / qlril，复用控制锁'],['采集模式','状态页只读缓存，不新增周期 AT 查询']])),
-    C.unavailable('平台接口由固件维护，不提供任意串口、shell 命令或展锐后台的切换选项。'));
+    C.unavailable('平台接口由固件维护。状态页读取缓存；启用短信转发后按配置周期读取收件箱。不提供任意串口或展锐后台切换。'));
   }
   return root;
  },handleSaveApply:null,handleSave:null,handleReset:null

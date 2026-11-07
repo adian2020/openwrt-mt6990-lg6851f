@@ -90,11 +90,11 @@
 		}
 	},
 	"admin/modem5g/forward": {
-		"title": "短信转发（未启用）",
+		"title": "短信转发",
 		"order": 30,
 		"action": {
 			"type": "view",
-			"path": "modem5g/panels_v1"
+			"path": "modem5g/forward_v1"
 		},
 		"depends": {
 			"acl": [

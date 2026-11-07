@@ -1,0 +1,6 @@
+#!/bin/sh
+chmod 600 /etc/config/lg6851f_sms_forward
+mkdir -p /etc/lg6851f-sms-forward
+chmod 700 /etc/lg6851f-sms-forward
+/etc/init.d/lg6851f-sms-forward enable
+exit 0

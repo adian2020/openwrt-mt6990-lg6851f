@@ -1,0 +1,9 @@
+#!/bin/sh
+# One SMS transaction, through the existing atcid client/lock; no UART reader.
+umask 077
+exec 9>/var/lock/lg6851f-sms-operation.lock
+flock -n 9 || { echo 'SMS list is busy'; exit 75; }
+for command in 'AT+CMGF=1' 'AT+CSCS="UCS2"'; do
+	/usr/bin/timeout 12 /usr/bin/modem5g-at "$command" >/dev/null || exit "$?"
+done
+exec /usr/bin/timeout 12 /usr/bin/modem5g-at 'AT+CMGL="ALL"'

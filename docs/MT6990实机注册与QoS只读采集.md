@@ -74,4 +74,4 @@ scripts/lg6851f-collect-qos.sh 可在现有固件通过 SSH 主动运行，无�
 也不能仅凭同名文件判断旧内容被保留。挂载结果和是否由启动服务重建尚待确认。
 
 可用 sh /tmp/lg6851f-collect-qos.sh 运行，将输出保存为 /tmp/mt6990-qos-readonly.txt。
-云编译继续暂停。
+QCI/5QI 排查按用户要求暂停；云编译由后续短信转发任务完成后按单独授权启动。

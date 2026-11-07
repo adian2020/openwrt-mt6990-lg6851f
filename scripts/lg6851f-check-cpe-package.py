@@ -19,10 +19,17 @@ errors = []
 
 
 def required(path, executable=False):
-    if not path.is_file() or not path.stat().st_size:
+    target=path
+    if args.rootfs:
+        for _ in range(16):
+            if not target.is_symlink():
+                break
+            link=target.readlink()
+            target=pathlib.Path(os.path.normpath(str(root/link.relative_to('/') if link.is_absolute() else target.parent/link)))
+    if not target.is_file() or not target.stat().st_size:
         errors.append(f'缺少文件：{path}')
         return False
-    if executable and not os.access(path, os.X_OK):
+    if executable and not os.access(target, os.X_OK):
         errors.append(f'文件不可执行：{path}')
     return True
 
@@ -52,13 +59,21 @@ for path in assets.glob('**/*.js'):
             errors.append(f'RPC 或权限未接入：{path.name} → {method}')
 for module in re.findall(r"from '(lg6851f\.\w+)'", rpc_source):
     required(root/('usr/share/ucode/'+module.replace('.', '/')+'.uc'))
+for name in ['usr/share/ucode/lg6851f/forward.uc','etc/config/lg6851f_sms_forward',
+             'lib/upgrade/keep.d/lg6851f-sms-forward','usr/libexec/lg6851f-sms-forward.uc']:
+    required(root/name)
+required(root/'etc/init.d/lg6851f-sms-forward',executable=True)
+if not args.rootfs:
+    required(root/'etc/uci-defaults/99-lg6851f-sms-forward',executable=True)
 for name in ['usr/bin/lg6851f-radio-control','usr/bin/lg6851f-modem-details',
              'usr/bin/lg6851f-modem-lock','usr/bin/lg6851f-modem-status',
-             'usr/sbin/lg6851f-data-watchdog']:
+             'usr/sbin/lg6851f-data-watchdog','usr/bin/lg6851f-sms-list']:
     required(chain/name, executable=True)
 for name in ['lib/functions/lg6851f-radio.sh','lib/netifd/proto/ql_datacall.sh']:
     required(chain/name)
 if args.rootfs:
+    required(root/'usr/bin/curl',executable=True)
+    required(root/'usr/bin/sha256sum',executable=True)
     for module in ['fs','uci']:
         required(root/('usr/lib/ucode/'+module+'.so'))
     # The SDK also ships an old unversioned /usr/lib/libuci.so for its own

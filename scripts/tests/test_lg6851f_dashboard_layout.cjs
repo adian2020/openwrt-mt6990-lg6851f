@@ -9,7 +9,7 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
  const browser = await chromium.launch({headless:true,args:['--no-sandbox']});
  try {
   const files = {};
-  for (const name of ['modem5g/common_v5','modem5g/cellular_v1','modem5g/cpe_v1','view/modem5g/network_v4','view/modem5g/dashboard_v1','view/modem5g/apn_v1','view/modem5g/panels_v1'])
+  for (const name of ['modem5g/common_v5','modem5g/cellular_v1','modem5g/cpe_v1','view/modem5g/network_v4','view/modem5g/dashboard_v1','view/modem5g/apn_v1','view/modem5g/panels_v1','view/modem5g/forward_v1'])
    files[name] = fs.readFileSync(path.join(base,name+'.js'),'utf8');
   const css = fs.readFileSync(path.join(root,'package/vendor/luci-theme-aurora/htdocs/luci-static/aurora/main.css'),'utf8');
   for (const width of [390,1280]) {
@@ -47,6 +47,8 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
      if(spec.method==='get_rates'){ticks++;return Promise.resolve({device:'ccmni3',boot_id:'test',at:ticks*2,rx:ticks*1001,tx:ticks*501,cpu:{total:ticks*100,idle:ticks*75}});}
      if(spec.method==='get_sim_identity')return Promise.resolve({imei:args[0]?'123456789000111':'123***111'});
      if(spec.method==='get_radio_details')return new Promise(resolve=>{window.resolveRadio=resolve;});
+     if(spec.method==='get_forward_config')return Promise.resolve({values:{enabled:false,webhook:false,smtp:false,sms:false,interval:60,provider:'json',tls:'tls',port:465,body:'{}'},status:{state:'idle'}});
+     if(spec.method==='get_forward_status')return Promise.resolve({enabled:false,state:'disabled'});
      return Promise.resolve({code:0,output:'测试操作完成'});
     }};
     const ui={hideModal:()=>document.querySelector('#modal').replaceChildren(),showModal:(title,body)=>document.querySelector('#modal').replaceChildren(E('h2',{},title),...body),addNotification:()=>{},
@@ -56,7 +58,7 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
     const poll={add:()=>{}};
     window.mount=async name=>{
      const common=new Function('baseclass','ui','E',files['modem5g/common_v5'])({extend:x=>x},ui,E);
-     const view=name==='network'?new Function('view','rpc','ui','common','poll','E',files['view/modem5g/network_v4'])({extend:x=>x},rpc,ui,common,poll,E):new Function('view','poll','ui','C','E',files['view/modem5g/'+name+'_v1'])({extend:x=>x},poll,ui,C,E);
+     const view=name==='network'?new Function('view','rpc','ui','common','poll','E',files['view/modem5g/network_v4'])({extend:x=>x},rpc,ui,common,poll,E):name==='forward'?new Function('view','rpc','ui','poll','C','E',files['view/modem5g/forward_v1'])({extend:x=>x},rpc,ui,poll,C,E):new Function('view','poll','ui','C','E',files['view/modem5g/'+name+'_v1'])({extend:x=>x},poll,ui,C,E);
      window.vm=view;document.querySelector('main').replaceChildren(view.render(await view.load()));
      await Promise.resolve();await Promise.resolve();
     };
@@ -118,7 +120,18 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
    await page.evaluate(()=>{document.querySelector('#m5-net-state details').open=true;vm.updateNetwork({status:JSON.stringify({up:true,'ipv4-address':[{address:'192.0.2.9'}]})});});
    if(!(await page.locator('#m5-net-state').innerText()).includes('192.0.2.9')||!await page.locator('#m5-net-state details').evaluate(el=>el.open))throw Error('dial-up refresh lost new address or expanded details');
    if(errors.length)throw Error(errors.join('\n'));
-   console.log(`PASS ${width}px: dashboard/APN/panels fit; explicit actions and identity reveal verified`);
+   console.log(`PASS ${width}px: dashboard/APN/panels/forward fit; explicit actions and identity reveal verified`);
+   await page.evaluate(()=>mount('forward'));
+   await fit('forward');
+   if(await page.evaluate(()=>calls.some(row=>['set_forward_config','test_forward','retry_forward'].includes(row.method))))throw Error('forward page sent a message or changed settings on load');
+   await page.locator('#fwd-provider').selectOption('wecom');
+   await page.getByRole('button',{name:'填入模板',exact:true}).click();
+   if(!(await page.locator('#fwd-body').inputValue()).includes('{text}'))throw Error('forward template lost placeholders');
+   await page.locator('#fwd-enabled').check();
+   await page.locator('#fwd-webhook').check();
+   await page.getByRole('button',{name:'保存并应用',exact:true}).click();
+   const forwardSave=await page.evaluate(()=>calls.find(row=>row.method==='set_forward_config'));
+   if(!forwardSave?.args[0].enabled||!forwardSave.args[0].webhook||forwardSave.args[0].provider!=='wecom')throw Error('forward settings were not saved');
    await page.close();
   }
  } finally {await browser.close();}
