@@ -1,0 +1,5 @@
+#!/bin/sh
+umask 077
+exec 9>/var/lock/lg6851f-dashboard-collect.lock
+flock -n 9 || exit 75
+exec /usr/bin/timeout -k 2 25 /usr/bin/ucode /usr/libexec/lg6851f-dashboard-collect.uc

@@ -41,7 +41,7 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
     window.calls=[];let ticks=0;
     const rpc={declare:spec=>(...args)=>{
      calls.push({method:spec.method,args});
-     if(spec.method==='get_dashboard')return Promise.resolve(data);
+     if(spec.method==='get_dashboard')return Promise.resolve(window.pendingDashboard?{initializing:true,modem:{},network:{},cached_modem_stale:true}:data);
      if(spec.method==='get_network')return Promise.resolve({status:JSON.stringify(data.network),config:"network.modem5g.apn='example.net'"});
      if(spec.method==='get_apn')return Promise.resolve({proto:'ql_datacall',apn:'example.net',iptype:3,auth:0,mtu:1500,auto_conf:0,password_set:true});
      if(spec.method==='get_rates'){ticks++;return Promise.resolve({device:'ccmni3',boot_id:'test',at:ticks*2,rx:ticks*1001,tx:ticks*501,cpu:{total:ticks*100,idle:ticks*75}});}
@@ -132,6 +132,9 @@ const base = path.join(root, 'package/vendor/luci-app-5gmodem/htdocs/luci-static
    await page.getByRole('button',{name:'保存并应用',exact:true}).click();
    const forwardSave=await page.evaluate(()=>calls.find(row=>row.method==='set_forward_config'));
    if(!forwardSave?.args[0].enabled||!forwardSave.args[0].webhook||forwardSave.args[0].provider!=='wecom')throw Error('forward settings were not saved');
+   await page.evaluate(()=>{window.pendingDashboard=true;return mount('dashboard');});
+   await fit('pending dashboard');
+   if(!(await page.locator('main').innerText()).includes('后台正在采集状态'))throw Error('pending dashboard still waits instead of opening');
    await page.close();
   }
  } finally {await browser.close();}

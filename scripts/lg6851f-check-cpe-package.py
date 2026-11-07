@@ -63,6 +63,9 @@ for name in ['usr/share/ucode/lg6851f/forward.uc','etc/config/lg6851f_sms_forwar
              'lib/upgrade/keep.d/lg6851f-sms-forward','usr/libexec/lg6851f-sms-forward.uc']:
     required(root/name)
 required(root/'etc/init.d/lg6851f-sms-forward',executable=True)
+required(root/'usr/bin/lg6851f-dashboard-collect',executable=True)
+required(root/'usr/libexec/lg6851f-dashboard-collect.uc')
+required(root/'usr/share/ucode/lg6851f/dashboard-collect.uc')
 if not args.rootfs:
     required(root/'etc/uci-defaults/99-lg6851f-sms-forward',executable=True)
 for name in ['usr/bin/lg6851f-radio-control','usr/bin/lg6851f-modem-details',
@@ -72,6 +75,7 @@ for name in ['usr/bin/lg6851f-radio-control','usr/bin/lg6851f-modem-details',
 for name in ['lib/functions/lg6851f-radio.sh','lib/netifd/proto/ql_datacall.sh']:
     required(chain/name)
 if args.rootfs:
+    required(root/'usr/bin/iwinfo',executable=True)
     required(root/'usr/bin/curl',executable=True)
     required(root/'usr/bin/sha256sum',executable=True)
     for module in ['fs','uci']:

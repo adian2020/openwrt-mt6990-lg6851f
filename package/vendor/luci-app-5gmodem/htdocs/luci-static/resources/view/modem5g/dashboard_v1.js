@@ -55,6 +55,8 @@ return view.extend({
   const header=C.card('当前连接',E('div',{'class':'cpe-hero'},[
    E('div',{},[E('strong',{},`${m.rat||'未获取'} · ${m.operator||'运营商未获取'}`),C.unavailable(`${n.up?'数据接口在线':'数据接口未连接'} · ${n.l3_device||'接口未获取'} · ${data.cached_modem_stale?'蜂窝缓存未就绪或已过期':'蜂窝缓存 '+data.cache_age+' 秒前更新'}`)]),
    E('div',{},[E('strong',{},C.value(signal.rsrp,' dBm')),C.unavailable(`RSRQ ${C.value(signal.rsrq,' dB')} · SINR ${C.value(signal.sinr,' dB')}${serving?' · 小区采样 '+data.cells.age+' 秒前':''}`)])]));
+  if(data.initializing)header.append(C.unavailable('后台正在采集状态，页面会自动更新。'));
+  else if(data.collector_stale)header.append(C.unavailable('后台采集暂未更新，当前显示缓存数据。'));
   const memory=data.memory||{},storage=data.storage||{};
   const devices=C.card('系统与设备',E('div',{},[E('div',{'class':'cpe-grid'},[
    C.metric('内存使用率',memory.percent==null?'未获取':memory.percent.toFixed(1)+'%'),C.metric('内存已用 / 总量',C.bytes(memory.used)+' / '+C.bytes(memory.total)),

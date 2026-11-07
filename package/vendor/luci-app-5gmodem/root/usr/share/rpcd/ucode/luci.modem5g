@@ -217,45 +217,22 @@ function apn_values() {
 		mtu: +(values.mtu || 1500), auto_conf: +(values.auto_conf ?? 1) };
 }
 function dashboard_state() {
-	let data = dashboard.snapshot();
-	data.network = network_state();
-	data.ipv6_global = dashboard.global_ipv6(data.network);
-	data.apn = apn_values();
-	data.lan = read_json_command([ '/bin/ubus', 'call', 'network.interface.lan', 'status' ]);
-	let wireless = read_json_command([ '/bin/ubus', 'call', 'network.wireless', 'status' ]);
-	data.wireless = []; data.clients = [];
-	for (let radio, entry in wireless || {}) {
-		for (let iface in entry.interfaces || []) {
-			let dev = iface.ifname;
-			if (!dev || !match(dev, /^[A-Za-z0-9_.:-]{1,15}$/)) continue;
-			let info = read_json_command([ '/bin/ubus', 'call', 'iwinfo', 'info', sprintf('%J', { device: dev }) ]);
-			push(data.wireless, { radio, device: dev, up: entry.up, ssid: iface.config?.ssid || info?.ssid,
-				channel: info?.channel, frequency: info?.frequency, txpower: info?.txpower,
-				country: info?.country || entry.config?.country, encryption: iface.config?.encryption,
-				hidden: !!+iface.config?.hidden, information_available: info != null });
-			let clients = read_json_command([ '/bin/ubus', 'call', 'iwinfo', 'assoclist', sprintf('%J', { device: dev }) ]);
-			for (let row in clients?.results || [])
-				push(data.clients, { device: dev, mac: row.mac, signal: row.signal,
-					rx_kbit: row.rx?.rate, tx_kbit: row.tx?.rate, connected: row.connected_time });
-		}
-	}
-	data.leases = [];
-	for (let line in split(trim(readfile('/tmp/dhcp.leases') || ''), '\n')) {
-		let fields = split(line, /\s+/);
-		if (length(fields) >= 4) push(data.leases, { expires: +fields[0], mac: fields[1], address: fields[2], hostname: fields[3] });
-	}
-	let storage = capture([ '/bin/df', '-Pk', '/overlay' ], 5);
-	let rows = split(trim(storage.output), '\n');
-	let columns = split(trim(rows[length(rows) - 1] || ''), /\s+/);
-	data.storage = storage.code == 0 && length(columns) >= 6 ? {
-		device: columns[0], total: +columns[1] * 1024, used: +columns[2] * 1024,
-		available: +columns[3] * 1024, percent: +replace(columns[4], '%', ''), mount: '/overlay'
-	} : null;
-	data.usb = map(glob('/sys/class/udc/*') || [], path => ({ controller: replace(path, /^.*\//, ''), state: trim(readfile(path + '/state') || '') }));
-	data.cache_age = data.modem.updated == null ? null : time() - data.modem.updated;
-	data.cached_modem_stale = data.cache_age == null || data.cache_age < 0 || data.cache_age > 180;
-	return data;
+ let boot=trim(readfile('/proc/sys/kernel/random/boot_id')||''), frame=null;
+ try {frame=json(readfile('/tmp/lg6851f-dashboard-v2.json')||'null');}catch(e){}
+ if(frame?.boot_id!=boot)frame=null;
+ let age=frame?.collected_at==null?null:time()-frame.collected_at;
+ if(age==null||age<0||age>=10){
+  // Redirect all worker descriptors before returning; never wait for its pipe.
+  let child=popen('/usr/bin/lg6851f-dashboard-collect >/dev/null 2>&1 </dev/null &','r');
+  child?.close?.();
+ }
+ if(!frame)frame={initializing:true,modem:{},network:{},apn:apn_values(),cached_modem_stale:true,
+  model:trim(readfile('/tmp/sysinfo/model')||''),board:trim(readfile('/tmp/sysinfo/board_name')||''),
+  collector_phase:'pending'};
+ frame.collector_age=age;frame.collector_stale=age==null||age<0||age>60;
+ return frame;
 }
+
 function save_apn(req) {
 	if (!board_ok()) return { code: 95, error: '当前设备不支持 MT6990 APN 设置' };
 	let value = req.args?.values;

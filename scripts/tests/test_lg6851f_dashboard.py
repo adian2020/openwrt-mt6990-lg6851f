@@ -103,7 +103,7 @@ class DashboardTest(unittest.TestCase):
         source = source.replace("return { 'luci.modem5g': methods };", "export const rpc_methods = methods;")
         self.write('/rpc-under-test.uc', source)
         self.write('/testfs.uc', """
-            export function readfile(path) { return path == '/tmp/sysinfo/board_name' ? TEST_BOARD : path == '/proc/sys/kernel/random/boot_id' ? 'test-boot' : ''; }
+            export function readfile(path) { return path == '/tmp/sysinfo/board_name' ? TEST_BOARD : path == '/proc/sys/kernel/random/boot_id' ? 'test-boot' : TEST_FILES[path] || ''; }
             export function glob(path) { return []; }
             export function mkdtemp(path) {return '/tmp/test-reading';}
             export function rmdir(path) {return true;}
@@ -137,7 +137,7 @@ class DashboardTest(unittest.TestCase):
             }; }
         """)
         globals = dict(TEST_BOARD='fiberhome,lg6851f', TEST_UCI={'proto': 'ql_datacall', 'password': 'old-secret'},
-                       TEST_PENDING={}, TEST_COMMANDS=[], TEST_COMMITTED=False, TEST_CACHE={}, TEST_RESPONSES={}, METHOD=method, ARGS=args or {})
+                       TEST_PENDING={}, TEST_COMMANDS=[], TEST_COMMITTED=False, TEST_CACHE={}, TEST_FILES={}, TEST_RESPONSES={}, METHOD=method, ARGS=args or {})
         globals.update(overrides)
         return self.run_ucode("""
             import { rpc_methods } from 'rpc-under-test';
@@ -167,10 +167,47 @@ class DashboardTest(unittest.TestCase):
         self.assertTrue(result['result']['cached_modem_stale'])
         self.assertTrue(result['commands'])
         for command in result['commands']:
+            self.assertNotIn('ubus',command)
+            self.assertNotIn('iwinfo',command)
+            self.assertIn('>/dev/null 2>&1 </dev/null &',command)
             self.assertNotIn('mipc', command)
             self.assertNotIn('modem5g-at', command)
             self.assertNotIn('lg6851f-modem-lock', command)
             self.assertNotIn('lg6851f-modem-details', command)
+
+    def test_dashboard_fresh_cache_returns_without_spawning_or_queries(self):
+        frame={'boot_id':'test-boot','collected_at':int(time.time()),'modem':{'rsrp':-101},'collector_phase':'complete'}
+        result=self.rpc('get_dashboard',TEST_FILES={'/tmp/lg6851f-dashboard-v2.json':json.dumps(frame)})
+        self.assertEqual(result['commands'],[])
+        self.assertEqual(result['result']['modem']['rsrp'],-101)
+        self.assertFalse(result['result']['collector_stale'])
+
+    def test_dashboard_old_boot_cache_is_not_reused(self):
+        frame={'boot_id':'old-boot','collected_at':int(time.time()),'model':'old-firmware'}
+        result=self.rpc('get_dashboard',TEST_FILES={'/tmp/lg6851f-dashboard-v2.json':json.dumps(frame)})
+        self.assertTrue(result['result']['initializing'])
+        self.assertNotEqual(result['result'].get('model'),'old-firmware')
+
+    def test_background_collector_publishes_progress_and_avoids_rpcd_iwinfo(self):
+        source=(PACKAGE/'root/usr/share/ucode/lg6851f/dashboard-collect.uc').read_text()
+        self.write('/collector-test.uc',source.replace("from 'uci'","from 'collectoruci'").replace("from 'fs'","from 'collectorfs'"))
+        self.write('/collectoruci.uc',"export function cursor(){return {load:function(){},get_all:function(){return {apn:'example.net',password:'private'};}};}")
+        self.write('/collectorfs.uc',r'''
+export function glob(path){return [];}
+export function readfile(path){return '';}
+export function popen(command,mode){
+ if(index(command,"'iwinfo'")>=0)die('recursive rpcd request');
+ let text='{}';
+ if(index(command,'network.wireless')>=0)text='{"radio0":{"up":true,"interfaces":[{"ifname":"wlan0","config":{"ssid":"Test"}}]}}';
+ if(index(command,"'/usr/bin/iwinfo'")>=0)text=index(command,"'assoclist'")>=0?'02:00:00:00:00:01 -55 dBm / -95 dBm\n RX: 65.0 MBit/s\n TX: 1.5 MBit/s':'Channel: 36 (5.180 GHz)\n Tx-Power: 23 dBm';
+ return {read:function(){return text;},close:function(){return 0;}};
+}
+''')
+        result=self.run_ucode("import * as c from 'collector-test'; let phases=[];let data=c.collect((row,phase)=>push(phases,phase));printf('%J',{phases,data});")
+        self.assertEqual(result['phases'],['system','network','wireless','complete'])
+        self.assertEqual(result['data']['wireless'][0]['frequency'],5180)
+        self.assertEqual(result['data']['clients'][0]['tx_kbit'],1500)
+        self.assertNotIn('private',json.dumps(result))
 
     @staticmethod
     def radio_report():
