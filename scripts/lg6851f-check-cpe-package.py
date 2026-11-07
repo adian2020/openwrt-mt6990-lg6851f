@@ -70,6 +70,8 @@ for name in ['usr/share/ucode/lg6851f/forward.uc','etc/config/lg6851f_sms_forwar
     required(root/name)
 required(root/'etc/init.d/lg6851f-sms-forward',executable=True)
 required(root/'usr/bin/lg6851f-dashboard-collect',executable=True)
+required(root/'usr/bin/lg6851f-lock-status-collect',executable=True)
+required(root/'usr/libexec/lg6851f-lock-status-collect.uc')
 required(root/'usr/libexec/lg6851f-dashboard-collect.uc')
 required(root/'usr/share/ucode/lg6851f/dashboard-collect.uc')
 if not args.rootfs:

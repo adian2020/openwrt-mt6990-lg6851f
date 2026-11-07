@@ -345,6 +345,17 @@ const methods = {
 		let cached = cached_modem_state();
 		return { status: state.output, config: config.output, radio: cached.RADIO || '', rat: cached.RAT_RAW || cached.RAT || 'UNKNOWN', cached: true };
 	} },
+	get_lock_cache: { args: { refresh: false }, call: function(req) {
+		if (!board_ok()) return { code:95, error:'不支持此设备' };
+		let state=null,boot=trim(readfile('/proc/sys/kernel/random/boot_id')||'');
+		try {state=json(readfile('/tmp/lg6851f-lock-refresh.json')||'null');}catch(e){}
+		if(state?.boot_id!=boot)state=null;
+		if(req.args?.refresh && !(state?.status=='reading' && time()-state.updated>=0 && time()-state.updated<65)) {
+			let child=popen('/usr/bin/lg6851f-lock-status-collect >/dev/null 2>&1 </dev/null &','r');
+			child?.close?.();state={status:'pending'};
+		}
+		return {bands:dashboard.reading('bands'),cells:dashboard.reading('cells'),refresh:state};
+	} },
 	get_locks: { call: function() {
 		if (!modem_settled(network_state()))
 			return { code: 11, output: 'Waiting for modem startup to settle' };

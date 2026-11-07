@@ -10,6 +10,7 @@
 					"get_smsc",
 					"get_network",
 					"get_locks",
+					"get_lock_cache",
 					"get_lock_request",
 					"get_dashboard",
 					"get_rates",

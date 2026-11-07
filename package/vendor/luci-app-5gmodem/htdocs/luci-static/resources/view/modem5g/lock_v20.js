@@ -7,6 +7,7 @@
 'require modem5g.cellular_v1 as cellular';
 
 const getLocks = rpc.declare({ object: 'luci.modem5g', method: 'get_locks', expect: {} });
+const getLockCache = rpc.declare({ object: 'luci.modem5g', method: 'get_lock_cache', params: [ 'refresh' ], expect: {} });
 const getLockRequest = rpc.declare({ object: 'luci.modem5g', method: 'get_lock_request', expect: {} });
 const getCells = rpc.declare({ object: 'luci.modem5g', method: 'get_cells', expect: {} });
 const setBands = rpc.declare({ object: 'luci.modem5g', method: 'set_band_lock', params: [ 'lte', 'nr' ] });
@@ -14,26 +15,20 @@ const resetBands = rpc.declare({ object: 'luci.modem5g', method: 'reset_band_loc
 const setCell = rpc.declare({ object: 'luci.modem5g', method: 'set_cell_lock', params: [ 'arfcn', 'pci', 'rat', 'band' ] });
 const clearCell = rpc.declare({ object: 'luci.modem5g', method: 'clear_cell_lock' });
 
-const LTE = [ 1, 3, 5, 7, 8, 20, 28, 32, 38, 40, 41, 42, 43, 46 ];
-const NR = [ 1, 3, 5, 7, 8, 20, 28, 38, 40, 41, 75, 76, 77, 78 ];
-const LTE_FDD = [ 1, 3, 5, 7, 8, 20, 28, 32 ];
-const LTE_TDD = [ 38, 40, 41, 42, 43 ];
+const LTE = [ 1, 3, 5, 7, 8, 20, 28, 32, 38, 40, 41, 42, 43 ];
+const NR = [ 1, 3, 5, 7, 8, 20, 28, 38, 40, 41, 77, 78 ];
 
 function checks(id, prefix, values) {
 	const check = v => {
-		const extra = prefix == 'B' && !LTE_FDD.includes(v) && !LTE_TDD.includes(v);
-		const readOnly = prefix == 'n' && v == 76 || extra;
-		return E('label', { 'class': 'm5-band', title: extra ? '模组额外上报，未列入本机标称频段，仅展示' : readOnly ? '模组支持；厂商工具暂不接受手动设置 n76' : '' }, [
-			E('input', { type: 'checkbox', value: v, disabled: readOnly }),
-			E('span', { style: readOnly ? 'opacity:.45;cursor:not-allowed' : '' }, `${prefix}${v}`)
+		return E('label', { 'class': 'm5-band' }, [
+			E('input', { type: 'checkbox', value: v, change: function() {
+				this.closest('label').classList.toggle('is-selected', this.checked);
+				this.dispatchEvent(new CustomEvent('modem-bands-edited', {bubbles:true}));
+			} }),
+			E('span', {}, `${prefix}${v}`)
 		]);
 	};
-	const groups = prefix == 'B' ? [
-		['LTE FDD / 补充下行（B32）',values.filter(v=>LTE_FDD.includes(v))],
-		['LTE TDD',values.filter(v=>LTE_TDD.includes(v))],
-		['模组额外上报（只读）',values.filter(v=>!LTE_FDD.includes(v)&&!LTE_TDD.includes(v))]
-	] : [[null,values]];
-	return E('div', { id: id, 'class': 'm5-band-grid' }, groups.flatMap(([name,bands])=>!bands.length?[]:[...(name?[E('strong',{style:'grid-column:1/-1'},name)]:[]),...bands.map(check)]));
+	return E('div', { id: id, 'class': 'm5-band-grid' }, values.map(check));
 }
 
 function selected(id) {
@@ -42,7 +37,10 @@ function selected(id) {
 
 function setChecked(id, values) {
 	let wanted = new Set(values.map(Number));
-	document.querySelectorAll(`#${id} input`).forEach(el => { el.checked = !el.disabled && wanted.has(+el.value); });
+	document.querySelectorAll(`#${id} input`).forEach(el => {
+		el.checked = !el.disabled && wanted.has(+el.value);
+		el.closest('label').classList.toggle('is-selected', el.checked);
+	});
 }
 
 function sameBands(actual, wanted) {
@@ -94,24 +92,49 @@ function candidateTable(rows) {
 return view.extend({
 	busy: false,
 	setSupported(supported) {
+		const changed=JSON.stringify(this.supported)!==JSON.stringify(supported);
 		this.supported = supported;
 		for (const [rat,prefix] of [['lte','B'],['nr','n']]) {
 			const target = document.getElementById(`m5-${rat}-bands`);
-			if (target) target.replaceWith(checks(`m5-${rat}-bands`, prefix, supported[rat]));
+			if (target && changed && !this.dirty) target.replaceWith(checks(`m5-${rat}-bands`, prefix, (rat=='lte'?LTE:NR).filter(v=>supported[rat].includes(v))));
 		}
 		const note = document.getElementById('m5-supported-summary');
-		if (note) note.textContent = `模组回读 LTE ${supported.lte.length} 个 / NR ${supported.nr.length} 个频段。` + (supported.lte.includes(46) ? 'B46 未列入本机标称频段，仅展示模组上报。' : '') + (supported.nr.includes(76) ? 'n76 暂不接受手动设置。' : '') + '恢复默认按模组完整能力回读校验。';
+		if (note) note.textContent = '选择界面恢复原有 LTE 13 个 / NR 12 个频段；实际能力与完整掩码见下方状态框。恢复默认按模组完整能力校验。';
 		this.updateBandSelect();
 	},
 	updateBandSelect() {
 		const rat = document.getElementById('m5-lock-rat')?.value || 'nr';
-		const values = (this.supported?.[rat] || (rat == 'lte' ? LTE : NR)).filter(v=>rat!='lte'||LTE_FDD.includes(v)||LTE_TDD.includes(v));
+		const values = (rat == 'lte' ? LTE : NR).filter(v=>!this.supported||this.supported[rat].includes(v));
 		const select = document.getElementById('m5-lock-band');
 		const pci = document.getElementById('m5-lock-pci');
 		if (pci) pci.max = rat == 'nr' ? 1007 : 503;
 		if (select) select.replaceChildren(E('option', {value:''}, '请选择频段'), ...values.filter(v => rat != 'nr' || v != 76).map(v => E('option', {value:v}, (rat == 'lte' ? 'B' : 'n') + v)));
 	},
-	load() { return Promise.all([ getLocks(), getCells() ]); },
+	load() { return getLockCache(true).then(data=>[data.bands||{},data.cells||{},data.refresh||{}]); },
+	updateDraft() {
+		this.dirty=true;
+		const target=document.getElementById('m5-band-draft');
+		if(target)target.textContent='待应用：'+selected('m5-lte-bands').map(v=>'B'+v).join(' ')+' · '+selected('m5-nr-bands').map(v=>'n'+v).join(' ')+'（尚未写入模组）';
+	},
+	async followRefresh() {
+		const generation=++this.refreshGeneration;
+		for(let attempt=0;attempt<35;attempt++){
+			await new Promise(resolve=>window.setTimeout(resolve,2000));
+			if(generation!==this.refreshGeneration||!document.getElementById('m5-lock-summary'))return;
+			const data=await getLockCache(false);
+			if(generation!==this.refreshGeneration)return;
+			if(data.bands){
+				document.getElementById('m5-lock-state').textContent=common.resultText(data.bands);
+				this.syncLocks(data.bands);
+			}
+			if(data.refresh?.status==='complete'){
+				document.getElementById('m5-lock-result').textContent='锁定状态已读取；当前已锁 LTE：'+(this.lockState?.lte.map(v=>'B'+v).join(' ')||'无')+' / NR：'+(this.lockState?.nr.map(v=>'n'+v).join(' ')||'无');
+				return;
+			}
+			if(data.refresh?.status==='error')throw Error(data.refresh.output||'锁定状态读取失败，请重试');
+		}
+		throw Error('后台读取尚未完成，请稍后点击读取重试');
+	},
 	setBusy(active) {
 		this.busy = active;
 		document.querySelectorAll('.m5-lock-action').forEach(el => { el.disabled = active; });
@@ -180,14 +203,18 @@ return view.extend({
 	},
 	syncLocks(result) {
 		let state = parsedLockState(result);
+		this.lockState=state;
 		if (state.supported) this.setSupported(state.supported);
-		setChecked('m5-lte-bands', state.lte);
-		setChecked('m5-nr-bands', state.nr);
+		if(!this.dirty){
+			setChecked('m5-lte-bands', state.lte);
+			setChecked('m5-nr-bands', state.nr);
+		}
 		let badge = document.getElementById('m5-lock-summary');
 		if (badge) badge.textContent = state.mode == 'cell' ? `${_('Cell lock')}: ${String(state.rat || '').toUpperCase()} ${state.arfcn || '-'} / PCI ${state.pci == '65535' ? _('Any') : (state.pci || '-')}` :
 			state.mode == 'none' ? _('Cell lock cleared and state refreshed') :
 			state.mode == 'bands' ? _('Band lock applied and verified') :
 			(state.lte.length || state.nr.length) ? `${_('Current bands')}: ${state.lte.map(x => 'B' + x).join(' ')} · ${state.nr.map(x => 'n' + x).join(' ')}` : _('Lock state unavailable');
+		if(badge&&result.stale)badge.textContent+='（缓存已过期，正在等待重新读取）';
 		if (state.mode == 'cell') {
 			document.getElementById('m5-lock-rat').value = state.rat || 'nr';
 			this.updateBandSelect();
@@ -198,6 +225,7 @@ return view.extend({
 	},
 	runAction(fn, args, sync, verify, refresh) {
 		if (this.busy) return Promise.resolve();
+		++this.refreshGeneration;
 		let oldRpcTimeout = L.env.rpctimeout;
 		L.env.rpctimeout = 40;
 		document.getElementById('m5-lock-result').textContent = _('Request sent; waiting for modem verification…');
@@ -209,7 +237,7 @@ return view.extend({
 		return Promise.all([ rpcCall, this.waitForOperation(verify) ]).then(results => {
 			let state = results[1];
 			document.getElementById('m5-lock-state').textContent = common.resultText(state);
-			this.syncLocks(state);
+			this.dirty=false;this.syncLocks(state);
 			this.syncCandidatesToVerifiedState(state);
 			sync?.();
 			this.refreshCellsAfterOperation();
@@ -221,12 +249,11 @@ return view.extend({
 	readLocks() {
 		if (this.busy) return Promise.resolve();
 		this.setBusy(true);
-		return getLocks().then(state => {
-			if (+state.code != 0) throw new Error(state.error || common.resultText(state));
-			document.getElementById('m5-lock-state').textContent = common.resultText(state);
-			this.syncLocks(state);
-			document.getElementById('m5-lock-result').textContent = _('Lock state refreshed');
-		}).catch(e => common.callError(_('Band and Cell Lock'), e)).finally(() => this.setBusy(false));
+		this.dirty=false;
+		return getLockCache(true).then(()=>this.followRefresh()).catch(e => {
+			document.getElementById('m5-lock-result').textContent=e.message;
+			common.callError(_('Band and Cell Lock'),e);
+		}).finally(() => this.setBusy(false));
 	},
 	showPane(name) {
 		document.querySelectorAll('.m5-lock-pane').forEach(el => { el.hidden = el.id != `m5-pane-${name}`; });
@@ -263,7 +290,10 @@ return view.extend({
 	},
 	render(data) {
 		let locks = data[0] || {}, cells = data[1] || {}, candidates = parseCells(cells.serving);
-		let page = E('div', { 'class': 'm5-page', 'style': 'padding-bottom:5rem' }, [ common.style(), common.extraStyle(), E('h2', {}, _('Band and Cell Lock')),
+		this.dirty=false;this.refreshGeneration=0;
+		let page = E('div', { 'class': 'm5-page m5-lock-page', 'style': 'padding-bottom:5rem' }, [ common.style(), common.extraStyle(),
+			E('style',{},'.m5-lock-page .m5-band-grid{grid-template-columns:repeat(4,minmax(0,1fr))!important}.m5-lock-page .m5-band input:checked+span,.m5-lock-page .m5-band.is-selected span{background:#2563eb!important;color:#fff!important;border-color:#1d4ed8!important;box-shadow:0 0 0 1px #1d4ed8}.m5-lock-page .m5-band input:focus-visible+span{outline:2px solid #2563eb;outline-offset:3px}.m5-lock-page .m5-band span{min-height:44px;display:flex;align-items:center;justify-content:center}@container(min-width:950px){.m5-lock-page .m5-band-grid{grid-template-columns:repeat(6,minmax(0,1fr))!important}}'),
+			E('h2', {}, _('Band and Cell Lock')),
 			E('p', { 'class': 'm5-note' }, _('This page uses the modem vendor RIL. Changes may interrupt service. Restore defaults if the modem cannot register.')),
 			E('p', { id: 'm5-lock-summary', 'class': 'm5-live' }, _('Reading current lock state…')),
 			E('p', { id: 'm5-lock-progress', 'class': 'm5-live' }, _('Ready')),
@@ -274,7 +304,8 @@ return view.extend({
 			E('div', { id: 'm5-pane-bands', 'class': 'm5-lock-pane' }, common.panel(_('4G / 5G band lock'), E('div', {}, [
 				E('h4', {}, _('LTE bands')), checks('m5-lte-bands', 'B', LTE),
 				E('h4', {}, _('NR bands')), checks('m5-nr-bands', 'n', NR),
-				E('p', { id: 'm5-supported-summary', 'class': 'm5-note' }, '支持频段以模组回读为准；n76 暂不支持手动设置。'),
+				E('p', { id: 'm5-supported-summary', 'class': 'm5-note' }, 'LTE 13 个 / NR 12 个频段；选中立即高亮，点击应用后才写入模组。'),
+				E('p', { id: 'm5-band-draft', 'class': 'm5-live', 'aria-live':'polite' }, ''),
 				E('div', { 'class': 'm5-lock-footer' }, [
 					E('button', { 'class': 'btn cbi-button m5-lock-action', click: ui.createHandlerFn(this, 'readLocks') }, _('Read')),
 					E('button', { 'class': 'btn cbi-button cbi-button-apply m5-lock-action', click: ui.createHandlerFn(this, 'applyBands') }, _('Apply band lock')),
@@ -296,13 +327,25 @@ return view.extend({
 			])),
 				common.panel(_('Serving and neighbor cell candidates'), E('div', {}, [
 					E('p', { 'class': 'm5-note' }, _('Tap a serving or neighbor cell to fill ARFCN and PCI automatically. ARFCN identifies the channel; PCI identifies the physical cell.')),
+					E('button',{'class':'btn m5-lock-action',click:ui.createHandlerFn(this,async function(){
+						if(this.busy)return;this.setBusy(true);
+						try{const result=await getCells();if(result.initializing||result.serving?.code)throw Error(result.serving?.output||'小区暂不可用');document.getElementById('m5-cell-candidates').replaceChildren(candidateTable(parseCells(result.serving)));}
+						catch(error){common.callError(_('Band and Cell Lock'),error);}finally{this.setBusy(false);}
+					})},'读取当前小区'),
 					E('div', { id: 'm5-cell-candidates' }, candidateTable(candidates))
 				]))]),
-			common.panel(_('Current lock state and operation result'), E('pre', { id: 'm5-lock-result', 'class': 'm5-raw' }, '-')),
+			common.panel(_('Current lock state and operation result'), E('pre', { id: 'm5-lock-result', 'class': 'm5-raw' }, locks.output?'当前 LTE：'+parsedLockState(locks).lte.map(v=>'B'+v).join(' ')+'\n当前 NR：'+parsedLockState(locks).nr.map(v=>'n'+v).join(' '):'页面已就绪，正在后台读取当前锁定状态…')),
 			E('details', { 'class': 'm5-panel' }, [ E('summary', {}, _('Current lock state and operation result')), E('pre', { id: 'm5-lock-state', 'class': 'm5-raw' }, common.resultText(locks)) ])
 		]);
 		page.addEventListener('modem-rat-change', () => this.updateBandSelect());
-		requestAnimationFrame(() => this.syncLocks(locks));
+		page.addEventListener('modem-bands-edited',()=>this.updateDraft());
+		requestAnimationFrame(() => {
+			this.syncLocks(locks);
+			if(['pending','reading'].includes(data[2]?.status)){
+				document.getElementById('m5-lock-progress').textContent='页面已就绪，正在后台读取锁定状态…';
+				this.followRefresh().catch(e=>{if(document.getElementById('m5-lock-result'))document.getElementById('m5-lock-result').textContent=e.message;}).finally(()=>{if(document.getElementById('m5-lock-progress')&&!this.busy)document.getElementById('m5-lock-progress').textContent=_('Ready');});
+			}
+		});
 		return page;
 	},
 	handleSaveApply: null, handleSave: null, handleReset: null

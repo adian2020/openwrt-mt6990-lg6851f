@@ -188,6 +188,89 @@ class DashboardTest(unittest.TestCase):
         self.assertTrue(result['result']['initializing'])
         self.assertNotEqual(result['result'].get('model'),'old-firmware')
 
+    def test_lock_cache_never_runs_synchronous_modem_queries(self):
+        result=self.rpc('get_lock_cache')
+        self.assertEqual(result['commands'],[])
+        self.assertIsNone(result['result']['bands'])
+        result=self.rpc('get_lock_cache',{'refresh':True})
+        self.assertEqual(result['result']['refresh']['status'],'pending')
+        self.assertEqual(len(result['commands']),1)
+        self.assertIn('lg6851f-lock-status-collect >/dev/null 2>&1 </dev/null &',result['commands'][0])
+        self.assertNotIn('ubus',result['commands'][0])
+        self.assertNotIn('modem-lock get',result['commands'][0])
+
+    def test_lock_cache_does_not_spawn_while_current_worker_is_reading(self):
+        path='/tmp/lg6851f-lock-refresh.json'
+        state={'boot_id':'test-boot','updated':int(time.time()),'status':'reading'}
+        result=self.rpc('get_lock_cache',{'refresh':True},TEST_FILES={path:json.dumps(state)})
+        self.assertEqual(result['commands'],[])
+        self.assertEqual(result['result']['refresh']['status'],'reading')
+        state['boot_id']='old-boot'
+        result=self.rpc('get_lock_cache',{'refresh':True},TEST_FILES={path:json.dumps(state)})
+        self.assertEqual(len(result['commands']),1)
+
+    def test_lock_cache_returns_only_same_boot_band_reading(self):
+        self.write('/proc/sys/kernel/random/boot_id','test-boot')
+        path='/tmp/lg6851f-modem-bands.json'
+        data={'boot_id':'test-boot','updated':int(time.time()),'code':0,'output':'actual band masks'}
+        self.write(path,json.dumps(data))
+        result=self.rpc('get_lock_cache')
+        self.assertEqual(result['result']['bands']['output'],'actual band masks')
+        self.assertEqual(result['commands'],[])
+        data['boot_id']='previous-boot';self.write(path,json.dumps(data))
+        self.assertIsNone(self.rpc('get_lock_cache')['result']['bands'])
+
+    def lock_worker(self, network=None, vendor=None, down=False):
+        source=(PACKAGE/'root/usr/libexec/lg6851f-lock-status-collect.uc').read_text().replace("from 'fs';", "from 'lock-test-fs';")
+        self.write('/lock-worker.uc',source)
+        self.write('/lock-test-fs.uc',"""
+            export function readfile(path){return path=='/tmp/sysinfo/board_name'?'fiberhome,lg6851f':path=='/proc/sys/kernel/random/boot_id'?'test-boot':null;}
+            export function mkdtemp(path){return '/tmp/test-lock';}
+            export function rmdir(path){return true;}
+            export function unlink(path){delete TEST_LOCK_FILES[path];return true;}
+            export function rename(a,b){TEST_LOCK_FILES[b]=TEST_LOCK_FILES[a];delete TEST_LOCK_FILES[a];return true;}
+            export function open(path,mode,perm){return {write:function(data){TEST_LOCK_FILES[path]=data;return length(data);},close:function(){return true;}};}
+            export function popen(command,mode){
+                push(TEST_COMMANDS,command);
+                let result;
+                if(index(command,'network.interface.modem5g status')>=0)result={code:0,output:sprintf('%J',TEST_NETWORK)};
+                else if(index(command,'/bin/pidof ')>=0)result={code:TEST_DOWN?1:0,output:'123'};
+                else if(index(command,'lg6851f-modem-lock get')>=0)result=TEST_VENDOR;
+                else die('Unexpected worker command');
+                return {read:function(){return result.output;},close:function(){return result.code;}};
+            }
+        """)
+        valid='get band mode success!\nlte band info = 0000000500000000\nnr band info = 000000000000000000002000\nget band mode success!\nlte band info = 880800d5000027a0\nnr band info = 080800d5000001a000003c00'
+        return self.run_ucode("import 'lock-worker'; printf('%J',{files:TEST_LOCK_FILES,commands:TEST_COMMANDS});",
+            TEST_LOCK_FILES={'/tmp/lg6851f-modem-bands.json':'previous good cache'},TEST_COMMANDS=[],
+            TEST_NETWORK=network if network is not None else {'up':True,'uptime':100},
+            TEST_VENDOR=vendor if vendor is not None else {'code':0,'output':valid},TEST_DOWN=down)
+
+    def test_lock_worker_publishes_complete_read_only_band_response(self):
+        data=self.lock_worker()
+        frame=json.loads(data['files']['/tmp/lg6851f-modem-bands.json'])
+        self.assertEqual(frame['boot_id'],'test-boot')
+        self.assertEqual(frame['code'],0)
+        self.assertIn('0000000500000000',frame['output'])
+        self.assertEqual(json.loads(data['files']['/tmp/lg6851f-lock-refresh.json'])['status'],'complete')
+        self.assertEqual(sum('modem-lock get' in command for command in data['commands']),1)
+        self.assertFalse(any('AT+' in command or 'apply-' in command for command in data['commands']))
+
+    def test_lock_worker_does_not_open_modem_before_startup_settles(self):
+        for options in [{'network':{'up':False,'uptime':100}}, {'network':{'up':True,'uptime':5}}, {'down':True}]:
+            with self.subTest(options=options):
+                data=self.lock_worker(**options)
+                self.assertFalse(any('modem-lock' in command for command in data['commands']))
+                self.assertEqual(data['files']['/tmp/lg6851f-modem-bands.json'],'previous good cache')
+                self.assertEqual(json.loads(data['files']['/tmp/lg6851f-lock-refresh.json'])['code'],11)
+
+    def test_lock_worker_keeps_good_cache_on_vendor_failure_or_truncation(self):
+        for vendor in [{'code':75,'output':'channel busy'}, {'code':0,'output':'get band mode success!\nlte band info = 00000005'}]:
+            with self.subTest(vendor=vendor):
+                data=self.lock_worker(vendor=vendor)
+                self.assertEqual(data['files']['/tmp/lg6851f-modem-bands.json'],'previous good cache')
+                self.assertEqual(json.loads(data['files']['/tmp/lg6851f-lock-refresh.json'])['status'],'error')
+
     def test_background_collector_publishes_progress_and_avoids_rpcd_iwinfo(self):
         source=(PACKAGE/'root/usr/share/ucode/lg6851f/dashboard-collect.uc').read_text()
         self.write('/collector-test.uc',source.replace("from 'uci'","from 'collectoruci'").replace("from 'fs'","from 'collectorfs'"))
