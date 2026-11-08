@@ -2,4 +2,6 @@
 chmod 600 /etc/config/lg6851f_apn
 /etc/init.d/lg6851f-traffic enable
 /etc/init.d/lg6851f-cellular-refresh enable
+
+[ ! -x /etc/init.d/umdns ] || /etc/init.d/umdns enable
 exit 0

@@ -55,6 +55,32 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(value['frequencies'], [])
         self.assertTrue(all(v is None for v in value['advanced'].values()))
 
+    def test_mdns_requires_real_address_and_unambiguous_host_name(self):
+        value=self.run_ucode("""
+import * as c from 'lg6851f.dashboard-collect';
+let hosts={'Pixel-7-Pro.local':{ipv4:['192.168.1.201']}};
+printf('%J',[c.mdns_name(hosts,'192.168.1.201'),c.mdns_name(hosts,'192.168.1.202'),
+ c.mdns_name({...hosts,'another.local':{ipv4:['192.168.1.201']}},'192.168.1.201'),
+ c.mdns_name(null,'192.168.1.201')]);
+""")
+        self.assertEqual(value,['Pixel-7-Pro',None,None,None])
+
+    def test_discovered_name_fills_unnamed_lease_without_static_configuration(self):
+        source=(PACKAGE/'root/usr/share/ucode/lg6851f/dashboard-collect.uc').read_text()
+        self.write('/collector-test.uc',source.replace("from 'uci'","from 'collectoruci'").replace("from 'fs'","from 'collectorfs'"))
+        self.write('/collectoruci.uc',"export function cursor(){return {foreach:function(){},load:function(){},get_all:function(){return {};}};}")
+        self.write('/collectorfs.uc',r'''
+export function glob(path){return [];}
+export function readfile(path){return path=='/tmp/dhcp.leases'?'1794146330 fa:90:c7:0c:ae:d6 192.168.1.201 * id':null;}
+export function popen(command,mode){let text='{}';
+ if(index(command,"'umdns' 'hosts'")>=0)text='{"Pixel-7-Pro.local":{"ipv4":["192.168.1.201"]}}';
+ return {read:function(){return text;},close:function(){return 0;}};
+}
+''')
+        result=self.run_ucode("import * as c from 'collector-test';printf('%J',c.collect(()=>{}));")
+        self.assertEqual(result['leases'][0]['hostname'],'Pixel-7-Pro')
+        self.assertEqual(result['leases'][0]['hostname_source'],'mdns')
+
     def test_rate_baselines_resets_and_cpu_guest_accounting(self):
         value = self.run_ucode("""
             import * as d from 'lg6851f.dashboard';

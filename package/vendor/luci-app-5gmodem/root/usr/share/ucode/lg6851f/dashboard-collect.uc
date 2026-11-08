@@ -28,6 +28,26 @@ export function parse_clients(text){
  }
  return {results:rows};
 }
+// 只匹配mDNS主机记录里的真实地址，不用服务名或MAC猜机型。
+function has_address(value,address,depth){
+ if(depth>4)return false;
+ if(type(value)=='string')return value==address;
+ if(type(value)=='array'){for(let v in value)if(has_address(v,address,depth+1))return true;}
+ else if(type(value)=='object'){for(let k,v in value)if(has_address(v,address,depth+1))return true;}
+ return false;
+}
+export function mdns_name(hosts,address){
+ if(!address || type(hosts)!='object')return null;
+ let found=null;
+ for(let name,row in hosts){
+  if(!has_address(row,address,0))continue;
+  let n=replace(name,/\.local\.?$/i,'');
+  if(!match(n,/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,252}$/))continue;
+  if(found && lc(found)!=lc(n))return null;
+  found=n;
+ }
+ return found;
+}
 export function collect(publish) {
 	deadline=time()+18;
 	let data = dashboard.snapshot();
@@ -78,6 +98,13 @@ export function collect(publish) {
 	 let macs=type(h.mac)=='array'?h.mac:split(h.mac||'',/\s+/);
 	 for(let l in data.leases||[])if(!l.hostname && h.name && h.name!='*' && index(map(macs,m=>lc(m)),lc(l.mac||''))>=0)l.hostname=h.name;
 	});
+	// 发现操作只在后台执行，每分钟发起一次刷新；不写入静态租约。
+	data.mdns_requested_at=previous?.mdns_requested_at||0;
+	if(time()-data.mdns_requested_at<0 || time()-data.mdns_requested_at>=60){
+	 if(read_json_command(['/bin/ubus','-t','2','call','umdns','update'])!=null)data.mdns_requested_at=time();
+	}
+	let mdns=read_json_command(['/bin/ubus','-t','2','call','umdns','hosts','{"array":true}']);
+	for(let l in data.leases||[])if(!l.hostname){let name=mdns_name(mdns,l.address);if(name){l.hostname=name;l.hostname_source='mdns';}}
 	let storage = capture([ '/bin/df', '-Pk', '/overlay' ], 5);
 	let rows = split(trim(storage.output), '\n');
 	let columns = split(trim(rows[length(rows) - 1] || ''), /\s+/);
