@@ -43,4 +43,49 @@ exit 0
         self.assertEqual(self.run_case(enabled=0),{'error':'RADIO_DISABLED_BY_USER','blocked':'blocked'})
 
 
+
+class AutoAPNContinueTest(unittest.TestCase):
+    def run_apn(self, configured='46002', valid='0'):
+        with tempfile.TemporaryDirectory() as name:
+            root=pathlib.Path(name)
+            (root/'proto').write_text(PROTO.read_text())
+            script='''
+INCLUDE_ONLY=1
+. "$TEST_DIR/proto"
+mipc_wan_cli() { echo '{}'; }
+json_load() { return "$TEST_JSON_STATUS"; }
+json_get_var() {
+ case "$2" in
+ apn|iaapn) value=ctnet;; plmn) value=460011;; protocol|roaming_protocol|iaprotocol|iaroaming_protocol) value=3;; auth_type) value=0;; *) value='';;
+ esac
+ export "$1=$value"
+}
+uci() { printf '%s\\n' "$*" >> "$TEST_DIR/uci-calls"; }
+proto_notify_error() { echo "unexpected APN restart" >&2; exit 91; }
+apn=custom.apn; plmn="$TEST_CONFIGURED"; iptype=1; roamingtype=1; iaroamingtype=1; dataroaming=0
+check_auto_apn_prov "$plmn" modem5g
+rc=$?
+printf '%s\\n' "$rc" "$apn" "$plmn" "$iptype" "$iaapn" "$dataroaming" > "$TEST_DIR/state"
+'''
+            result=subprocess.run(['sh','-c',script],env=dict(os.environ,TEST_DIR=name,TEST_CONFIGURED=configured,TEST_JSON_STATUS=valid),text=True,capture_output=True,timeout=5)
+            self.assertEqual(result.returncode,0,result.stderr)
+            calls=(root/'uci-calls').read_text() if (root/'uci-calls').exists() else ''
+            return (root/'state').read_text().splitlines(),calls
+
+    def test_changed_sim_continues_same_setup_with_detected_apn(self):
+        state,calls=self.run_apn()
+        self.assertEqual(state,['0','ctnet','460011','3','ctnet','0'])
+        self.assertIn('set network.modem5g.plmn=460011',calls)
+        self.assertNotIn('dataroaming=',calls)
+
+    def test_same_sim_normalized_does_not_overwrite_manual_apn(self):
+        state,calls=self.run_apn(configured='46011')
+        self.assertEqual(state[1],'custom.apn')
+        self.assertEqual(calls,'')
+
+    def test_invalid_vendor_reply_does_not_change_configuration(self):
+        state,calls=self.run_apn(valid='1')
+        self.assertEqual(state[0:2],['1','custom.apn'])
+        self.assertEqual(calls,'')
+
 if __name__=='__main__':unittest.main()

@@ -132,7 +132,6 @@ return view.extend({
         <div class="mud-r"><span class="mud-k">IMEI</span><span class="mud-v" id="mud-imei">--</span></div>
         <div class="mud-r"><span class="mud-k">IMSI</span><span class="mud-v" id="mud-imsi">--</span></div>
         <div class="mud-r"><span class="mud-k">ICCID</span><span class="mud-v" id="mud-iccid">--</span></div>
-        <div class="mud-r"><span class="mud-k">本机号码</span><span class="mud-v" id="mud-msisdn">--</span></div>
         <div class="mud-r"><span class="mud-k">模组</span><span class="mud-v" id="mud-fwmodel">--</span></div>
         <div class="mud-r"><span class="mud-k">固件</span><span class="mud-v" id="mud-fw">--</span></div>
       </div>
@@ -233,7 +232,7 @@ return view.extend({
   ].map(([prefix,key,val])=>E('div',{'class':'mud-r'},[E('span',{'class':'mud-k'},prefix+' '+key),E('span',{'class':'mud-v'},val)]))));
   this.set('bw',primary?.dl_bandwidth_mhz!=null && primary.dl_bandwidth_mhz===primary.ul_bandwidth_mhz?primary.dl_bandwidth_mhz+' MHz':this.pair(primary?.dl_bandwidth_mhz,primary?.ul_bandwidth_mhz,' MHz'));
   this.set('qci',data.qos?.cid==+n.data?.cid ? data.qos?.value : null);
-  const ambr=radio?.ambr?.network;this.set('ambr',C.mbps(ambr?.dl?.bps)+' / '+C.mbps(ambr?.ul?.bps));
+  const ambr=radio?.ambr?.network;this.set('ambr',(ambr?.dl?.bps==null?'未获取':C.value(ambr.dl.bps/1e6,' Mbps'))+' / '+(ambr?.ul?.bps==null?'未获取':C.value(ambr.ul.bps/1e6,' Mbps')));
   this.q('lteanchor').replaceChildren(...carriers.filter(r=>r.rat==='lte').map(r=>E('div',{'class':'mud-r'},[E('span',{'class':'mud-k'},'LTE 链路'),E('span',{'class':'mud-v'},'B'+r.band+' · PCI '+r.pci+' · EARFCN '+r.arfcn)])));
   const memory=data.memory||{},storage=data.storage||{};
   this.set('ram',C.value(memory.percent?.toFixed(1),'%'));this.set('ram-sub','共 '+C.bytes(memory.total)+' · 余 '+C.bytes(memory.available));this.q('ram-bar').style.width=(memory.percent||0)+'%';
@@ -269,7 +268,7 @@ return view.extend({
  paintIdentity(){
   const m=this.identity||this.data.modem||{};
   for(const [id,key] of [['imei','imei'],['imsi','imsi'],['iccid','iccid']])this.set(id,m[key]);
-  this.set('msisdn',m.phone||this.data.modem?.phone);this.set('fwmodel',this.data.modem?.model);this.set('fw',this.data.modem?.firmware);
+  this.set('fwmodel',this.data.modem?.model);this.set('fw',this.data.modem?.firmware);
  },
  wire(){
   const confirm=(button,title,body,invoke)=>{button.onclick=async()=>{

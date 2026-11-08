@@ -66,7 +66,7 @@ check_auto_apn_prov() {
 
     apn_data=`(mipc_wan_cli --apn_provision_by_sim)`
     [ -z "$apn_data" ] && return
-    json_load "$apn_data"
+    json_load "$apn_data" || return 1
     json_get_var db_apn apn
     echo "apn is $db_apn"
     [ -z "$db_apn" ] && return
@@ -89,7 +89,7 @@ check_auto_apn_prov() {
     configured_plmn="${1:-}"
     sim_plmn="${db_plmn:-}"
     case "$configured_plmn" in
-        4600[0-9]) configured_plmn="4600${configured_plmn#460}" ;;
+        460[0-9][0-9]) configured_plmn="4600${configured_plmn#460}" ;;
     esac
     echo "Config:$1 ($configured_plmn) & SIM:$db_plmn ($sim_plmn)"
     [ -n "$configured_plmn" ] && [ "$configured_plmn" = "$sim_plmn" ] && return
@@ -106,12 +106,23 @@ check_auto_apn_prov() {
     uci set network."$2".iaapn="$db_iaapn"
     uci set network."$2".iaiptype="$db_iaprotocol"
     uci set network."$2".plmn="$db_plmn"
-    uci set network."$2".dataroaming="$db_data_roaming"
     uci commit network
 
-    echo "APN provision done for $2"
-    proto_notify_error "$2" APN_CHANGE
-    exit 1
+    # netifd 的启动参数仍是旧快照。仅提交UCI后退出会带着旧PLMN
+    # 重新进入同一分支，尚未拨号就被APN_CHANGE中断，形成重启循环。
+    # 将已识别的参数同步到本次拨号，继续由同一setup建立数据连接。
+    apn="$db_apn"
+    auth="$db_auth_type"
+    username="$db_user"
+    password="$db_password"
+    roamingtype="${db_roaming_protocol:-$roamingtype}"
+    iaroamingtype="${db_iaroaming_protocol:-$iaroamingtype}"
+    iptype="${db_protocol:-$iptype}"
+    iaapn="${db_iaapn:-$db_apn}"
+    iaiptype="${db_iaprotocol:-$iptype}"
+    plmn="$db_plmn"
+    echo "APN provision done for $2; continue current data call"
+    return 0
 }
 
 # get_device_idx_by_name device_name

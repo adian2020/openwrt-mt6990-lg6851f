@@ -48,7 +48,8 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
    const getRates=()=>page.locator('#mud-dl,#mud-ul').allTextContents();const first=await getRates();assert(first.every(x=>/^\d.*\/s$/.test(x)),'numeric first rates');
    await page.evaluate(()=>mount('dashboard'));assert.deepEqual(await getRates(),first);assert.equal(await page.locator('#mud-dl').getAttribute('title'),'最近一次真实速率');
    assert.equal(await page.locator('#mud-rx').textContent(),'12.34 GB');assert.equal(await page.locator('#mud-tr-day').textContent(),'500 MB');assert.equal(await page.locator('#mud-qci').textContent(),'8');
-   assert.equal(await page.locator('#mud-batt,#mud-wusb').count(),0);
+   assert.equal(await page.locator('#mud-batt,#mud-wusb,#mud-msisdn').count(),0);
+   assert.equal(await page.locator('#mud-ambr').textContent(),'256 Mbps / 12.8 Mbps');
    assert.equal(await page.locator('#mud-ssid').textContent(),'OpenWrt');assert.equal(await page.locator('#mud-chan').textContent(),'44 (5 GHz-EHT160)');
    assert.equal(await page.locator('#mud-wenc').textContent(),'none');assert.equal(await page.locator('#mud-whid').textContent(),'否');assert.equal(await page.locator('#mud-wcountry').textContent(),'cn');
    assert((await page.locator('#mud-clist').textContent()).includes('↑1200.9 Mbps · ↓1134.2 Mbps'));
