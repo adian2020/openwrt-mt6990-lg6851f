@@ -274,10 +274,10 @@ class DashboardTest(unittest.TestCase):
     def test_background_collector_publishes_progress_and_avoids_rpcd_iwinfo(self):
         source=(PACKAGE/'root/usr/share/ucode/lg6851f/dashboard-collect.uc').read_text()
         self.write('/collector-test.uc',source.replace("from 'uci'","from 'collectoruci'").replace("from 'fs'","from 'collectorfs'"))
-        self.write('/collectoruci.uc',"export function cursor(){return {foreach:function(){},load:function(){},get_all:function(){return {apn:'example.net',password:'private'};}};}")
+        self.write('/collectoruci.uc',"export function cursor(){return {foreach:function(c,t,cb){cb({name:'pixel7PRO',mac:['02:00:00:00:00:01','02:00:00:00:00:02']});},load:function(){},get_all:function(){return {apn:'example.net',password:'private'};}};}")
         self.write('/collectorfs.uc',r'''
 export function glob(path){return [];}
-export function readfile(path){return '';}
+export function readfile(path){return path=='/tmp/dhcp.leases'?'1794146330 02:00:00:00:00:01 192.168.1.201 * client-id':'';}
 export function popen(command,mode){
  if(index(command,"'iwinfo'")>=0)die('recursive rpcd request');
  let text='{}';
@@ -290,6 +290,7 @@ export function popen(command,mode){
         self.assertEqual(result['phases'],['system','network','wireless','complete'])
         self.assertEqual(result['data']['wireless'][0]['frequency'],5180)
         self.assertEqual(result['data']['clients'][0]['tx_kbit'],1500)
+        self.assertEqual(result['data']['leases'][0]['hostname'],'pixel7PRO')
         self.assertNotIn('private',json.dumps(result))
 
     def test_qos_readback_is_bound_to_actual_context(self):

@@ -9,7 +9,13 @@ case "$board" in fiberhome,lg6851f|fiberhome_lg6851f) ;; *) echo 'Unsupported bo
 [ -x /usr/bin/sample_nw ] || { echo 'Vendor sample_nw is missing'; exit 2; }
 
 exec 9>/var/lock/luci-modem5g-control.lock
-/usr/bin/flock -w 15 9 || { echo 'Modem command channel is busy; retry shortly'; exit 75; }
+# 目标 BusyBox flock 不支持 -w，使用有界非阻塞重试。
+waited=0
+while ! /usr/bin/flock -n 9; do
+    [ "$waited" -lt 15 ] || { echo 'Modem command channel is busy; retry shortly'; exit 75; }
+    /bin/sleep 1
+    waited=$((waited + 1))
+done
 trap '/bin/sleep 6; /usr/bin/flock -u 9' EXIT
 
 # 0 init; 7 data registration; 21 band/AMBR; 25/5 CA; 33 EN-DC; 1 release.

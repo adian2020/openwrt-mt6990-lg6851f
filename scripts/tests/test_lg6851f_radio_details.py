@@ -6,6 +6,7 @@ import pathlib
 import shlex
 import subprocess
 import tempfile
+import threading
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -22,10 +23,15 @@ class ReadOnlyDetailsTest(unittest.TestCase):
         sample.write_text('#!/bin/sh\ncat > ' + shlex.quote(str(self.root / 'input')) + '\nprintf "mock getter\\n"\nexit "$TEST_STATUS"\n')
         sample.chmod(0o700)
         cooldown = self.root / 'cooldown'
-        cooldown.write_text('#!/bin/sh\nif /usr/bin/flock -n ' + shlex.quote(str(self.root / 'lock')) +
+        cooldown.write_text('#!/bin/sh\n[ "$1" != 1 ] || { /bin/sleep 0.03; exit; }\nif /usr/bin/flock -n ' + shlex.quote(str(self.root / 'lock')) +
                             ' -c true; then echo released; else echo held; fi > ' + shlex.quote(str(self.root / 'cooldown-state')) + '\n')
         cooldown.chmod(0o700)
+        # 只允许目标 BusyBox 支持的选项，避免主机 util-linux 掩盖兼容问题。
+        flock = self.root / 'flock'
+        flock.write_text('#!/bin/sh\ncase "$1" in -n|-u) exec /usr/bin/flock "$@";; *) echo unsupported-option >&2; exit 64;; esac\n')
+        flock.chmod(0o700)
         source = HELPER.read_text().replace('/tmp/sysinfo/board_name', str(self.root / 'board'))
+        source = source.replace('/usr/bin/flock', str(flock))
         source = source.replace('/usr/bin/sample_nw', str(sample)).replace('/var/lock/luci-modem5g-control.lock', str(self.root / 'lock'))
         source = source.replace('/bin/sleep', str(cooldown))
         self.script = self.root / 'wrapper'
@@ -55,6 +61,17 @@ class ReadOnlyDetailsTest(unittest.TestCase):
         (self.root / 'board').write_text('other,board')
         self.assertEqual(self.run_helper().returncode, 95)
         self.assertFalse((self.root / 'input').exists())
+
+    def test_busy_channel_can_be_acquired_after_owner_releases(self):
+        with (self.root / 'lock').open('w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            release = threading.Timer(0.15, lambda: fcntl.flock(lock, fcntl.LOCK_UN))
+            release.start()
+            try:
+                self.assertEqual(self.run_helper().returncode, 0)
+            finally:
+                release.join()
+        self.assertTrue((self.root / 'input').exists())
 
 
 if __name__ == '__main__':

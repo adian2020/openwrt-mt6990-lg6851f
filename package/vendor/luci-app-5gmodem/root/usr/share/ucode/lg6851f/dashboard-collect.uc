@@ -74,7 +74,10 @@ export function collect(publish) {
 	}
 	let hints=read_json_command(['/bin/ubus','-t','2','call','luci-rpc','getHostHints']);
 	for(let l in data.leases||[])if(!l.hostname){let h=hints?.[lc(l.mac||'')]||hints?.[uc(l.mac||'')];if(h?.name && h.name!='*')l.hostname=h.name;else {let old=filter(previous?.leases||[],x=>lc(x.mac)==lc(l.mac))[0];if(old?.hostname && old.hostname!='*')l.hostname=old.hostname;}}
-	let cfg=cursor();cfg.foreach('dhcp','host',h=>{for(let l in data.leases||[])if(!l.hostname && h.name && lc(h.mac||'')==lc(l.mac||''))l.hostname=h.name;});
+	let cfg=cursor();cfg.foreach('dhcp','host',h=>{
+	 let macs=type(h.mac)=='array'?h.mac:split(h.mac||'',/\s+/);
+	 for(let l in data.leases||[])if(!l.hostname && h.name && h.name!='*' && index(map(macs,m=>lc(m)),lc(l.mac||''))>=0)l.hostname=h.name;
+	});
 	let storage = capture([ '/bin/df', '-Pk', '/overlay' ], 5);
 	let rows = split(trim(storage.output), '\n');
 	let columns = split(trim(rows[length(rows) - 1] || ''), /\s+/);
