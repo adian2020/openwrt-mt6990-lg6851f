@@ -1,0 +1,67 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: Apache-2.0
+
+START=98
+USE_PROCD=1
+CONF=autoreboot
+
+valid_field() {
+	# Validate cron syntax on the server too; never put UCI shell text in cron.
+	awk -v value="$1" -v lower="$2" -v upper="$3" 'BEGIN {
+		if (value == "" || value ~ /[^0-9*,\/-]/) exit 1;
+		n=split(value, terms, ",");
+		for (i=1; i<=n; i++) {
+			s=split(terms[i], step, "/");
+			if (s>2 || (s==2 && (step[2] !~ /^[0-9]+$/ || step[2]+0<1))) exit 1;
+			if (step[1]=="*") continue;
+			r=split(step[1], range, "-");
+			if (r>2) exit 1;
+			for (j=1; j<=r; j++)
+				if (range[j] !~ /^[0-9]+$/ || range[j]+0<lower || range[j]+0>upper) exit 1;
+			if (r==2 && range[1]+0>range[2]+0) exit 1;
+		}
+		exit 0;
+	}'
+}
+
+setup_cron() {
+	local cfg="$1" enabled minute hour day month week
+	config_get_bool enabled "$cfg" enabled 0
+	[ "$enabled" = 1 ] || return 0
+	config_get minute "$cfg" minute
+	config_get hour "$cfg" hour
+	config_get day "$cfg" day '*'
+	config_get month "$cfg" month '*'
+	config_get week "$cfg" week '*'
+	case "$cfg" in ''|*[!a-zA-Z0-9_]*) invalid=1; return 1;; esac
+	if ! valid_field "$minute" 0 59 || ! valid_field "$hour" 0 23 ||
+	   ! valid_field "$day" 1 31 || ! valid_field "$month" 1 12 || ! valid_field "$week" 0 6; then
+		logger -t autoreboot "计划字段无效，保留原有定时任务"
+		invalid=1
+		return 1
+	fi
+	printf '%s %s %s %s %s sleep 5 && /sbin/reboot #autoreboot_%s\n' \
+		"$minute" "$hour" "$day" "$month" "$week" "$cfg" >> "$CRON_FILE"
+}
+
+update_cron() (
+	local mode="$1" invalid=0
+	umask 077
+	exec 9>/var/lock/autoreboot.lock
+	flock -n 9 || exit 75
+	CRON_FILE="$(mktemp /tmp/autoreboot.XXXXXX)" || exit 1
+	trap 'rm -f "$CRON_FILE"' EXIT
+	# crontab writes cron.update itself; other users and unowned jobs survive.
+	crontab -l 2>/dev/null | sed '/ #autoreboot_[a-zA-Z0-9_]*$/d' > "$CRON_FILE"
+	if [ "$mode" = start ]; then
+		config_load "$CONF"
+		config_foreach setup_cron schedule
+	fi
+	[ "$invalid" = 0 ] || exit 1
+	crontab "$CRON_FILE"
+)
+
+start_service() { update_cron start; }
+reload_service() { update_cron start; }
+stop_service() { update_cron stop; }
+service_triggers() { procd_add_reload_trigger "$CONF"; }

@@ -74,6 +74,7 @@ jobs:
           python3 scripts/tests/test_lg6851f_sms_send.py
           python3 scripts/tests/test_lg6851f_wifi_start.py
           python3 scripts/tests/test_lg6851f_boot_recovery.py
+          python3 scripts/tests/test_lg6851f_autoreboot.py
           python3 scripts/lg6851f-check-cpe-package.py
 
       - name: Generate and verify configuration
@@ -88,7 +89,7 @@ jobs:
             echo "[ERROR] Kconfig generation failed"
             exit 1
           fi
-          for p in luci-app-filemanager luci-i18n-filemanager-zh-cn luci-app-uugamebooster luci-i18n-uugamebooster-zh-cn luci-app-5gmodem luci-i18n-5gmodem-zh-cn lg6851f-modem-chain-only audio-support openssh-sftp-server luci-app-openclash mihomo-openclash-core luci-theme-aurora luci-app-aurora-config luci-i18n-aurora-config-zh-cn rpcd-mod-ucode rpcd-mod-iwinfo ucode-mod-fs ucode-mod-uci ucode-mod-ubus ucode-mod-uloop curl ca-bundle coreutils-sha256sum; do
+          for p in luci-app-filemanager luci-i18n-filemanager-zh-cn luci-app-uugamebooster luci-i18n-uugamebooster-zh-cn luci-app-5gmodem luci-i18n-5gmodem-zh-cn lg6851f-modem-chain-only audio-support openssh-sftp-server luci-app-openclash mihomo-openclash-core luci-theme-aurora luci-app-aurora-config luci-i18n-aurora-config-zh-cn luci-app-autoreboot luci-i18n-autoreboot-zh-cn flock rpcd-mod-ucode rpcd-mod-iwinfo ucode-mod-fs ucode-mod-uci ucode-mod-ubus ucode-mod-uloop curl ca-bundle coreutils-sha256sum; do
             grep -qx "CONFIG_PACKAGE_${p}=y" .config || {
               echo "[ERROR] $p is not enabled after defconfig"
               exit 1

@@ -70,6 +70,12 @@ if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_di
 			exit 1
 		}
 	done
+	for program in etc/config/autoreboot etc/init.d/autoreboot www/luci-static/resources/view/autoreboot.js usr/share/luci/menu.d/luci-app-autoreboot.json usr/share/rpcd/acl.d/luci-app-autoreboot.json; do
+		[ -s "$rootfs_dir/$program" ] || {
+			printf 'ERROR: scheduled reboot file missing: %s\n' "$program" >&2
+			exit 1
+		}
+	done
 	if grep -qx 'CONFIG_PACKAGE_luci-app-filemanager=y' "$repo_dir/.config"; then
 		[ -s "$rootfs_dir/www/luci-static/resources/view/system/filemanager.js" ] || {
 			printf 'ERROR: File Manager is selected but missing from rootfs.\n' >&2
