@@ -108,7 +108,6 @@ return view.extend({
     <div class="mud-kpi"><b id="mud-ram">--</b><span>内存 · <span class="mud-sub" id="mud-ram-sub">--</span></span><div class="mud-meter"><i id="mud-ram-bar" style="background:var(--info,#0ea5e9)"></i></div></div>
     <div class="mud-kpi"><b id="mud-disk">--</b><span>存储</span><div class="mud-meter"><i id="mud-disk-bar" style="background:var(--warning,#f59e0b)"></i></div></div>
   </div>
-  <div id="mud-freqs" class="mud-freqs"></div>
   <div class="mud-cols">
     <div>
       <div class="mud-rows">
@@ -240,9 +239,6 @@ return view.extend({
   const temps=data.temperatures||[],pick=rx=>temps.filter(t=>rx.test(t.label||t.name)).map(t=>t.celsius).filter(Number.isFinite);
   const group=(name,values)=>E('span',{style:'color:#c28d20;background:transparent;padding:2px 5px'},name+' '+(values.length?Math.max(...values).toFixed(1)+'°C':'未获取'));
   this.q('temps').replaceChildren(group('SoC',pick(/^soc_max$/i)),group('CPU',pick(/^cpu_/i)),group('WiFi',pick(/^mt(?:76|79)[a-z0-9_.-]*/i)),group('调制解调器',pick(/^md[0-9]+$/i)));
-  this.q('freqs').replaceChildren(...Array.from({length:3},(_,i)=>{const f=(data.frequencies||[])[i]||{};return E('div',{'class':'mud-freq'},[
-   E('span',{'class':'mud-k'},'簇 '+i),E('div',{'class':'mud-meter',style:'flex:1;margin:4px 8px'},E('i',{style:'width:'+(f.maximum_mhz?100*f.current_mhz/f.maximum_mhz:0)+'%'})),
-   E('span',{'class':'mud-v'},C.value(f.current_mhz)+' / '+C.value(f.maximum_mhz)+' MHz')]);}));
   const wireless=data.wireless||[],preferred=wireless.find(w=>w.frequency>=4900&&w.frequency<5925)||wireless[0],unique=key=>[...new Set(wireless.map(w=>w[key]).filter(v=>v!=null&&v!==''))].join(' · ');
   this.set('ssid',unique('ssid'));this.set('chan',preferred?text(preferred.channel)+' ('+(preferred.frequency>=4900?'5 GHz':'2.4 GHz')+(preferred.width?'-'+preferred.width:'')+')':null);
   this.set('wenc',preferred?.encryption);this.set('whid',preferred?(preferred.hidden?'是':'否'):null);this.set('wcountry',preferred?.country?.toLowerCase());

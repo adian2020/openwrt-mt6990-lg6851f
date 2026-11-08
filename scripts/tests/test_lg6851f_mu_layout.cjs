@@ -17,7 +17,6 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
     window.L={env:{rpctimeout:30},url:s=>'/'+s,resolveDefault:(p,d)=>Promise.resolve(p).catch(()=>d)};
     window._=s=>s;window.calls=[];let ticks=0;
     const data=new Function(fixture)();data.network.data={cid:2,apn:'example.net'};data.qos={cid:2,value:8};data.radio_details.parsed.bler={nr:{dl_raw:6,ul_raw:10},unit:'vendor_raw'};
-    data.frequencies=[{policy:'policy0',current_mhz:800,maximum_mhz:1800},{policy:'policy4',current_mhz:1500,maximum_mhz:2200},{policy:'policy7',current_mhz:2000,maximum_mhz:2600}];
     data.wireless=[{ssid:'OpenWrt',frequency:2412,channel:1,width:'EHT20',up:true,encryption:'none',hidden:false,country:'CN'},{ssid:'OpenWrt',frequency:5220,channel:44,width:'EHT160',up:true,encryption:'none',hidden:false,country:'CN'}];
     data.temperatures=[{name:'soc_max',celsius:54.9},{name:'cpu_little0',celsius:51},{name:'mt7996_phy0.0',celsius:53.2},{name:'md0',celsius:51.7},{name:'gpu0',celsius:65}];
     // 模拟后台暂未取得新数据：保留实际成功的无线参数和小区。
@@ -49,7 +48,7 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
    const getRates=()=>page.locator('#mud-dl,#mud-ul').allTextContents();const first=await getRates();assert(first.every(x=>/^\d.*\/s$/.test(x)),'numeric first rates');
    await page.evaluate(()=>mount('dashboard'));assert.deepEqual(await getRates(),first);assert.equal(await page.locator('#mud-dl').getAttribute('title'),'最近一次真实速率');
    assert.equal(await page.locator('#mud-rx').textContent(),'12.34 GB');assert.equal(await page.locator('#mud-tr-day').textContent(),'500 MB');assert.equal(await page.locator('#mud-qci').textContent(),'8');
-   assert.equal(await page.locator('#mud-batt,#mud-wusb,#mud-msisdn').count(),0);assert.equal(await page.locator('#mud-freqs .mud-freq').count(),3);assert((await page.locator('#mud-freqs').textContent()).includes('800 / 1800 MHz'));assert.equal(await page.locator('#mud-temps span').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
+   assert.equal(await page.locator('#mud-batt,#mud-wusb,#mud-msisdn,#mud-freqs').count(),0);assert.equal(await page.locator('#mud-temps span').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
    assert.equal(await page.locator('#mud-ambr').textContent(),'256 Mbps / 12.8 Mbps');
    assert.equal(await page.locator('#mud-ssid').textContent(),'OpenWrt');assert.equal(await page.locator('#mud-chan').textContent(),'44 (5 GHz-EHT160)');
    assert.equal(await page.locator('#mud-wenc').textContent(),'none');assert.equal(await page.locator('#mud-whid').textContent(),'否');assert.equal(await page.locator('#mud-wcountry').textContent(),'cn');
