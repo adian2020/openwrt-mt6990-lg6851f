@@ -76,6 +76,7 @@ function parseCells(result) {
 		let candidates = rat === 11 ? nrCandidates(arfcn) : lteCandidates(arfcn);
         const reported=(result.carriers||[]).filter(c=>c.rat===(rat===11?'nr':'lte') && +c.arfcn===arfcn && candidates.includes(+c.band));
         const bands=[...new Set(reported.map(c=>+c.band))];if(bands.length===1)candidates=bands;
+        else if(rat===11 && candidates.includes(77) && candidates.includes(78) && (result.carriers||[]).some(c=>c.rat==='nr' && +c.band===78) && !(result.carriers||[]).some(c=>c.rat==='nr' && +c.band===77))candidates=[78];
 		rows.push({serving:i === 0, rat:rat === 11 ? 'nr' : 'lte', bandNo:candidates.length === 1 ? candidates[0] : null,
 			band:candidates.length ? candidates.map(n=>(rat===11?'n':'B')+n).join(' / ') : rat === 11 ? 'NR（频段未确认）' : 'LTE（频段未确认）',
 			bandCandidates:candidates, arfcn, pci,

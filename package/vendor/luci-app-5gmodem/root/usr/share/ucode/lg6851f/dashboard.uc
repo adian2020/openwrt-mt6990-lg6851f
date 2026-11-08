@@ -24,7 +24,7 @@ export function reading(name) {
 	if (!boot || type(data) != 'object' || data.boot_id != boot || num(data.updated) == null) return null;
 	data.age = time() - data.updated;
 	data.stale = data.age < 0 || data.age > 180;
-	if(name=='cells' && data.serving){let r=reading('radio-details');if(r && !r.stale)data.serving.carriers=r.parsed?.carriers;}
+	if(name=='cells' && data.serving){let r=reading('radio-details');if(r)data.serving.carriers=r.parsed?.carriers;}
 	return data;
 }
 export function mask(value) {

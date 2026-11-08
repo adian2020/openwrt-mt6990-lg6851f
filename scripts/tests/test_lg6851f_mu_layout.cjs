@@ -5,7 +5,7 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
 (async()=>{
  const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
  try{
-  const files={};for(const name of ['modem5g/cellular_v1','modem5g/cellular_v2','modem5g/cpe_v2','modem5g/cpe_v1','modem5g/mu_v1','view/modem5g/dashboard_v2','view/modem5g/dashboard_v3','view/modem5g/apn_v2','view/modem5g/traffic_v2'])files[name]=fs.readFileSync(path.join(base,name+'.js'),'utf8');
+  const files={};for(const name of ['modem5g/cellular_v3','modem5g/cpe_v3','view/modem5g/dashboard_v4','modem5g/cellular_v1','modem5g/cellular_v2','modem5g/cpe_v2','modem5g/cpe_v1','modem5g/mu_v1','view/modem5g/dashboard_v2','view/modem5g/dashboard_v3','view/modem5g/apn_v2','view/modem5g/traffic_v2'])files[name]=fs.readFileSync(path.join(base,name+'.js'),'utf8');
   const old=fs.readFileSync(path.join(__dirname,'test_lg6851f_dashboard_layout.cjs'),'utf8');
   const fixture=old.slice(old.indexOf('const data={'),old.indexOf('window.calls=[]'))+'return data;';
   for(const width of [390,1280]){
@@ -17,6 +17,7 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
     window.L={env:{rpctimeout:30},url:s=>'/'+s,resolveDefault:(p,d)=>Promise.resolve(p).catch(()=>d)};
     window._=s=>s;window.calls=[];let ticks=0;
     const data=new Function(fixture)();data.network.data={cid:2,apn:'example.net'};data.qos={cid:2,value:8};data.radio_details.parsed.bler={nr:{dl_raw:6,ul_raw:10},unit:'vendor_raw'};
+    data.frequencies=[{policy:'policy0',current_mhz:800,maximum_mhz:1800},{policy:'policy4',current_mhz:1500,maximum_mhz:2200},{policy:'policy7',current_mhz:2000,maximum_mhz:2600}];
     data.wireless=[{ssid:'OpenWrt',frequency:2412,channel:1,width:'EHT20',up:true,encryption:'none',hidden:false,country:'CN'},{ssid:'OpenWrt',frequency:5220,channel:44,width:'EHT160',up:true,encryption:'none',hidden:false,country:'CN'}];
     data.temperatures=[{name:'soc_max',celsius:54.9},{name:'cpu_little0',celsius:51},{name:'mt7996_phy0.0',celsius:53.2},{name:'md0',celsius:51.7},{name:'gpu0',celsius:65}];
     // 模拟后台暂未取得新数据：保留实际成功的无线参数和小区。
@@ -41,14 +42,14 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
      for(const m of src.matchAll(/'require ([\w.]+)(?: as (\w+))?';/g)){const dep=m[1],alias=m[2]||dep.replace(/\./g,'_');args.push(alias);values.push(({view:{extend:x=>x},baseclass:{extend:x=>x},rpc,ui,poll})[dep]||module(dep.replace(/\./g,'/')));}
      return cache[name]=new Function(...args,src)(...values);
     }
-    window.mount=async name=>{window.vm?.unload?.();const view=Object.assign({},module('view/modem5g/'+name+(name==='dashboard'?'_v3':'_v2')));window.vm=view;document.querySelector('main').replaceChildren(view.render(await view.load()));};
+    window.mount=async name=>{window.vm?.unload?.();const view=Object.assign({},module('view/modem5g/'+name+(name==='dashboard'?'_v4':'_v2')));window.vm=view;document.querySelector('main').replaceChildren(view.render(await view.load()));};
    },{files,fixture});
    const fit=async label=>{const r=await page.evaluate(()=>({w:innerWidth,scroll:document.documentElement.scrollWidth}));assert(r.scroll<=width+1,label+JSON.stringify(r));};
    await page.evaluate(()=>mount('dashboard'));await fit('dashboard');
    const getRates=()=>page.locator('#mud-dl,#mud-ul').allTextContents();const first=await getRates();assert(first.every(x=>/^\d.*\/s$/.test(x)),'numeric first rates');
    await page.evaluate(()=>mount('dashboard'));assert.deepEqual(await getRates(),first);assert.equal(await page.locator('#mud-dl').getAttribute('title'),'最近一次真实速率');
    assert.equal(await page.locator('#mud-rx').textContent(),'12.34 GB');assert.equal(await page.locator('#mud-tr-day').textContent(),'500 MB');assert.equal(await page.locator('#mud-qci').textContent(),'8');
-   assert.equal(await page.locator('#mud-batt,#mud-wusb,#mud-msisdn').count(),0);
+   assert.equal(await page.locator('#mud-batt,#mud-wusb,#mud-msisdn').count(),0);assert.equal(await page.locator('#mud-freqs .mud-freq').count(),3);assert((await page.locator('#mud-freqs').textContent()).includes('800 / 1800 MHz'));assert.equal(await page.locator('#mud-temps span').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
    assert.equal(await page.locator('#mud-ambr').textContent(),'256 Mbps / 12.8 Mbps');
    assert.equal(await page.locator('#mud-ssid').textContent(),'OpenWrt');assert.equal(await page.locator('#mud-chan').textContent(),'44 (5 GHz-EHT160)');
    assert.equal(await page.locator('#mud-wenc').textContent(),'none');assert.equal(await page.locator('#mud-whid').textContent(),'否');assert.equal(await page.locator('#mud-wcountry').textContent(),'cn');

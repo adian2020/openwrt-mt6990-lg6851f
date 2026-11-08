@@ -45,4 +45,6 @@ console.log('PASS ECELL: 5 rows, NR units, missing fields and overlap; masks: 32
 
 const confirmed=c.parseCells({...record([serving]),carriers:[{rat:'nr',band:78,arfcn:640000,pci:321}]});
 assert.equal(confirmed[0].band,'n78');
-assert.equal(c.parseCells({...record([serving]),carriers:[{rat:'nr',band:78,arfcn:633984}]})[0].band,'n77 / n78');
+assert.equal(c.parseCells({...record([serving]),carriers:[{rat:'nr',band:78,arfcn:633984}]})[0].band,'n78');
+
+assert.equal(c.parseCells({...record([serving]),carriers:[{rat:'nr',band:77,arfcn:640000}]})[0].band,'n77');
