@@ -18,7 +18,7 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
     window._=s=>s;window.calls=[];let ticks=0;
     const data=new Function(fixture)();data.network.data={cid:2,apn:'example.net'};data.qos={cid:2,value:8};
     data.wireless=[{ssid:'OpenWrt',frequency:2412,channel:1,width:'EHT20',up:true,encryption:'none',hidden:false,country:'CN'},{ssid:'OpenWrt',frequency:5220,channel:44,width:'EHT160',up:true,encryption:'none',hidden:false,country:'CN'}];
-    data.temperatures=[{name:'soc_max',celsius:54.9},{name:'cpu_little0',celsius:51},{name:'board',celsius:53.2},{name:'md0',celsius:51.7},{name:'gpu0',celsius:65}];
+    data.temperatures=[{name:'soc_max',celsius:54.9},{name:'cpu_little0',celsius:51},{name:'mt7996_phy0.0',celsius:53.2},{name:'md0',celsius:51.7},{name:'gpu0',celsius:65}];
     // 模拟后台暂未取得新数据：保留实际成功的无线参数和小区。
     data.cells.stale=data.radio_details.stale=true;
     data.traffic={totals:{rx:12340000000,tx:3400000000},clock_ok:true,today_used:500000000,month_used:15000000000,remaining:85000000000};
@@ -52,7 +52,7 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
    assert.equal(await page.locator('#mud-ssid').textContent(),'OpenWrt');assert.equal(await page.locator('#mud-chan').textContent(),'44 (5 GHz-EHT160)');
    assert.equal(await page.locator('#mud-wenc').textContent(),'none');assert.equal(await page.locator('#mud-whid').textContent(),'否');assert.equal(await page.locator('#mud-wcountry').textContent(),'cn');
    assert((await page.locator('#mud-clist').textContent()).includes('↑1200.9 Mbps · ↓1134.2 Mbps'));
-   assert.deepEqual(await page.locator('#mud-temps span').allTextContents(),['SoC 54.9°C','CPU 51.0°C','主板 53.2°C','调制解调器 51.7°C']);
+   assert.deepEqual(await page.locator('#mud-temps span').allTextContents(),['SoC 54.9°C','CPU 51.0°C','WiFi 53.2°C','调制解调器 51.7°C']);
    assert((await page.locator('#mud-cellline').textContent()).startsWith('n78 · PCI 321'));
    assert.equal(await page.locator('#mud-bw').textContent(),'100 MHz');assert((await page.locator('#mud-radio-metrics').textContent()).includes('n78 640000'));
    assert.equal(await page.locator('#mud-btn-modem').isEnabled(),true);
