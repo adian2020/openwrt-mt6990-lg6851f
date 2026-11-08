@@ -50,13 +50,21 @@ let b=connect('/var/run/ubus/ubus.sock',8);
 if(!b){printf('%J\n',{status:'UBUS_CONNECT_FAILED',error:error()});exit(5);}
 // ubus STRING会补末尾NUL，3字节加该NUL正好构成01 0b 00 00。
 let r=b.call('ril','ril_request',{id:0xb02,data_len:4,data:chr(1)+chr(11)+chr(0)});
-let report={request_id:0xb02,slot:0xb01,response_id:r?.id,result:r?.result,data_len:r?.data_len};
+let report={probe_version:2,request_id:0xb02,slot:0xb01,response_id:r?.id,result:r?.result,data_len:r?.data_len,
+ received_bytes:type(r?.data)=='string'?length(r.data):null};
 if(!r){report.status='SDK_REQUEST_FAILED';report.error=error();}
 else if(r.id!=0xb02 || r.result!=0 || r.data_len!=83 || type(r.data)!='string' || index([82,83],length(r.data))<0)report.status='SDK_RESPONSE_NOT_CONFIRMED';
 else {
  let candidate=trim(split(r.data,chr(0))[0]);
  report.status=!candidate?'NUMBER_NOT_PROVIDED':match(candidate,/^\+?[0-9]{3,20}$/)?'NUMBER_RETURNED':'NUMBER_FORMAT_UNCONFIRMED';
  if(report.status=='NUMBER_RETURNED')report.phone=candidate;
+}
+// SDK的83字节缓冲区不代表服务端一定声明83字节；保留有限原始响应
+// 核对实机82字节布局，不补字节、不猜测偏移或把长度错误当作无号码。
+if(r?.id==0xb02 && r.result==0 && type(r.data)=='string' && length(r.data)<=83 &&
+   index(['SDK_RESPONSE_NOT_CONFIRMED','NUMBER_FORMAT_UNCONFIRMED'],report.status)>=0){
+ report.data_hex='';
+ for(let i=0;i<length(r.data);i++)report.data_hex+=sprintf('%02x',ord(r.data,i));
 }
 printf('%J\n',report);
 UCODE

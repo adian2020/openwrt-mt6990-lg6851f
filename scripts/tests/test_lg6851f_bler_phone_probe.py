@@ -60,4 +60,11 @@ export function connect(){return {call:function(object,method,args){
   for row in [dict(id=0xb03,result=0,data_len=83,data='123456789'+chr(0)*73),dict(id=0xb02,result=1,data_len=83,data=chr(0)*82),dict(id=0xb02,result=0,data_len=83,data='123456789')]:
    with self.subTest(row=row):self.assertEqual(self.query(row)['status'],'SDK_RESPONSE_NOT_CONFIRMED')
  def test_missing_service_is_reported(self):self.assertEqual(self.query(None)['status'],'SDK_REQUEST_FAILED')
+ def test_device_82_byte_reply_is_preserved_without_inventing_layout(self):
+  raw=chr(0)*81
+  r=self.query(dict(id=0xb02,result=0,data_len=82,data=raw))
+  self.assertEqual(r['received_bytes'],81)
+  self.assertEqual(r['data_hex'],'00'*81)
+  self.assertEqual(r['status'],'SDK_RESPONSE_NOT_CONFIRMED')
+  self.assertNotIn('phone',r)
 if __name__=='__main__':unittest.main()
