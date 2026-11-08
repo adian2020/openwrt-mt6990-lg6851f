@@ -18,6 +18,55 @@ while ! /usr/bin/flock -n 9; do
 done
 trap '/bin/sleep 6; /usr/bin/flock -u 9' EXIT
 
+# 只有后台稳定联网后的调用带此选项；普通只读查询不注册回调。
+if [ "${1:-}" = --with-bler ]; then
+    # 等锁期间若用户发起了控制操作，后台采集让行。
+    [ ! -e /tmp/lg6851f-modem-control.active ] && [ ! -d /var/lock/lg6851f-modem-recovery.lock ] || exit 75
+    work="$(mktemp -d /tmp/lg6851f-details.XXXXXX)" || exit 5
+    reader=''
+    registered=0
+    cleanup() {
+        trap - EXIT INT TERM
+        if [ -n "$reader" ]; then
+            printf '45\n0\n1\n-1\n' >&7 2>/dev/null
+            i=0
+            while kill -0 "$reader" 2>/dev/null && [ "$i" -lt 6 ]; do /bin/sleep 1; i=$((i+1)); done
+            kill "$reader" 2>/dev/null
+            wait "$reader" 2>/dev/null
+        fi
+        if [ "$registered" = 1 ]; then
+            /bin/sleep 6
+            printf '0\n45\n0\n1\n-1\n' | /usr/bin/timeout -k 5 20 /usr/bin/sample_nw >&2
+        fi
+        /bin/sleep 6
+        /usr/bin/flock -u 9
+        rm -f "$work/input" "$work/report"
+        rmdir "$work"
+    }
+    trap cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    mkfifo "$work/input" || exit 5
+    exec 7<>"$work/input"
+    /usr/bin/timeout -k 5 45 /usr/bin/sample_nw <"$work/input" >"$work/report" 2>&1 &
+    reader=$!
+    registered=1
+    printf '0\n7\n21\n25\n5\n33\n45\n1\n' >&7
+    i=0
+    while [ "$i" -lt 20 ]; do
+        [ ! -e /tmp/lg6851f-modem-control.active ] && [ ! -d /var/lock/lg6851f-modem-recovery.lock ] || break
+        /bin/sleep 1
+        i=$((i+1))
+    done
+    printf '45\n0\n1\n-1\n' >&7
+    wait "$reader"
+    rc=$?
+    reader=''
+    [ "$rc" != 0 ] || registered=0
+    cat "$work/report"
+    exit "$rc"
+fi
+
 # 0 init; 7 data registration; 21 band/AMBR; 25/5 CA; 33 EN-DC; 1 release.
 # Preserve the vendor session exit status while holding the close cooldown.
 /usr/bin/timeout 45 /usr/bin/sample_nw <<'EOF'

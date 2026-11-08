@@ -33,11 +33,11 @@ let automatic=ARGV[0]=='--auto';
 if(automatic && (net.uptime ?? 0)<30)exit(0);
 if(automatic && old?.boot_id==boot_id && old.scope==scope && time()-old.updated>=0 && time()-old.updated<120)exit(0);
 if(!state('reading','正在后台读取无线参数'))exit(1);
-let result=capture('/usr/bin/timeout -k 10 75 /usr/bin/lg6851f-modem-details'),parsed=radio.parse(result.output);
+let result=capture('/usr/bin/timeout -k 10 120 /usr/bin/lg6851f-modem-details --with-bler'),parsed=radio.parse(result.output);
 if(result.code || !parsed.complete){
  state('error',result.code==75?'模组通道忙，将自动重试':'无线参数读取未完成，保留上次成功数据');exit(1);
 }
 result={...result,parsed,updated:time(),boot_id,scope};
 if(!publish('/tmp/lg6851f-modem-radio-details.json',result)){state('error','保存无线参数失败');exit(1);}
-state('complete','无线参数已更新');
+state('complete',parsed.bler?.nr?'无线参数与BLER已更新':'无线参数已更新，BLER暂未返回');
 let child=fs.popen('/usr/bin/lg6851f-dashboard-collect >/dev/null 2>&1 </dev/null &','r');child?.close?.();

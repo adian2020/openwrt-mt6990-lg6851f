@@ -16,7 +16,7 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
     window.E=(tag,attrs={},children=[])=>{const el=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(typeof v==='function')el.addEventListener(k,v);else if(v!=null)el.setAttribute(k,v);}const add=x=>{if(Array.isArray(x))x.forEach(add);else if(x!=null)el.append(x instanceof Node?x:document.createTextNode(String(x)));};add(children);return el;};
     window.L={env:{rpctimeout:30},url:s=>'/'+s,resolveDefault:(p,d)=>Promise.resolve(p).catch(()=>d)};
     window._=s=>s;window.calls=[];let ticks=0;
-    const data=new Function(fixture)();data.network.data={cid:2,apn:'example.net'};data.qos={cid:2,value:8};
+    const data=new Function(fixture)();data.network.data={cid:2,apn:'example.net'};data.qos={cid:2,value:8};data.radio_details.parsed.bler={nr:{dl_raw:6,ul_raw:10},unit:'vendor_raw'};
     data.wireless=[{ssid:'OpenWrt',frequency:2412,channel:1,width:'EHT20',up:true,encryption:'none',hidden:false,country:'CN'},{ssid:'OpenWrt',frequency:5220,channel:44,width:'EHT160',up:true,encryption:'none',hidden:false,country:'CN'}];
     data.temperatures=[{name:'soc_max',celsius:54.9},{name:'cpu_little0',celsius:51},{name:'mt7996_phy0.0',celsius:53.2},{name:'md0',celsius:51.7},{name:'gpu0',celsius:65}];
     // 模拟后台暂未取得新数据：保留实际成功的无线参数和小区。
@@ -55,7 +55,7 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
    assert((await page.locator('#mud-clist').textContent()).includes('↑1200.9 Mbps · ↓1134.2 Mbps'));
    assert.deepEqual(await page.locator('#mud-temps span').allTextContents(),['SoC 54.9°C','CPU 51.0°C','WiFi 53.2°C','调制解调器 51.7°C']);
    assert((await page.locator('#mud-cellline').textContent()).startsWith('n78 · PCI 321'));
-   assert.equal(await page.locator('#mud-bw').textContent(),'100 MHz');const metrics=await page.locator('#mud-radio-metrics').textContent();assert(metrics.includes('MCS 下/上'));assert(metrics.includes('0 / 28'));assert(!metrics.includes('载波聚合'));
+   assert.equal(await page.locator('#mud-bw').textContent(),'100 MHz');const metrics=await page.locator('#mud-radio-metrics').textContent();assert(metrics.includes('MCS 下/上'));assert(metrics.includes('0 / 28'));assert(!metrics.includes('载波聚合'));assert(metrics.includes('NR BLER 下/上'));assert(metrics.includes('6 / 10'));assert(!metrics.includes('6%'));
    assert.equal(await page.locator('#mud-btn-modem').isEnabled(),true);
    await page.evaluate(()=>vm.paint({...vm.data,modem:{...vm.data.modem,rat:'4G'}}));assert((await page.locator('#mud-rat').textContent()).startsWith('4G'),'旧NR缓存不得覆盖当前4G制式');
    assert(!(await page.evaluate(()=>calls.some(r=>['get_cells','get_radio_details','request_radio_details'].includes(r.method)))),'dashboard load must not issue modem queries');

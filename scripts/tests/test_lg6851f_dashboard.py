@@ -304,6 +304,18 @@ printf('%J',[r.parse_qos('+C5GQOSRDP: 2,8,,,,,512000,102400',2),
         self.assertEqual(value[1:3],[None,None])
         self.assertEqual(value[3]['value'],9)
 
+    def test_bler_uses_latest_complete_pair_and_preserves_raw_zero(self):
+        value=self.run_ucode("""
+import * as r from 'lg6851f.radio';
+printf('%J',[
+ r.parse_bler('NR Downlink BLER = 6\nNR Uplink BLER = 10\nNR Downlink BLER = 0\nNR Uplink BLER = 3\nNR Downlink BLER = 8'),
+ r.parse_bler('NR Downlink BLER = 6'),
+ r.parse_bler('NR Uplink BLER = 10'),
+ r.parse_bler('NR Downlink BLER = -1\nNR Uplink BLER = 10')]);
+""")
+        self.assertEqual(value[0],{'nr':{'dl_raw':0,'ul_raw':3},'unit':'vendor_raw'})
+        self.assertTrue(all(row['nr'] is None for row in value[1:]))
+
     def test_partial_collection_keeps_previous_wireless_and_clients(self):
         source=(PACKAGE/'root/usr/share/ucode/lg6851f/dashboard-collect.uc').read_text()
         self.write('/collector-test.uc',source.replace("from 'uci'","from 'collectoruci'").replace("from 'fs'","from 'collectorfs'"))
@@ -423,6 +435,9 @@ scc_dl_bandwidth = 11
         self.assertIsNone(self.parse_radio(report.replace('ret= 00000000','ret= 80000001'))['sa_nsa'])
         self.assertIsNone(self.parse_radio(report.replace('SERVICE_FULL','SERVICE_SEARCHING'))['sa_nsa'])
         self.assertIsNone(self.parse_radio(report.replace('TECH_NR5G','TECH_LTE'))['sa_nsa'])
+        bler=report+'\nNR Downlink BLER = 6\nNR Uplink BLER = 10\n'
+        self.assertEqual(self.parse_radio(bler)['bler']['nr'],{'dl_raw':6,'ul_raw':10})
+        self.assertIsNone(self.parse_radio(bler.replace('TECH_NR5G','TECH_LTE'))['bler']['nr'])
 
     def test_explicit_radio_query_caches_complete_data_only(self):
         replies = {'network.interface.modem5g': '{"up":true,"uptime":120}',

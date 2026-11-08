@@ -59,6 +59,18 @@ function carrier(row, bands) {
 	};
 }
 
+export function parse_bler(output) {
+	let pending = null, nr = null;
+	for (let line in split(type(output)=='string'?output:'', '\n')) {
+		let m=match(trim(line), /^NR (Downlink|Uplink) BLER\s*=\s*(-?[0-9]+)$/);
+		if(!m)continue;
+		let valid=+m[2]>=0 && +m[2]<=2147483647;
+		if(m[1]=='Downlink')pending=valid?+m[2]:null;
+		else {if(valid && pending!=null)nr={dl_raw:pending,ul_raw:+m[2]};pending=null;}
+	}
+	return {nr,unit:'vendor_raw'};
+}
+
 export function parse(output) {
 	let raw = type(output) == 'string' ? output : '';
 	let section = '', fields = {}, endc = {}, carriers = [], current = null;
@@ -108,6 +120,7 @@ export function parse(output) {
 		else if (registration.radio_tech == 'QL_NW_RADIO_TECH_NSA5G') mode = 'NSA';
 	}
 	return { complete, sections: success, bands, carriers: rows, data_registration: registration,
+		bler: mode && bands.nr.band ? parse_bler(raw) : {nr:null,unit:'vendor_raw'},
 		ambr: { network: { dl: ambr(fields.net_ambr_dl), ul: ambr(fields.net_ambr_ul) },
 			ims: { dl: ambr(fields.ims_ambr_dl), ul: ambr(fields.ims_ambr_ul) } },
 		endc: { available: flag(endc.endc_available), restricted: flag(endc.dcnr_restricted) },

@@ -20,7 +20,7 @@ class ReadOnlyDetailsTest(unittest.TestCase):
         self.root = pathlib.Path(self.temp.name)
         (self.root / 'board').write_text('fiberhome,lg6851f\n')
         sample = self.root / 'sample'
-        sample.write_text('#!/bin/sh\ncat > ' + shlex.quote(str(self.root / 'input')) + '\nprintf "mock getter\\n"\nexit "$TEST_STATUS"\n')
+        sample.write_text('#!/bin/sh\nwhile IFS= read -r line; do echo "$line"; [ "$line" != -1 ] || break; done > ' + shlex.quote(str(self.root / 'input')) + '\nprintf "mock getter\\n"\nexit "$TEST_STATUS"\n')
         sample.chmod(0o700)
         cooldown = self.root / 'cooldown'
         cooldown.write_text('#!/bin/sh\n[ "$1" != 1 ] || { /bin/sleep 0.03; exit; }\nif /usr/bin/flock -n ' + shlex.quote(str(self.root / 'lock')) +
@@ -34,11 +34,13 @@ class ReadOnlyDetailsTest(unittest.TestCase):
         source = source.replace('/usr/bin/flock', str(flock))
         source = source.replace('/usr/bin/sample_nw', str(sample)).replace('/var/lock/luci-modem5g-control.lock', str(self.root / 'lock'))
         source = source.replace('/bin/sleep', str(cooldown))
+        source = source.replace('/tmp/lg6851f-modem-control.active', str(self.root/'control.active'))
+        source = source.replace('/var/lock/lg6851f-modem-recovery.lock', str(self.root/'recovery.lock'))
         self.script = self.root / 'wrapper'
         self.script.write_text(source)
 
-    def run_helper(self, status=0):
-        return subprocess.run(['sh', str(self.script)], env=dict(os.environ, TEST_STATUS=str(status)), text=True, capture_output=True)
+    def run_helper(self, status=0, args=()):
+        return subprocess.run(['sh', str(self.script), *args], env=dict(os.environ, TEST_STATUS=str(status)), text=True, capture_output=True)
 
     def test_only_verified_getters_and_lock_held_through_cooldown(self):
         result = self.run_helper()
@@ -73,6 +75,22 @@ class ReadOnlyDetailsTest(unittest.TestCase):
                 release.join()
         self.assertTrue((self.root / 'input').exists())
 
+    def test_background_bler_unregisters_before_release(self):
+        result=self.run_helper(args=('--with-bler',))
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual((self.root/'input').read_text().splitlines(),['0','7','21','25','5','33','45','1','45','0','1','-1'])
+        self.assertEqual((self.root/'cooldown-state').read_text().strip(),'held')
+
+    def test_failed_background_session_attempts_cleanup_and_keeps_failure(self):
+        result=self.run_helper(74,args=('--with-bler',))
+        self.assertEqual(result.returncode,74,result.stderr)
+        self.assertEqual((self.root/'input').read_text().splitlines(),['0','45','0','1','-1'])
+        self.assertEqual((self.root/'cooldown-state').read_text().strip(),'held')
+
+    def test_background_collection_yields_to_user_control(self):
+        (self.root/'control.active').touch()
+        self.assertEqual(self.run_helper(args=('--with-bler',)).returncode,75)
+        self.assertFalse((self.root/'input').exists())
 
 if __name__ == '__main__':
     unittest.main()

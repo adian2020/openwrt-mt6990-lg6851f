@@ -227,9 +227,9 @@ return view.extend({
   this.set('roaming',m.roaming);this.set('reg',m.registered?'已注册'+(serving?.tac?' · TAC '+serving.tac:''):'未注册');
   const rows=carriers.length?carriers:[{}];this.q('radio-metrics').replaceChildren(...rows.flatMap(r=>[
    [r.type||'','调制方式 下/上',this.pair(r.dl_modulation_code,r.ul_modulation_code)+'（原始编码）'],
-   [r.type||'','MCS 下/上',this.pair(r.dl_mcs,r.ul_mcs)],
-   [r.type||'','BLER 下/上',this.pair(r.dl_bler,r.ul_bler,'%')]
+   [r.type||'','MCS 下/上',this.pair(r.dl_mcs,r.ul_mcs)]
   ].map(([prefix,key,val])=>E('div',{'class':'mud-r'},[E('span',{'class':'mud-k'},prefix+' '+key),E('span',{'class':'mud-v'},val)]))));
+  this.q('radio-metrics').appendChild(E('div',{'class':'mud-r'},[E('span',{'class':'mud-k'},'NR BLER 下/上'),E('span',{'class':'mud-v',title:'模组报告的BLER原始值'},this.pair(radio?.bler?.nr?.dl_raw,radio?.bler?.nr?.ul_raw))]));
   this.set('bw',primary?.dl_bandwidth_mhz!=null && primary.dl_bandwidth_mhz===primary.ul_bandwidth_mhz?primary.dl_bandwidth_mhz+' MHz':this.pair(primary?.dl_bandwidth_mhz,primary?.ul_bandwidth_mhz,' MHz'));
   this.set('qci',data.qos?.cid==+n.data?.cid ? data.qos?.value : null);
   const ambr=radio?.ambr?.network;this.set('ambr',(ambr?.dl?.bps==null?'未获取':C.value(ambr.dl.bps/1e6,' Mbps'))+' / '+(ambr?.ul?.bps==null?'未获取':C.value(ambr.ul.bps/1e6,' Mbps')));
@@ -257,7 +257,7 @@ return view.extend({
   this.q('neigh').replaceChildren(...(cells.length?cells.map(row=>E('tr',{},[
    ...[row.band+(row.serving?' *':''),row.pci,row.arfcn,row.rsrp,row.rsrq,row.sinr].map(v=>E('td',{},text(v))),E('td',{},E('a',{'class':'mud-btn',href:L.url('admin/modem5g/lock')},'锁定'))
   ])):[E('tr',{},E('td',{colspan:7},'暂无小区数据'))]));
-  const requestAge=Date.now()/1000-data.radio_request?.updated,readExpired=data.radio_request?.status==='reading' && !(requestAge>=0 && requestAge<75);
+  const requestAge=Date.now()/1000-data.radio_request?.updated,readExpired=data.radio_request?.status==='reading' && !(requestAge>=0 && requestAge<130);
   this.q('btn-radio-read').disabled=data.radio_request?.status==='reading' && !readExpired;
   this.q('slow-progress').textContent=(readExpired?'后台读取未完成，请重新读取':data.radio_request?.message) || (data.initializing?'后台正在采集状态':data.collector_stale?'后台采集暂未更新，当前显示缓存数据':'');
   this.q('btn-modem').disabled=data.modem_restart==='running';
