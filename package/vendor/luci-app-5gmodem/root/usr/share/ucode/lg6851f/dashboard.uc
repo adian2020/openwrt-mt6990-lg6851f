@@ -78,6 +78,8 @@ export function snapshot() {
 			if (value != null) push(temperatures, { source: path, name: text(dir + '/name'), label: text(replace(path, /_input$/, '_label')), celsius: value / 1000.0, kind: 'hwmon' });
 		}
 	}
+	// 仅使用标准policy接口；本机实测读取debugfs clk_summary会卡死重启，
+	// 不得用全量时钟摘要或调试节点作为缺失频率的回退。
 	for (let dir in paths('/sys/devices/system/cpu/cpufreq/policy*')) {
 		let current = number(dir + '/scaling_cur_freq'), max = number(dir + '/cpuinfo_max_freq');
 		push(frequencies, { policy: basename(dir), current_mhz: current == null ? null : current / 1000.0,
