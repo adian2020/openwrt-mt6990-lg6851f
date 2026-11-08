@@ -87,7 +87,7 @@ return view.extend({
       <div class="mud-rows" id="mud-lteanchor"></div>
       <div class="mud-rows" id="mud-radio-metrics">
         <div class="mud-r"><span class="mud-k">调制方式 下/上</span><span class="mud-v">-- / --</span></div>
-        <div class="mud-r"><span class="mud-k">载波聚合</span><span class="mud-v">-- / --</span></div>
+        <div class="mud-r"><span class="mud-k">MCS 下/上</span><span class="mud-v">-- / --</span></div>
         <div class="mud-r"><span class="mud-k">BLER 下/上</span><span class="mud-v">-- / --</span></div>
       </div>
       <div class="mud-rows">
@@ -227,7 +227,7 @@ return view.extend({
   this.set('roaming',m.roaming);this.set('reg',m.registered?'已注册'+(serving?.tac?' · TAC '+serving.tac:''):'未注册');
   const rows=carriers.length?carriers:[{}];this.q('radio-metrics').replaceChildren(...rows.flatMap(r=>[
    [r.type||'','调制方式 下/上',this.pair(r.dl_modulation_code,r.ul_modulation_code)+'（原始编码）'],
-   [r.type||'','载波聚合',(r.band?(r.rat==='lte'?'B':'n')+r.band+' '+text(r.arfcn):'未获取')],
+   [r.type||'','MCS 下/上',this.pair(r.dl_mcs,r.ul_mcs)],
    [r.type||'','BLER 下/上',this.pair(r.dl_bler,r.ul_bler,'%')]
   ].map(([prefix,key,val])=>E('div',{'class':'mud-r'},[E('span',{'class':'mud-k'},prefix+' '+key),E('span',{'class':'mud-v'},val)]))));
   this.set('bw',primary?.dl_bandwidth_mhz!=null && primary.dl_bandwidth_mhz===primary.ul_bandwidth_mhz?primary.dl_bandwidth_mhz+' MHz':this.pair(primary?.dl_bandwidth_mhz,primary?.ul_bandwidth_mhz,' MHz'));

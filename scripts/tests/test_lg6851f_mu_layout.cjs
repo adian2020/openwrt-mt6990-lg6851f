@@ -55,7 +55,7 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
    assert((await page.locator('#mud-clist').textContent()).includes('↑1200.9 Mbps · ↓1134.2 Mbps'));
    assert.deepEqual(await page.locator('#mud-temps span').allTextContents(),['SoC 54.9°C','CPU 51.0°C','WiFi 53.2°C','调制解调器 51.7°C']);
    assert((await page.locator('#mud-cellline').textContent()).startsWith('n78 · PCI 321'));
-   assert.equal(await page.locator('#mud-bw').textContent(),'100 MHz');assert((await page.locator('#mud-radio-metrics').textContent()).includes('n78 640000'));
+   assert.equal(await page.locator('#mud-bw').textContent(),'100 MHz');const metrics=await page.locator('#mud-radio-metrics').textContent();assert(metrics.includes('MCS 下/上'));assert(metrics.includes('0 / 28'));assert(!metrics.includes('载波聚合'));
    assert.equal(await page.locator('#mud-btn-modem').isEnabled(),true);
    await page.evaluate(()=>vm.paint({...vm.data,modem:{...vm.data.modem,rat:'4G'}}));assert((await page.locator('#mud-rat').textContent()).startsWith('4G'),'旧NR缓存不得覆盖当前4G制式');
    assert(!(await page.evaluate(()=>calls.some(r=>['get_cells','get_radio_details','request_radio_details'].includes(r.method)))),'dashboard load must not issue modem queries');
