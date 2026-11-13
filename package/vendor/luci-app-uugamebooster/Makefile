@@ -7,11 +7,11 @@ include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI support for NetEase UU Game Booster
 # MT6990 uses the native ARM64 client; keep firewall4's nft providers.
-LUCI_DEPENDS:=@aarch64 +kmod-tun +luci-compat +libstdcpp +kmod-ipt-nat +ca-bundle +unshare +ip-full +nftables-json +iptables-nft
+LUCI_DEPENDS:=@aarch64 +kmod-tun +luci-compat +libstdcpp +kmod-ipt-nat +ca-bundle +unshare +ip-full +nftables-json +iptables-nft +tcpdump-mini
 PKG_LICENSE:=Apache-2.0
 
 PKG_NAME:=luci-app-uugamebooster
-PKG_VERSION:=2.3.1
+PKG_VERSION:=2.5
 PKG_RELEASE:=2
 PKG_MAINTAINER:=Fork of lmq8267/luci-app-uugamebooster
 

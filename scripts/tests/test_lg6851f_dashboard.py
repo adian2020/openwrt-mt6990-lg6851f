@@ -41,6 +41,10 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
 
+    def test_boot_slot_uses_actual_root_and_rejects_conflicts(self):
+        result=self.run_ucode("import * as d from 'lg6851f.dashboard'; printf('%J',map(lines,d.boot_slot));",lines=['root=/dev/mmcblk0p26 rw','root=/dev/mmcblk0p39','androidboot.slot_suffix=_a','slot_suffix=b','root=/dev/mmcblk0p26 androidboot.slot_suffix=_b','root=/dev/mmcblk0p260',''])
+        self.assertEqual(result,['A','B','A','B',None,None,None])
+
     def test_measurements_keep_fractions_and_unknowns(self):
         self.write('/proc/meminfo', 'MemTotal: 1000 kB\nMemAvailable: 789 kB\n')
         self.write('/sys/class/thermal/thermal_zone0/type', 'cpu_little0')

@@ -1,0 +1,67 @@
+[
+  {
+    "package": "luci-app-openclash",
+    "repo": "vernesong/OpenClash",
+    "base": "e553e82e01c697aefbe1555261a503f425e00ccd",
+    "path": "luci-app-openclash",
+    "components": [
+      "root",
+      "luasrc",
+      "po",
+      "Makefile"
+    ]
+  },
+  {
+    "package": "luci-app-uugamebooster",
+    "repo": "xiaodoudou/luci-app-uugamebooster",
+    "base": "93cf1863da856c9c7cc81c84474694fa31bac0bd",
+    "path": "luci-app-uugamebooster",
+    "components": [
+      "root",
+      "luasrc",
+      "po"
+    ],
+    "source_helpers": [
+      "src"
+    ],
+    "managed_makefile": true
+  },
+  {
+    "package": "luci-theme-aurora",
+    "repo": "eamonxg/luci-theme-aurora",
+    "base": "84c27b66952e6fc4be60128067a6b88bfd34afb5",
+    "components": [
+      "root",
+      "htdocs",
+      "ucode",
+      "Makefile"
+    ]
+  },
+  {
+    "package": "luci-app-aurora-config",
+    "repo": "eamonxg/luci-app-aurora-config",
+    "base": "a5299ce0144859f47683ec3bc40805bf616f534f",
+    "components": [
+      "root",
+      "htdocs",
+      "po",
+      "Makefile"
+    ]
+  },
+  {
+    "package": "luci-app-autoreboot",
+    "repo": "immortalwrt/luci",
+    "base": "ad75cde88e694b511100576bfbe0a280e5efe6ef",
+    "branch": "master",
+    "path": "applications/luci-app-autoreboot",
+    "components": [
+      "root",
+      "htdocs",
+      "po"
+    ],
+    "preserve": [
+      "root/etc/init.d/autoreboot",
+      "root/etc/config/autoreboot"
+    ]
+  }
+]

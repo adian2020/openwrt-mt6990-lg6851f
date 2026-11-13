@@ -12,7 +12,7 @@ function capture(argv){
 }
 function read_json_command(argv){let r=capture(argv);try{return r.code==0?json(r.output):null;}catch(e){return null;}}
 function network_state(){return read_json_command(['/bin/ubus','call','network.interface.modem5g','status']);}
-function apn_values(){let u=cursor();u.load('network');let v=u.get_all('network','modem5g')||{};return {apn:v.apn||'',proto:v.proto,mtu:+(v.mtu||1500),password_set:!!v.password};}
+function apn_values(){let u=cursor();u.load('network');let v=u.get_all('network','modem5g')||{};return {apn:v.apn||'',proto:v.proto,mtu:+(v.mtu||1500),password_set:!!v.password,data_roaming:v.dataroaming=='1'};}
 export function parse_info(text){
  let channel=match(text,/Channel:\s*([0-9]+)/),frequency=match(text,/\(([0-9.]+) GHz\)/),power=match(text,/Tx-Power:\s*(-?[0-9.]+) dBm/);
  let mode=match(text,/HT Mode:\s*([^\r\n]+)/);

@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=lg6851f-modem-chain-only
 PKG_VERSION:=0.6
-PKG_RELEASE:=14
+PKG_RELEASE:=15
 
 include $(INCLUDE_DIR)/package.mk
 

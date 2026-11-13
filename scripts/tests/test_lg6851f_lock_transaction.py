@@ -11,7 +11,7 @@ SCRIPT=ROOT/'package/vendor/lg6851f-modem-chain-only/files/usr/bin/lg6851f-modem
 
 
 class LockTransactionTest(unittest.TestCase):
-    def run_case(self,scenario='success'):
+    def run_case(self,scenario='success',action=None):
         with tempfile.TemporaryDirectory() as name:
             root=pathlib.Path(name)
             job=root/'lg6851f-lock-job.test';job.mkdir()
@@ -37,10 +37,25 @@ echo true > "$TEST_DIR/network"
             prefix,main=source.split('action="${1:-}"',1)
             mocks=r'''
 network_up() { cat "$TEST_DIR/network"; }
+set_mode_rat() {
+ case "$1" in 3) menu=1;;15)menu=2;;19)menu=3;;21)menu=4;;*)return 22;;esac
+ echo "$menu" > "$TEST_DIR/pending-mode"
+}
 wait_cli_idle() { return 0; }
 wait_network_up() { [ "$TEST_SCENARIO" != network_fail ]; }
 run_sample() {
  input="$(cat)"
+ case "$input" in
+ *18*)
+  menu="$(cat "$TEST_DIR/pending-mode")";disabled=$(printf '%s\n' "$input" | sed -n '3p')
+  printf '%s %s\n' "$menu" "$disabled" > "$TEST_DIR/mode-values"
+  printf 'set nr disable mode success!\n'; return 0;;
+ *55*)
+  values="$(cat "$TEST_DIR/mode-values" 2>/dev/null || echo '4 3')"
+  [ "$TEST_SCENARIO" != mode_bad_readback ] || values='4 3'
+  case "$values" in '4 3') mode=QL_NW_MODE_WCDMA_LTE_NR5G;disabled=NEITHER_IS_DISABLED;; '3 2') mode=QL_NW_MODE_LTE_NR5G;disabled=DISABLE_SA;; '2 1') mode=QL_NW_MODE_NR5G;disabled=DISABLE_NSA;; '1 0') mode=QL_NW_MODE_LTE;disabled=DISABLE_NSA_AND_SA;; *) return 5;; esac
+  printf 'The current nwomde: \n%s\nThe current NR Disable Mode: \n%s\n' "$mode" "$disabled";return 0;;
+ esac
  case "$input" in *19*)
   if [ "$TEST_SCENARIO" = bad_readback ]; then echo 'lte band info = 0000004000000000'; else echo 'lte band info = 0000000500000000'; fi
   echo 'nr band info = 000000000000000000002000' ;;
@@ -48,8 +63,27 @@ run_sample() {
  esac
 }
 '''
-            result=subprocess.run(['sh','-c',prefix+mocks+'\naction="${1:-}"'+main,'test','--request-id','lg6851f-lock-job.test','apply-bands','1,3','78'],env=dict(os.environ,TEST_DIR=name,TEST_SCENARIO=scenario),capture_output=True,text=True,timeout=10)
+            result=subprocess.run(['sh','-c',prefix+mocks+'\naction="${1:-}"'+main,'test','--request-id','lg6851f-lock-job.test',*(action or ['apply-bands','1,3','78'])],env=dict(os.environ,TEST_DIR=name,TEST_SCENARIO=scenario),capture_output=True,text=True,timeout=10)
             return result,{p.name:p.read_text() for p in root.iterdir() if p.is_file()},(job/'state').read_text(),old_state
+
+    def test_modes_verify_sa_nsa_lte_and_restore_data_without_changing_band_state(self):
+        for name,values in [('sa','2 1'),('nsa','3 2'),('lte','1 0'),('auto','4 3')]:
+            with self.subTest(mode=name):
+                result,files,progress,old=self.run_case('mode_success',['set-mode',name])
+                self.assertEqual(result.returncode,0,result.stderr+result.stdout)
+                self.assertEqual(files['mode-values'].strip(),values)
+                self.assertEqual(files['state'],old)
+                self.assertNotIn('errors',files)
+                self.assertIn('STATUS=verified',progress)
+                self.assertIn('NETWORK=online',progress)
+
+    def test_mode_readback_failure_rolls_back_and_never_claims_success(self):
+        result,files,progress,old=self.run_case('mode_bad_readback',['set-mode','nsa'])
+        self.assertNotEqual(result.returncode,0)
+        self.assertEqual(files['mode-values'].strip(),'4 3')
+        self.assertEqual(files['state'],old)
+        self.assertIn('STATUS=failed',progress)
+        self.assertIn('previous mode restored',result.stdout)
 
     def test_verified_bands_are_published_before_ifup_and_control_lock_is_free(self):
         result,files,progress,_=self.run_case()

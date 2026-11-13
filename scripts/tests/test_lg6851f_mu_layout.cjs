@@ -16,7 +16,7 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
     window.E=(tag,attrs={},children=[])=>{const el=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(typeof v==='function')el.addEventListener(k,v);else if(v!=null)el.setAttribute(k,v);}const add=x=>{if(Array.isArray(x))x.forEach(add);else if(x!=null)el.append(x instanceof Node?x:document.createTextNode(String(x)));};add(children);return el;};
     window.L={env:{rpctimeout:30},url:s=>'/'+s,resolveDefault:(p,d)=>Promise.resolve(p).catch(()=>d)};
     window._=s=>s;window.calls=[];let ticks=0;
-    const data=new Function(fixture)();data.network.data={cid:2,apn:'example.net'};data.qos={cid:2,value:8};data.radio_details.parsed.bler={nr:{dl_raw:6,ul_raw:10},unit:'vendor_raw'};
+    const data=new Function(fixture)();data.current_slot='B';data.network.data={cid:2,apn:'example.net'};data.qos={cid:2,value:8};data.radio_details.parsed.bler={nr:{dl_raw:6,ul_raw:10},unit:'vendor_raw'};
     data.wireless=[{ssid:'OpenWrt',frequency:2412,channel:1,width:'EHT20',up:true,encryption:'none',hidden:false,country:'CN'},{ssid:'OpenWrt',frequency:5220,channel:44,width:'EHT160',up:true,encryption:'none',hidden:false,country:'CN'}];
     data.temperatures=[{name:'soc_max',celsius:54.9},{name:'cpu_little0',celsius:51},{name:'mt7996_phy0.0',celsius:53.2},{name:'md0',celsius:51.7},{name:'gpu0',celsius:65}];
     // 模拟后台暂未取得新数据：保留实际成功的无线参数和小区。
@@ -47,7 +47,7 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
    await page.evaluate(()=>mount('dashboard'));await fit('dashboard');
    const getRates=()=>page.locator('#mud-dl,#mud-ul').allTextContents();const first=await getRates();assert(first.every(x=>/^\d.*\/s$/.test(x)),'numeric first rates');
    await page.evaluate(()=>mount('dashboard'));assert.deepEqual(await getRates(),first);assert.equal(await page.locator('#mud-dl').getAttribute('title'),'最近一次真实速率');
-   assert.equal(await page.locator('#mud-rx').textContent(),'12.34 GB');assert.equal(await page.locator('#mud-tr-day').textContent(),'500 MB');assert.equal(await page.locator('#mud-qci').textContent(),'8');
+   assert.equal(await page.locator('#mud-rx').textContent(),'12.34 GB');assert.equal(await page.locator('#mud-tr-day').textContent(),'500 MB');assert.equal(await page.locator('#mud-qci').textContent(),'8');assert.equal(await page.locator('#mud-slot').textContent(),'当前槽位：B槽');
    assert.equal(await page.locator('#mud-batt,#mud-wusb,#mud-msisdn,#mud-freqs').count(),0);assert.equal(await page.locator('#mud-temps span').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
    assert.equal(await page.locator('#mud-ambr').textContent(),'256 Mbps / 12.8 Mbps');
    assert.equal(await page.locator('#mud-ssid').textContent(),'OpenWrt');assert.equal(await page.locator('#mud-chan').textContent(),'44 (5 GHz-EHT160)');

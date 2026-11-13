@@ -9,6 +9,10 @@ report=/tmp/lg6851f-ab-failure.txt
  uname -a
  cat /proc/cmdline /proc/sys/kernel/random/boot_id /proc/uptime 2>/dev/null
  command -v getprop >/dev/null 2>&1 && getprop ro.boot.slot_suffix
+ echo '=== 厂商启动控制记录原始只读快照（不修改，不擅自解释计数） ==='
+ if [ -b /dev/mmcblk0p1 ]; then
+  dd if=/dev/mmcblk0p1 bs=1 skip=2048 count=32 2>/dev/null | hexdump -C
+ fi
  echo '=== 已保留的pstore，切勿先清空或再次重启 ==='
  for f in /sys/fs/pstore/* /proc/last_kmsg; do
   [ -r "$f" ] || continue

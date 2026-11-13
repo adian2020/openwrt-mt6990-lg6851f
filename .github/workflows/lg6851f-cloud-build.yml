@@ -55,6 +55,13 @@ jobs:
           cp .config "$RUNNER_TEMP/lg6851f.config"
           ./scripts/feeds update -a
 
+      - name: Refresh installed plugins to latest upstream versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/tests/test_mt6990_update_plugins.py
+          python3 scripts/mt6990-update-plugins.py
+
       - name: Prepare OpenClash and optional Nikki packages
         run: |
           python3 scripts/tests/test_mt6990_prepare_proxy.py
@@ -136,12 +143,15 @@ jobs:
           git -C "$publish" config user.name github-actions[bot]
           git -C "$publish" config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git -C "$publish" add "$BUILD_SOURCE_SHA"
-          git -C "$publish" commit -m "发布与源码 $BUILD_SOURCE_SHA 匹配的 Nikki 软件包"
+          git -C "$publish" commit -m "Publish Nikki packages matching source $BUILD_SOURCE_SHA"
           git -C "$publish" push origin HEAD:nikki-apk
 
       - name: Show output files
         if: success()
         run: |
+          test -s files/etc/mt6990-plugin-versions.json
+          cp files/etc/mt6990-plugin-versions.json "A槽单刷boot和rootfs签名成功包/PLUGIN_VERSIONS.json"
+          cp files/etc/mt6990-plugin-versions.json "B槽单刷boot和rootfs签名成功包/PLUGIN_VERSIONS.json"
           echo "===== Target output ====="
           ls -lah bin/targets/mediatek/mt6990/
           echo "===== A slot signed images ====="

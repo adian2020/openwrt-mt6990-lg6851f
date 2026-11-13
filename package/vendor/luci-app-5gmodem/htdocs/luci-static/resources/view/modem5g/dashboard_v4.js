@@ -102,7 +102,7 @@ return view.extend({
 
 <div class="mud-sec">
   <h3>无线 · 局域网 · 设备 · SIM</h3>
-  <div class="mud-temp" id="mud-temps"></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><div class="mud-temp" id="mud-temps"></div><span id="mud-slot" class="mud-sub" style="margin-left:auto;white-space:nowrap"></span></div>
   <div class="mud-kpis" style="margin-top:8px">
     <div class="mud-kpi"><b id="mud-cpu">--</b><span>CPU 占用</span><div class="mud-meter"><i id="mud-cpu-bar" style="background:var(--brand,var(--primary,#3b82f6))"></i></div></div>
     <div class="mud-kpi"><b id="mud-ram">--</b><span>内存 · <span class="mud-sub" id="mud-ram-sub">--</span></span><div class="mud-meter"><i id="mud-ram-bar" style="background:var(--info,#0ea5e9)"></i></div></div>
@@ -202,6 +202,7 @@ return view.extend({
  paint(data){
   const systemCpu=C.cpu(this.systemTicks,data.cpu_ticks);this.systemTicks=data.cpu_ticks;
   if(systemCpu!=null){this.set('cpu',systemCpu.toFixed(1)+'%');this.q('cpu-bar').style.width=systemCpu+'%';}
+  this.set('slot','当前槽位：'+(['A','B'].includes(data.current_slot)?data.current_slot+'槽':'未获取'));
   this.data=data;const m=data.modem||{},n=data.network||{},radio=data.radio_details?.parsed;
   const cells=C.cellular.parseCells({...data.cells?.serving,carriers:radio?.carriers||data.cells?.serving?.carriers}),serving=cells.find(x=>x.serving),sig=serving||m;
   const carriers=radio?.carriers||[],primary=carriers.find(x=>x.type==='NR PCC')||carriers[0];

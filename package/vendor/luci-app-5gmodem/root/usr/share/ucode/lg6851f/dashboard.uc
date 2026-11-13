@@ -60,6 +60,13 @@ export function global_ipv6(network) {
 	return map(filter(network?.['ipv6-address'] || [], row =>
 		row.address && match(row.address, /^[23][0-9a-f]*:/i)), row => row.address + '/' + row.mask);
 }
+export function boot_slot(cmdline) {
+ let root=match(cmdline || '', /(^|\s)root=\/dev\/mmcblk0p(26|39)(\s|$)/);
+ let suffix=match(cmdline || '', /(^|\s)(androidboot\.)?slot_suffix=_?([ab])(\s|$)/);
+ let actual=root ? (root[2]=='26'?'A':'B') : null;
+ let declared=suffix ? uc(suffix[3]) : null;
+ return actual && declared && actual!=declared ? null : actual || declared;
+}
 export function snapshot() {
 	let memory = {};
 	for (let line in split(text('/proc/meminfo'), '\n')) {
@@ -97,6 +104,7 @@ export function snapshot() {
 	let usage = total && available != null && available <= total ? total - available : null;
 	return {
 		hostname: text('/proc/sys/kernel/hostname'), model: text('/tmp/sysinfo/model'), board: text('/tmp/sysinfo/board_name'),
+		current_slot: boot_slot(text('/proc/cmdline')),
 		firmware_id: text('/etc/mt6990-firmware-id'), release: text('/etc/openwrt_release'),
 		uptime: num(split(text('/proc/uptime'), /\s+/)[0]),
 		cpu_ticks: ticks(split(text('/proc/stat'), '\n')[0]),

@@ -19,7 +19,8 @@
 					"get_radio_details",
 					"get_forward_status",
 					"apn_get",
-					"traffic_get"
+					"traffic_get",
+					"get_fair_qos"
 				]
 			}
 		},
@@ -47,7 +48,10 @@
 					"traffic_set",
 					"traffic_clear",
 					"dashboard_action",
-					"request_radio_details"
+					"request_radio_details",
+					"set_fair_qos",
+					"set_network_mode",
+					"set_data_roaming"
 				]
 			},
 			"uci": [

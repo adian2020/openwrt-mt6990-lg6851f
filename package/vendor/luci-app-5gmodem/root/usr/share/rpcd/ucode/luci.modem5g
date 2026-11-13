@@ -122,6 +122,12 @@ function band_list(value, allowed) {
 	return join(',', out);
 }
 
+function fair_qos_state() {
+ let u=cursor();u.load('lg6851f_fair_qos');
+ return {enabled:u.get('lg6851f_fair_qos','main','enabled')=='1',
+  stopped:readfile('/var/run/lg6851f-fair-qos.stopped')!=null,
+  installed:readfile('/var/run/lg6851f-fair-qos.state')!=null};
+}
 function network_state() {
 	let result = capture([ '/bin/ubus', 'call', 'network.interface.modem5g', 'status' ], 5);
 	let state = null;
@@ -505,6 +511,29 @@ const methods = {
 		let enabled = req.args?.enabled ? '1' : '0';
 		return capture([ '/usr/bin/lg6851f-radio-control', enabled ], 45);
 	} },
+	get_fair_qos: { call: function(){return fair_qos_state();} },
+	set_fair_qos: { args:{enabled:false},call:function(req){
+  if(!board_ok())return {code:95,error:'不支持此设备'};
+  if(type(req.args?.enabled)!='bool')return {code:22,error:'Invalid enabled value'};
+  let enabled=req.args.enabled,u=cursor();u.load('lg6851f_fair_qos');
+  u.set('lg6851f_fair_qos','main','enabled',enabled?'1':'0');
+  u.set('lg6851f_fair_qos','main','safety_opt_in_version','1');
+  if(!u.commit('lg6851f_fair_qos'))return {code:5,error:'QoS配置保存失败'};
+  let result=capture(['/etc/init.d/lg6851f_fair_qos',enabled?'restart':'stop'],20);
+  if(result.code && enabled){u.set('lg6851f_fair_qos','main','enabled','0');u.commit('lg6851f_fair_qos');capture(['/etc/init.d/lg6851f_fair_qos','stop'],20);}
+  return {...result,...fair_qos_state()};
+ } },
+	set_network_mode: {args:{mode:''},call:function(req){
+  let mode=req.args?.mode;
+  if(!board_ok() || index(['auto','lte','sa','nsa'],mode)<0)return {code:22,error:'Invalid network mode'};
+  return launch_lock(['set-mode',mode]);
+ } },
+	set_data_roaming: {args:{enabled:false},call:function(req){
+  if(!board_ok() || type(req.args?.enabled)!='bool')return {code:22,error:'Invalid roaming value'};
+  let u=cursor();u.load('network');u.set('network','modem5g','dataroaming',req.args.enabled?'1':'0');
+  if(!u.commit('network'))return {code:5,error:'漫游配置保存失败'};
+  return capture(['/bin/ubus','call','network','reload'],10);
+ } },
 	set_rat: { args: { mode: 21 }, call: function(req) {
 		let mode = +req.args?.mode;
 		if (index([ 3, 15, 19, 21 ], mode) < 0) return { code: 22, error: 'Invalid RAT mode' };

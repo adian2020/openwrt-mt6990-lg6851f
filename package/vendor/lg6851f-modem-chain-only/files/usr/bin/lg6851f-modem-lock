@@ -257,7 +257,7 @@ verify_cell() {
 verify_bands() {
 	wanted_lte="$1" wanted_nr="$2"
 	if [ "$wanted_lte" = __supported__ ]; then
-		actual="$(printf '0\n19\n0\n19\n1\n1\n-1\n' | run_sample)"; rc=$?
+		actual="$(printf '0\n19\n0\n19\n1\n55\n54\n1\n-1\n' | run_sample)"; rc=$?
 	else
 		actual="$(printf '0\n19\n0\n1\n-1\n' | run_sample)"; rc=$?
 	fi
@@ -294,6 +294,47 @@ save_state() {
 	write_progress verified
 }
 
+
+mode_menu() {
+ case "$1" in
+  QL_NW_MODE_WCDMA) echo 0;; QL_NW_MODE_LTE) echo 1;; QL_NW_MODE_NR5G) echo 2;;
+  QL_NW_MODE_LTE_NR5G) echo 3;; QL_NW_MODE_WCDMA_LTE_NR5G) echo 4;; *) return 5;;
+ esac
+}
+disable_menu() {
+ case "$1" in
+  DISABLE_NSA_AND_SA) echo 0;; DISABLE_NSA) echo 1;; DISABLE_SA) echo 2;; NEITHER_IS_DISABLED) echo 3;; *) return 5;;
+ esac
+}
+read_modes() {
+ local output rc mode disabled
+ output="$(printf '0\n55\n54\n1\n-1\n' | run_sample)"; rc=$?
+ printf '%s\n' "$output" >&2
+ [ "$rc" -eq 0 ] || return "$rc"
+ mode="$(printf '%s\n' "$output" | grep -o 'QL_NW_MODE_[A-Z0-9_]*' | tail -n 1)"
+ disabled="$(printf '%s\n' "$output" | grep -o 'DISABLE_NSA_AND_SA\|DISABLE_NSA\|DISABLE_SA\|NEITHER_IS_DISABLED' | tail -n 1)"
+ mode_menu "$mode" >/dev/null && disable_menu "$disabled" >/dev/null || return 5
+ printf '%s %s\n' "$mode" "$disabled"
+}
+set_mode_rat() {
+ local output rc
+ output="$(/usr/bin/timeout 15 "$CLI" --nw_set_rat "$1" 2>&1)"; rc=$?
+ printf '%s\n' "$output" >&2
+ /bin/sleep 6
+ [ "$rc" -eq 0 ] && printf '%s\n' "$output" | grep -Fq 'nw_set_rat success, rat = '
+}
+apply_modes() {
+ local mode_index disable_index output rc rat
+ mode_index="$(mode_menu "$1")" && disable_index="$(disable_menu "$2")" || return 22
+ case "$mode_index" in 1) rat=3;; 2) rat=15;; 3) rat=19;; 4) rat=21;; *) return 22;; esac
+ # SDK ql_nw_set_nwmode rejects AUTO=21; use the existing vendor MIPC setter,
+ # then the SDK's separate NR restriction API to distinguish SA from NSA.
+ set_mode_rat "$rat" || return 5
+ output="$(printf '0\n18\n%s\n1\n-1\n' "$disable_index" | run_sample)"; rc=$?
+ printf '%s\n' "$output" >&2
+ [ "$rc" -eq 0 ] && printf '%s\n' "$output" | grep -Fq 'set nr disable mode success!'
+}
+
 action="${1:-}"
 if [ "$action" = --request-id ]; then
 	REQUEST_ID="${2:-}"
@@ -320,6 +361,40 @@ case "$action" in
 		report_state
 		exit "$rc"
 		;;
+
+ set-mode)
+  case "${2:-}" in
+   auto) wanted_mode=QL_NW_MODE_WCDMA_LTE_NR5G;wanted_disable=NEITHER_IS_DISABLED;;
+   lte) wanted_mode=QL_NW_MODE_LTE;wanted_disable=DISABLE_NSA_AND_SA;;
+   sa) wanted_mode=QL_NW_MODE_NR5G;wanted_disable=DISABLE_NSA;;
+   nsa) wanted_mode=QL_NW_MODE_LTE_NR5G;wanted_disable=DISABLE_SA;;
+   *) die 'mode must be auto, lte, sa or nsa';;
+  esac
+  begin_transaction || exit $?
+  write_progress reading_mode
+  previous="$(read_modes)" || { end_transaction 5; exit 5; }
+  old_mode="${previous%% *}";old_disable="${previous#* }"
+  write_progress applying_mode
+  rc=0
+  apply_modes "$wanted_mode" "$wanted_disable" || rc=5
+  write_progress verifying_mode "$rc"
+  actual="$(read_modes)" || rc=5
+  [ "$actual" = "$wanted_mode $wanted_disable" ] || rc=5
+  if [ "$rc" -ne 0 ]; then
+   write_progress restoring_mode "$rc"
+   if apply_modes "$old_mode" "$old_disable" && [ "$(read_modes)" = "$previous" ]; then
+    echo 'ERROR=mode readback failed; previous mode restored'
+   else
+    echo 'ERROR=mode readback failed; previous mode recovery not confirmed'
+   fi
+  else
+   OP_STATUS=verified
+   write_progress verified
+   echo "VERIFIED_NETWORK_MODE=$2"
+  fi
+  end_transaction "$rc"; rc=$?
+  [ "$rc" -eq 0 ] || exit "$rc"
+  ;;
 	apply-bands)
 		lte="${2:-}"; nr="${3:-}"
 		validate_bands "$lte" "$LTE_ALLOWED"
@@ -405,5 +480,5 @@ case "$action" in
 		end_transaction "$rc"; rc=$?
 		[ "$rc" -eq 0 ] || exit "$rc"
 		;;
-	*) die 'usage: get|apply-bands LTE NR|reset-bands|set-cell ARFCN [PCI] RAT BAND|clear-cell' ;;
+	*) die 'usage: get|set-mode auto/lte/sa/nsa|apply-bands LTE NR|reset-bands|set-cell ARFCN [PCI] RAT BAND|clear-cell' ;;
 esac
