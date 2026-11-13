@@ -3,7 +3,8 @@
 		"title": "PWM Fan",
 		"order": 30,
 		"action": {
-			"type": "firstchild"
+			"type": "view",
+			"path": "pwmfan/panel_v7"
 		},
 		"depends": {
 			"acl": [ "luci-app-pwmfan" ]
@@ -11,11 +12,9 @@
 	},
 
 	"admin/pwmfan/control": {
-		"title": "Overview",
-		"order": 1,
 		"action": {
-			"type": "view",
-			"path": "pwmfan/panel_v6"
+			"type": "alias",
+			"path": "admin/pwmfan"
 		},
 		"depends": {
 			"acl": [ "luci-app-pwmfan" ]

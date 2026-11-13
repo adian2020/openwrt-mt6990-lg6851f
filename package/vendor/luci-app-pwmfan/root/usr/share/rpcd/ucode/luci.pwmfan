@@ -104,6 +104,7 @@ function status() {
 	let stalled = controller != null && index(controller, 'status=stalled') >= 0;
 	let reverse = controller != null && index(controller, 'direction=inverse') >= 0;
 	let pwm_values = [];
+	let manual = number(MANUAL);
 
 	for (let path in fans)
 		push(pwm_values, {
@@ -136,6 +137,7 @@ function status() {
 		hottest,
 		temperatures: temps,
 		reverse,
+		manual_pwm: index(SAFE_LEVELS, manual) >= 0 ? manual : null,
 		levels: SAFE_LEVELS
 	};
 }

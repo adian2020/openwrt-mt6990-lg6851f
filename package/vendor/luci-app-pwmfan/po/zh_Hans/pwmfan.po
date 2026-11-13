@@ -88,6 +88,24 @@ msgstr "控制"
 msgid "Standard"
 msgstr "标准"
 
+msgid "Standard mode"
+msgstr "标准模式"
+
+msgid "Fan mode"
+msgstr "风扇模式"
+
+msgid "Applying fan mode…"
+msgstr "正在切换档位…"
+
+msgid "Automatic temperature control"
+msgstr "自动温控"
+
+msgid "Manual fan mode"
+msgstr "手动风量"
+
+msgid "Animation follows the current fan level."
+msgstr "动画随当前风量档位变化。"
+
 msgid "Normal"
 msgstr "正常"
 
