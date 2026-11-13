@@ -81,7 +81,7 @@
 		"order": 5,
 		"action": {
 			"type": "view",
-			"path": "modem5g/dashboard_v4"
+			"path": "modem5g/dashboard_v5"
 		},
 		"depends": {
 			"acl": [

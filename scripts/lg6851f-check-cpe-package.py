@@ -49,6 +49,11 @@ if errors:
     raise SystemExit('\n'.join(errors))
 menu = json.loads(menu_path.read_text())
 acl = json.loads(acl_path.read_text())['luci-app-5gmodem']
+fan_assets = assets if args.rootfs else repo/'package/vendor/luci-app-pwmfan/htdocs/luci-static/resources'
+required(fan_assets/'pwmfan/visual_v1.js')
+fan_read = acl['read']['ubus'].get('luci.pwmfan', [])
+if fan_read != ['get_status'] or 'luci.pwmfan' in acl['write']['ubus']:
+    errors.append('看板风扇权限必须只允许get_status读取')
 rpc_source = rpc_path.read_text()
 methods = set(re.findall(r'^\t(\w+):\s*\{\s*(?:call|args):', rpc_source, re.M))
 permitted = set(acl['read']['ubus']['luci.modem5g'] + acl['write']['ubus']['luci.modem5g'])

@@ -3,6 +3,7 @@
 		"description": "View the MT6990 integrated 5G modem",
 		"read": {
 			"ubus": {
+				"luci.pwmfan": [ "get_status" ],
 				"luci.modem5g": [
 					"get_status",
 					"get_cells",
