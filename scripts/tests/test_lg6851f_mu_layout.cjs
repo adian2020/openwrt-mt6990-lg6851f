@@ -66,11 +66,13 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
     const actual=await page.locator('#mud-fan-visual .lgfan-rotor').evaluate(async n=>{const a=n.getAnimations()[0];await a.ready;return 1.6/a.playbackRate;});
     assert(Math.abs(actual-Number(period))<1e-6,'Fan animation did not match the confirmed mode');
    }
-   const palette=await page.locator('#mud-fan-visual .lgfan-rim').evaluate(async n=>{const a=n.getAnimations()[0];await a.ready;a.pause();a.currentTime=0;const start=getComputedStyle(n).backgroundImage;a.currentTime=1400;const end=getComputedStyle(n).backgroundImage,transform=getComputedStyle(n).transform;a.play();return {start,end,transform};});
+   const palette=await page.locator('#mud-fan-visual .lgfan-rim').evaluate(async n=>{const a=n.getAnimations()[0];await a.ready;a.pause();a.currentTime=0;const start=getComputedStyle(n,'::before').backgroundImage;a.currentTime=1400;const end=getComputedStyle(n,'::before').backgroundImage,transform=getComputedStyle(n).transform;a.play();return {start,end,transform};});
    assert.notEqual(palette.start,palette.end,'Chameleon palette must actually change');assert.equal(palette.transform,'none','Do not rotate a fixed rainbow');
-   const background=await page.locator('#mud-fan-visual .lgfan-case').evaluate(n=>getComputedStyle(n).backgroundImage);
+   assert.equal(await page.locator('#mud-fan-visual .lgfan-case,#mud-fan-visual .lgfan-bolt').count(),0,'No backplate, frame or corner screws');
+   assert.equal(await page.locator('#mud-fan-visual .lgfan-rim').evaluate(n=>getComputedStyle(n).backgroundColor),'rgba(0, 0, 0, 0)');
+   const background=await page.locator('#mud-fan-visual .lgfan-blade').first().evaluate(n=>getComputedStyle(n,'::before').backgroundImage);
    await page.evaluate(()=>document.documentElement.dataset.darkmode=document.documentElement.dataset.darkmode==='true'?'false':'true');
-   assert.notEqual(await page.locator('#mud-fan-visual .lgfan-case').evaluate(n=>getComputedStyle(n).backgroundImage),background,'Fan casing must follow theme changes');
+   assert.notEqual(await page.locator('#mud-fan-visual .lgfan-blade').first().evaluate(n=>getComputedStyle(n,'::before').backgroundImage),background,'Fan blades must follow theme changes');
    await page.evaluate(d=>document.documentElement.dataset.darkmode=String(d),theme==='dark');
    await page.evaluate(async()=>{fanFailure=true;await vm.refreshFan();});
    assert.equal(await page.locator('#mud-fan-name').textContent(),'未获取');assert.equal(await page.locator('#mud-fan-visual .lgfan-rotor').evaluate(n=>getComputedStyle(n).animationPlayState),'paused');
@@ -92,8 +94,8 @@ const root=path.resolve(__dirname,'../..'),base=path.join(root,'package/vendor/l
    await page.evaluate(()=>vm.paint({...vm.data,modem:{...vm.data.modem,rat:'4G'}}));assert((await page.locator('#mud-rat').textContent()).startsWith('4G'),'旧NR缓存不得覆盖当前4G制式');
    assert(!(await page.evaluate(()=>calls.some(r=>['get_cells','get_radio_details','request_radio_details'].includes(r.method)))),'dashboard load must not issue modem queries');
    await page.locator('#mud-btn-reboot').click();await page.locator('#modal').getByRole('button',{name:'取消',exact:true}).click();assert(!(await page.evaluate(()=>calls.some(r=>r.method==='dashboard_action'))));
-   await page.screenshot({path:'/workspace/outputs/lg6851f-dashboard-fan-'+theme+'-'+width+'.png',fullPage:true});
-   await page.locator('.mud-hero').screenshot({path:'/workspace/outputs/lg6851f-dashboard-fan-hero-'+theme+'-'+width+'.png'});
+   await page.screenshot({path:'/workspace/outputs/lg6851f-dashboard-fan-frameless-'+theme+'-'+width+'.png',fullPage:true});
+   await page.locator('.mud-hero').screenshot({path:'/workspace/outputs/lg6851f-dashboard-fan-hero-frameless-'+theme+'-'+width+'.png'});
    await page.evaluate(()=>{window.previousFanTask=vm.fanTask;});
    await page.evaluate(()=>mount('apn'));await fit('apn');
    assert(!(await page.evaluate(()=>pollFns.includes(previousFanTask))),'Fan polling must stop on navigation');
