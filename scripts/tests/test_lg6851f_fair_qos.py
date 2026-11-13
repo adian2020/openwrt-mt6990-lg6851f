@@ -17,13 +17,13 @@ import json,os,pathlib,sys
 p=pathlib.Path(os.environ['TEST_ROOT']);n=json.loads((p/'network').read_text());cmd=pathlib.Path(sys.argv[0]).name;a=sys.argv[1:]
 with (p/'calls').open('a') as f:f.write(cmd+' '+' '.join(a)+'\\n')
 if os.environ.get('FAIL_FILTER')=='1' and cmd=='tc' and a[:2]==['filter','add']:sys.exit(1)
-rc=0
-if cmd=='ubus':print('{}')
-elif cmd=='jsonfilter':print(n['wan'])
+rc=0;changed=False
+if cmd=='ubus':print(json.dumps({'l3_device':n['wan']}))
+elif cmd=='jsonfilter':print(json.load(sys.stdin)['l3_device'])
 elif cmd=='ip':
  if a[:3]==['link','show','dev']:rc=0 if n['ifb'] else 1
- elif a[:2]==['link','add']:n['ifb']=True
- elif a[:2]==['link','del']:n['ifb']=False;n['q'].pop(a[2],None)
+ elif a[:2]==['link','add']:n['ifb']=True;changed=True
+ elif a[:2]==['link','del']:n['ifb']=False;n['q'].pop(a[2],None);changed=True
 elif cmd=='tc':
  dev=a[a.index('dev')+1]
  if a[:2]==['qdisc','show']:
@@ -31,6 +31,7 @@ elif cmd=='tc':
   elif dev in n['q']:print(n['q'][dev])
   if dev==n['wan'] and n['clsact']:print('qdisc clsact ffff: parent ffff:fff1')
  elif a[0]=='qdisc':
+  changed=True
   if 'clsact' in a:n['clsact']=a[1]!='del'
   elif a[1]=='del':n['q'].pop(dev,None)
   else:n['q'][dev]='qdisc cake '+a[a.index('handle')+1]+' root refcnt 2'
@@ -39,9 +40,11 @@ elif cmd=='tc':
   if a[1]=='show' and 'egress' not in a:
    for k,v in n['filters'].items():
     if pref is None or pref==k:print('filter pref '+k+' mirred egress redirect to device '+v)
-  elif a[1]=='add':n['filters'][pref]=a[-1]
-  elif a[1]=='del':n['filters'].pop(pref,None)
-(p/'network').write_text(json.dumps(n));sys.exit(rc)
+  elif a[1]=='add':n['filters'][pref]=a[-1];changed=True
+  elif a[1]=='del':n['filters'].pop(pref,None);changed=True
+# Pipeline readers run concurrently; queries must never truncate shared state.
+if changed:(p/'network').write_text(json.dumps(n))
+sys.exit(rc)
 ''');mock.chmod(0o755)
   for cmd in ['tc','ip','ubus','jsonfilter','modprobe','logger']:(self.root/'bin'/cmd).symlink_to(mock)
   source=(BASE/'usr/sbin/lg6851f-fair-qos').read_text().replace('/lib/functions.sh',str(lib)).replace('/tmp/sysinfo/board_name',str(self.root/'board')).replace('/sys/class/net/',str(self.root/'net')+'/').replace('/var/run/lg6851f-fair-qos',str(self.root/'qos')).replace('/var/lock/lg6851f-fair-qos.lock',str(self.root/'lock'))
@@ -50,6 +53,12 @@ elif cmd=='tc':
  def run_qos(self,action='start',fail=False):
   return subprocess.run(['sh',str(self.script),action],env=dict(os.environ,TEST_ROOT=str(self.root),PATH=str(self.root/'bin')+':'+os.environ['PATH'],FAIL_FILTER='1' if fail else '0'),capture_output=True,text=True)
  def state(self):return json.loads((self.root/'network').read_text())
+ def test_readonly_commands_do_not_rewrite_fixture_state(self):
+  state_file=self.root/'network';before=json.dumps(self.state(),indent=2)+'\n';state_file.write_text(before)
+  env=dict(os.environ,TEST_ROOT=str(self.root),PATH=str(self.root/'bin')+':'+os.environ['PATH'])
+  result=subprocess.run(['sh','-c','ubus -S call network.interface.modem5g status | jsonfilter -e @.l3_device; tc qdisc show dev ccmni2; ip link show dev ifb-cellular'],env=env,capture_output=True,text=True)
+  self.assertIn('ccmni2',result.stdout)
+  self.assertEqual(state_file.read_text(),before)
  def test_default_disabled_does_not_touch_network(self):
   self.config['enabled']='0';self.save_config();self.assertEqual(self.run_qos().returncode,0)
   self.assertFalse((self.root/'calls').exists());self.assertFalse(self.state()['ifb'])
