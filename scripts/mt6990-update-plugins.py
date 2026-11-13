@@ -62,6 +62,14 @@ def file_bytes(path):
     return path.read_bytes() if path.is_file() else None
 
 
+def adapt_uu_helpers(package):
+    # Upstream relies on postinst chmod; our native source build must also
+    # have executable helpers in the assembled rootfs, before first boot.
+    for path in [package/'root/etc/init.d/uuplugin',*(package/'root/usr/libexec/uuplugin').rglob('*')]:
+        if path.is_file():
+            path.chmod(0o755)
+
+
 def prepare_package(row, latest, folder):
     repo = row['repo']
     scopes=([row['path']]+row.get('source_helpers',[])) if row.get('path') else None
@@ -122,6 +130,8 @@ def prepare_package(row, latest, folder):
                     dst.unlink(missing_ok=True)
                 else:
                     dst.write_bytes(merged)
+    if row['package']=='luci-app-uugamebooster':
+        adapt_uu_helpers(local)
     row['base'] = latest
     return {'package': row['package'], 'repo': repo, 'commit': latest, 'archive_sha256': digest,
             'version': re.search(r'^PKG_VERSION:=(.+)$', (local / 'Makefile').read_text(), re.M).group(1) if re.search(r'^PKG_VERSION:=(.+)$', (local / 'Makefile').read_text(), re.M) else 'upstream-head'}
