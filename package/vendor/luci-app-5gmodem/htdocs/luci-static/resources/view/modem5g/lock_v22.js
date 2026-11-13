@@ -413,11 +413,11 @@ return view.extend({
     paintHero(frame) {
         this.lastFrame=frame;
 		if(!this.muRoot?.isConnected)return;
-		const current=this.policyMode||(frame.radio_details?.parsed?.sa_nsa==='SA'?'sa':frame.radio_details?.parsed?.sa_nsa==='NSA'?'nsa':frame.modem?.rat==='4G'?'lte':null);
+		const current=this.policyMode||(frame.modem?.rat==='4G'?'lte':frame.radio_details?.parsed?.sa_nsa==='SA'?'sa':frame.radio_details?.parsed?.sa_nsa==='NSA'?'nsa':null);
         this.muRoot.querySelectorAll('[data-network-mode]').forEach(b=>{const on=b.dataset.networkMode===current;b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on));b.title=this.policyMode?'模组读回的配置模式':'当前驻网类型，尚未读回配置模式';});
         const roaming=this.muRoot.querySelector('#mu-roaming');if(roaming){const known=typeof frame.apn?.data_roaming==='boolean';roaming.disabled=this.busy||!known;roaming.textContent='数据漫游：'+(known?(frame.apn.data_roaming?'开启':'关闭'):'未获取');roaming.classList.toggle('on',known&&frame.apn.data_roaming);}
         const m=frame.modem||{},r=frame.radio_details?.parsed,cells=cellular.parseCells({...frame.cells?.serving,carriers:r?.carriers}),c=cells.find(x=>x.serving),p=r?.carriers?.find(x=>x.type==='NR PCC')||r?.carriers?.[0];
-		this.muRoot.querySelector('#mu-lock-rat').textContent=(r?.sa_nsa?'5G '+r.sa_nsa:['4G','5G'].includes(m.rat)?m.rat:c?.rat==='nr'?'5G':c?.rat==='lte'?'4G':'正在注册')+' · '+(m.operator||'未获取');
+		this.muRoot.querySelector('#mu-lock-rat').textContent=(m.rat!=='4G'&&r?.sa_nsa?'5G '+r.sa_nsa:['4G','5G'].includes(m.rat)?m.rat:c?.rat==='nr'?'5G':c?.rat==='lte'?'4G':'正在注册')+' · '+(m.operator||'未获取');
 		this.muRoot.querySelector('#mu-lock-cellline').textContent=c?c.band+' · PCI '+c.pci+' · ARFCN '+c.arfcn+(p?.dl_bandwidth_mhz!=null?' · '+p.dl_bandwidth_mhz+' MHz':''):'小区数据更新中';
 		this.muRoot.querySelector('#mu-lock-rsrp').textContent=(c?.rsrp??m.rsrp)==null?'未获取':(c?.rsrp??m.rsrp).toFixed(1)+' dBm';
 		this.muRoot.querySelector('#mu-lock-chips').textContent='RSRQ '+(c?.rsrq??m.rsrq??'—')+'　SINR '+(c?.sinr??m.sinr??'—');
