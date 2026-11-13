@@ -1,0 +1,9 @@
+#!/bin/sh
+case "$ACTION" in ifup|ifupdate|ifdown) ;; *) exit 0;; esac
+[ ! -e /var/run/lg6851f-fair-qos.stopped ] || exit 0
+[ "$INTERFACE" = "$(uci -q get lg6851f_fair_qos.main.network_interface 2>/dev/null || echo modem5g)" ] || exit 0
+/etc/init.d/lg6851f_fair_qos enabled || exit 0
+case "$ACTION" in
+ ifdown) /usr/sbin/lg6851f-fair-qos stop;;
+ *) /usr/sbin/lg6851f-fair-qos start;;
+esac

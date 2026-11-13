@@ -1,5 +1,6 @@
 config main 'main'
-	option enabled '1'
+	option enabled '0'
+	option safety_opt_in_version '1'
 	# Follow this logical interface's current l3_device across modem redials.
 	option network_interface 'modem5g'
 	option ifb_device 'ifb-cellular'

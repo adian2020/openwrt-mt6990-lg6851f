@@ -1,117 +1,103 @@
 #!/bin/sh
-
+# Optional, event-driven cellular QoS. Never modify queues without ownership.
 set -e
-
 . /lib/functions.sh
-
-board="$(cat /tmp/sysinfo/board_name 2>/dev/null)"
-[ "$board" = "fiberhome,lg6851f" ] || exit 0
-
+[ "$(cat /tmp/sysinfo/board_name 2>/dev/null)" = fiberhome,lg6851f ] || exit 0
+exec 9>/var/lock/lg6851f-fair-qos.lock
+flock 9
 config_load lg6851f_fair_qos
-config_get_bool enabled main enabled 1
+config_get_bool enabled main enabled 0
 config_get network main network_interface modem5g
 config_get ifb main ifb_device ifb-cellular
 config_get max_hosts main max_hosts 36
 config_get overhead main overhead 44
 config_get diffserv main diffserv diffserv4
 config_get ingress_seed main ingress_seed 1gbit
-
 state_file=/var/run/lg6851f-fair-qos.state
-
+stopped=/var/run/lg6851f-fair-qos.stopped
 valid_device() {
-	[ -n "$1" ] && [ "${#1}" -le 15 ] &&
-		case "$1" in *[!A-Za-z0-9_.:@-]*) false ;; *) true ;; esac
+ [ -n "$1" ] && [ "${#1}" -le 15 ] && case "$1" in *[!A-Za-z0-9_.:@-]*) false;; *) true;; esac
 }
-
 current_wan() {
-	local device
-	device="$(ubus -S call "network.interface.$network" status 2>/dev/null |
-		jsonfilter -e '@.l3_device' 2>/dev/null)"
-	valid_device "$device" && [ -e "/sys/class/net/$device" ] || return 1
-	printf '%s\n' "$device"
+ local device
+ device="$(ubus -S call "network.interface.$network" status 2>/dev/null | jsonfilter -e '@.l3_device' 2>/dev/null)" || return 1
+ valid_device "$device" && [ -e "/sys/class/net/$device" ] || return 1
+ printf '%s\n' "$device"
 }
-
-cleanup_device() {
-	valid_device "$1" || return 0
-	tc qdisc del dev "$1" clsact 2>/dev/null || true
-	tc qdisc del dev "$1" root 2>/dev/null || true
-}
-
-read_previous_wan() {
-	local device=
-	[ -r "$state_file" ] && IFS= read -r device < "$state_file"
-	valid_device "$device" && printf '%s\n' "$device"
-}
-
-case "$max_hosts:$overhead" in
-	*[!0-9:]*|'') logger -t LG6851F-FAIR-QOS "invalid numeric configuration"; exit 1 ;;
-esac
-[ "$max_hosts" -ge 1 ] && [ "$max_hosts" -le 36 ] || {
-	logger -t LG6851F-FAIR-QOS "max_hosts must be between 1 and 36"
-	exit 1
-}
-
 stop_qos() {
-	local current previous
-	previous="$(read_previous_wan)" || previous=
-	cleanup_device "$previous"
-	current="$(current_wan 2>/dev/null)" || current=
-	[ "$current" = "$previous" ] || cleanup_device "$current"
-	tc qdisc del dev "$ifb" root 2>/dev/null || true
-	ip link set "$ifb" down 2>/dev/null || true
-	ip link del "$ifb" type ifb 2>/dev/null || true
-	rm -f "$state_file"
+ local old_wan old_ifb old_clsact legacy=0 queues filters egress
+ [ -f "$state_file" ] || return 0
+ { read -r old_wan || :; read -r old_ifb || :; read -r old_clsact || :; } < "$state_file"
+ valid_device "$old_wan" || return 1
+ if [ -z "$old_ifb" ]; then old_ifb=ifb-cellular; legacy=1; fi
+ valid_device "$old_ifb" || return 1
+ [ "$old_ifb" != "$old_wan" ] || return 1
+ # Only delete the redirect if its destination is our recorded IFB.
+ local pref=49150
+ [ "$legacy" = 0 ] || pref=10
+ filters="$(tc filter show dev "$old_wan" ingress pref "$pref" 2>/dev/null)" || filters=
+ if printf '%s' "$filters" | grep -Fq "device $old_ifb"; then
+  tc filter del dev "$old_wan" ingress protocol all pref "$pref" || return 1
+ fi
+ queues="$(tc qdisc show dev "$old_wan" 2>/dev/null)" || queues=
+ if printf '%s\n' "$queues" | grep -Eq '^qdisc cake 7ca0: .*root'; then
+  tc qdisc del dev "$old_wan" root || return 1
+ elif [ "$legacy" = 1 ] && printf '%s\n' "$queues" | grep -Eq '^qdisc cake .*root'; then
+  tc qdisc del dev "$old_wan" root || return 1
+ fi
+ # Keep a shared clsact. Remove ours only when both directions have no filters.
+ if [ "$old_clsact" = 1 ]; then
+  if filters="$(tc filter show dev "$old_wan" ingress 2>/dev/null)" &&
+     egress="$(tc filter show dev "$old_wan" egress 2>/dev/null)" &&
+     [ -z "$filters$egress" ]; then
+   tc qdisc del dev "$old_wan" clsact 2>/dev/null || true
+  fi
+ fi
+ tc qdisc del dev "$old_ifb" root 2>/dev/null || true
+ if ip link show dev "$old_ifb" >/dev/null 2>&1; then
+  ip link del "$old_ifb" type ifb || return 1
+ fi
+ rm -f "$state_file"
 }
-
+# Cleanup must work even with invalid shaping options, or after a manual stop.
 [ "${1:-start}" = stop ] && { stop_qos; exit 0; }
-[ "$enabled" -eq 1 ] || { stop_qos; exit 0; }
-valid_device "$ifb" || {
-	logger -t LG6851F-FAIR-QOS "invalid IFB device: $ifb"
-	exit 1
-}
-wan="$(current_wan)" || exit 2
-previous="$(read_previous_wan)" || previous=
-if [ -n "$previous" ] && [ "$previous" != "$wan" ]; then
-	cleanup_device "$previous"
-	tc qdisc del dev "$ifb" root 2>/dev/null || true
-	logger -t LG6851F-FAIR-QOS "migrating wan=$previous->$wan"
+if [ "$enabled" != 1 ] || [ -e "$stopped" ]; then stop_qos; exit 0; fi
+valid_device "$ifb" || exit 1
+case "$network" in ''|*[!A-Za-z0-9_]*) exit 1;; esac
+case "$max_hosts:$overhead" in *[!0-9:]*|'') exit 1;; esac
+[ "$max_hosts" -ge 1 ] && [ "$max_hosts" -le 36 ] && [ "$overhead" -le 256 ] || exit 1
+case "$diffserv" in besteffort|diffserv3|diffserv4|diffserv8) ;; *) exit 1;; esac
+printf '%s\n' "$ingress_seed" | grep -Eq '^[1-9][0-9]*(kbit|mbit|gbit)$' || exit 1
+wan="$(current_wan)" || { stop_qos; exit 0; }
+[ "$wan" != "$ifb" ] || exit 1
+# An event does not periodically replace live queues. Explicit apply/reload does.
+if [ "${1:-start}" = start ] && [ -f "$state_file" ] &&
+   [ "$(head -n 1 "$state_file")" = "$wan" ] &&
+   tc qdisc show dev "$wan" | grep -q '^qdisc cake 7ca0:' &&
+   tc qdisc show dev "$ifb" | grep -q '^qdisc cake 7ca1:' &&
+   tc filter show dev "$wan" ingress pref 49150 | grep -Fq "device $ifb"; then exit 0; fi
+stop_qos
+# Do not appropriate another service's IFB, root shaper or filter preference.
+ip link show dev "$ifb" >/dev/null 2>&1 && { logger -t LG6851F-FAIR-QOS 'IFB already exists without ownership'; exit 1; }
+queues="$(tc qdisc show dev "$wan")"
+if printf '%s\n' "$queues" | grep ' root ' | grep -Ev '^qdisc (fq_codel|fq|noqueue|pfifo_fast|mq) '; then
+ logger -t LG6851F-FAIR-QOS 'WAN root queue belongs to another component'; exit 1
 fi
-
-if [ "${1:-start}" = start ] &&
-	tc qdisc show dev "$wan" 2>/dev/null | grep -q ' cake ' &&
-	tc qdisc show dev "$wan" 2>/dev/null | grep -q ' clsact ' &&
-	tc qdisc show dev "$ifb" 2>/dev/null | grep -q ' cake '; then
-	exit 0
-fi
-
-modprobe ifb 2>/dev/null || true
-modprobe sch_cake 2>/dev/null || true
-modprobe sch_ingress 2>/dev/null || true
-
-ip link show dev "$ifb" >/dev/null 2>&1 || ip link add "$ifb" type ifb
-ip link set "$ifb" up
-
-# Replacing the qdiscs makes this operation idempotent after modem reconnects.
-# Do not impose a product-wide speed ceiling.  A single host may consume the
-# full cellular service rate, including gigabit service.  CAKE's host
-# isolation redistributes capacity only while hosts actually contend.
-tc qdisc replace dev "$wan" root cake unlimited "$diffserv" \
-	nat dual-srchost ack-filter split-gso rtt 100ms overhead "$overhead"
-# Cellular downlink capacity changes with radio scheduling.  autorate-ingress
-# learns the packet arrival rate without a fixed 300M/1G ceiling; the board
-# kernel preserves the last valid estimate across idle gaps so silence cannot
-# collapse the next download to dial-up speed.  dual-dsthost then separates
-# competing LAN clients and returns every idle share.
-tc qdisc replace dev "$ifb" root cake bandwidth "$ingress_seed" autorate-ingress "$diffserv" \
-	nat dual-dsthost ingress wash split-gso rtt 100ms overhead "$overhead"
-tc qdisc replace dev "$wan" clsact
-tc filter del dev "$wan" ingress protocol all pref 10 2>/dev/null || true
-tc filter add dev "$wan" ingress protocol all pref 10 matchall \
-	action mirred egress redirect dev "$ifb"
-
-umask 022
-printf '%s\n' "$wan" > "$state_file.tmp"
+[ -z "$(tc filter show dev "$wan" ingress pref 49150 2>/dev/null)" ] || exit 1
+created_clsact=0
+printf '%s\n' "$queues" | grep -q ' clsact ' || created_clsact=1
+# Record ownership BEFORE changing the network; EXIT cleans up partial setup.
+umask 077
+printf '%s\n%s\n%s\n' "$wan" "$ifb" "$created_clsact" > "$state_file.tmp"
 mv "$state_file.tmp" "$state_file"
-
-logger -t LG6851F-FAIR-QOS \
-	"active network=$network wan=$wan ifb=$ifb capacity=automatic seed=$ingress_seed host_fairness=1..${max_hosts} mode=$diffserv"
+trap 'rc=$?; trap - EXIT; if [ "$rc" != 0 ]; then stop_qos || :; fi; exit "$rc"' EXIT
+modprobe ifb
+modprobe sch_cake
+modprobe sch_ingress
+ip link add "$ifb" type ifb
+ip link set "$ifb" up
+tc qdisc replace dev "$wan" root handle 7ca0: cake unlimited "$diffserv" nat dual-srchost ack-filter split-gso rtt 100ms overhead "$overhead"
+tc qdisc replace dev "$ifb" root handle 7ca1: cake bandwidth "$ingress_seed" autorate-ingress "$diffserv" nat dual-dsthost ingress wash split-gso rtt 100ms overhead "$overhead"
+[ "$created_clsact" = 0 ] || tc qdisc add dev "$wan" clsact
+tc filter add dev "$wan" ingress protocol all pref 49150 matchall action mirred egress redirect dev "$ifb"
+logger -t LG6851F-FAIR-QOS "active network=$network wan=$wan ifb=$ifb capacity=automatic seed=$ingress_seed"

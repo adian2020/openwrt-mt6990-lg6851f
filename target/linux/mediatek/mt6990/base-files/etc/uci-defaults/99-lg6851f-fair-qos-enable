@@ -5,10 +5,16 @@
 # Settings are preserved across sysupgrade, so migrate the original
 # numbered CCMNI defaults to the logical interface and stable IFB names.
 if uci -q get lg6851f_fair_qos.main >/dev/null; then
+	# One-time upgrade safety migration; later explicit opt-in is preserved.
+	if [ "$(uci -q get lg6851f_fair_qos.main.safety_opt_in_version)" != 1 ]; then
+		/etc/init.d/lg6851f_fair_qos stop || exit 1
+		uci set lg6851f_fair_qos.main.enabled='0' || exit 1
+		uci set lg6851f_fair_qos.main.safety_opt_in_version='1' || exit 1
+	fi
 	uci set lg6851f_fair_qos.main.network_interface='modem5g'
 	uci set lg6851f_fair_qos.main.ifb_device='ifb-cellular'
 	uci -q delete lg6851f_fair_qos.main.wan_device
-	uci commit lg6851f_fair_qos
+	uci commit lg6851f_fair_qos || exit 1
 fi
 
 /etc/init.d/lg6851f_fair_qos enable

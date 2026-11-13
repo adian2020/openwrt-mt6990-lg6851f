@@ -56,8 +56,13 @@ class DashboardTest(unittest.TestCase):
         self.assertTrue(all(v is None for v in value['advanced'].values()))
 
     def test_mdns_requires_real_address_and_unambiguous_host_name(self):
+        # The host ucode build provides fs, but not the router's uci module.
+        # Exercise the actual parser without needing or opening a UCI cursor.
+        source=(PACKAGE/'root/usr/share/ucode/lg6851f/dashboard-collect.uc').read_text()
+        self.write('/collector-mdns-test.uc',source.replace("from 'uci'","from 'mdns_test_uci'"))
+        self.write('/mdns_test_uci.uc',"export function cursor(){die('mDNS parser must not access UCI');}")
         value=self.run_ucode("""
-import * as c from 'lg6851f.dashboard-collect';
+import * as c from 'collector-mdns-test';
 let hosts={'Pixel-7-Pro.local':{ipv4:['192.168.1.201']}};
 printf('%J',[c.mdns_name(hosts,'192.168.1.201'),c.mdns_name(hosts,'192.168.1.202'),
  c.mdns_name({...hosts,'another.local':{ipv4:['192.168.1.201']}},'192.168.1.201'),

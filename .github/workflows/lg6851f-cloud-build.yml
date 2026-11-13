@@ -75,6 +75,7 @@ jobs:
           python3 scripts/tests/test_lg6851f_wifi_start.py
           python3 scripts/tests/test_lg6851f_boot_recovery.py
           python3 scripts/tests/test_lg6851f_autoreboot.py
+          python3 scripts/tests/test_lg6851f_fair_qos.py
           python3 scripts/lg6851f-check-cpe-package.py
 
       - name: Generate and verify configuration
