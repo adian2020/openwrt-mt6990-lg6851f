@@ -2,11 +2,19 @@
 # One-shot read-only probe: no radio settings, subscriptions or service changes.
 set -u
 umask 077
+probe_mode=${1:-full}
+case "$probe_mode" in
+ full|ims-at) ;;
+ *) echo '用法：sh lg6851f-probe-mode-ims.sh [full|ims-at]';exit 2;;
+esac
 case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in
  fiberhome,lg6851f|fiberhome_lg6851f) ;;
  *) echo '仅适用于LG6851F';exit 95;;
 esac
 [ -x /usr/bin/mipc_wan_cli ] && [ -x /usr/bin/modem5g-at ] || { echo '缺少模组查询工具';exit 2; }
+report="$(mktemp /tmp/lg6851f-mode-ims-readonly.XXXXXX)" || exit 5
+printf '只读探针版本：2；模式：%s\n' "$probe_mode" >"$report"
+if [ "$probe_mode" = full ];then
 exec 9>/var/lock/luci-modem5g-control.lock
 waited=0
 echo '等待模组通道空闲，最多60秒；不会停止后台服务。'
@@ -22,7 +30,6 @@ trap 'exit 143' TERM
 if [ -e /tmp/lg6851f-modem-control.active ] || [ -d /var/lock/lg6851f-modem-recovery.lock ];then
  echo '已有模组控制或恢复任务，未执行查询。';exit 75
 fi
-report="$(mktemp /tmp/lg6851f-mode-ims-readonly.XXXXXX)" || exit 5
 echo "开始三个只读MIPC查询；每条最多15秒加6秒冷却。报告：$report"
 {
  for opt in nw_get_rat ims_get_config ims_get_status; do
@@ -31,11 +38,15 @@ echo "开始三个只读MIPC查询；每条最多15秒加6秒冷却。报告：$
   rc=$?;printf '退出码=%s\n' "$rc"
   sleep 6
  done
-} >"$report" 2>&1
+} >>"$report" 2>&1
 flock -u 9
 trap - EXIT
+else
+ echo "仅查询IMS配置和注册信息，不重复MIPC或已失败的载波命令。报告：$report"
+fi
 # modem5g-at serializes its separate atcid channel; no MIPC lock is held here.
 {
+ if [ "$probe_mode" = full ];then
  while IFS= read -r command; do
   printf '\n=== %s ===\n' "$command"
   timeout -k 3 12 /usr/bin/modem5g-at "$command"
@@ -46,6 +57,12 @@ AT+QCFG="ims"
 AT+QCAINFO
 AT+QNWCFG="nr5g_cainfo"
 AT_COMMANDS
+ fi
+ for command in 'AT+EIMSCFG?' 'AT+CIREG?';do
+  printf '\n=== %s ===\n' "$command"
+  timeout -k 3 12 /usr/bin/modem5g-at "$command"
+  rc=$?;printf '退出码=%s\n' "$rc"
+ done
 } >>"$report" 2>&1
 cat "$report"
 printf '\n完整只读报告：%s\n' "$report"

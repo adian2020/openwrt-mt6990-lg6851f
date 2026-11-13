@@ -48,6 +48,14 @@ const {chromium} = require('playwright');
   await page.evaluate(()=>vm.paintHero({modem:{rat:'4G'},radio_details:{parsed:{sa_nsa:'SA',carriers:[]}},apn:{data_roaming:false}}));
   if(await page.locator('[data-network-mode="lte"]').getAttribute('aria-pressed')!=='true')throw Error('stale SA cache overwrote live LTE');
   if(!(await page.locator('#mu-lock-rat').textContent()).startsWith('4G'))throw Error('stale SA cache overwrote LTE hero');
+  await page.evaluate(()=>{
+   vm.syncLocks({code:0,output:maskResult.output+'\nThe current nwomde:\nQL_NW_MODE_LTE_NR5G\nThe current NR Disable Mode:\nNEITHER_IS_DISABLED\n'});
+   vm.paintHero({modem:{rat:'5G'},radio_details:{parsed:{sa_nsa:'SA',carriers:[]}},apn:{data_roaming:false}});
+  });
+  if(await page.locator('[data-network-mode="auto"]').getAttribute('aria-pressed')!=='true')throw Error('mixed LTE/NR policy was mistaken for SA-only');
+  if(!(await page.locator('#mu-lock-rat').textContent()).startsWith('5G SA'))throw Error('mixed policy hid actual SA registration');
+  if(!(await page.locator('#mu-network-policy').textContent()).includes('4/5G自动选择'))throw Error('mixed policy explanation missing');
+  await page.evaluate(()=>vm.syncLocks(maskResult));
   if(!await page.locator('[data-network-mode="nsa"]').isEnabled())throw Error('NSA mode still disabled');
   if(await page.getByRole('button',{name:'EN-DC',exact:true}).count())throw Error('unsupported EN-DC control still shown');
   if(await page.locator('#mu-fair-qos').getAttribute('aria-pressed')!=='false')throw Error('QoS should be off');

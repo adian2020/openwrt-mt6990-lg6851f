@@ -380,7 +380,8 @@ return view.extend({
 	syncLocks(result){
 	 this.syncLocksLegacy(result);
      const raw=common.resultText(result),mode=raw.match(/The current nwomde:\s*(QL_NW_MODE_[A-Z0-9_]+)/)?.[1],disable=raw.match(/The current NR Disable Mode:\s*(DISABLE_NSA_AND_SA|DISABLE_NSA|DISABLE_SA|NEITHER_IS_DISABLED)/)?.[1];
-     this.policyMode=mode==='QL_NW_MODE_LTE'?'lte':mode==='QL_NW_MODE_NR5G'?'sa':mode==='QL_NW_MODE_LTE_NR5G'&&disable==='DISABLE_SA'?'nsa':mode==='QL_NW_MODE_WCDMA_LTE_NR5G'&&disable==='NEITHER_IS_DISABLED'?'auto':null;
+     this.policyMode=mode==='QL_NW_MODE_LTE'?'lte':mode==='QL_NW_MODE_NR5G'?'sa':mode==='QL_NW_MODE_LTE_NR5G'&&disable==='DISABLE_SA'?'nsa':['QL_NW_MODE_WCDMA_LTE_NR5G','QL_NW_MODE_LTE_NR5G'].includes(mode)&&disable==='NEITHER_IS_DISABLED'?'auto':null;
+     this.policyLabel=mode==='QL_NW_MODE_LTE_NR5G'&&disable==='NEITHER_IS_DISABLED'?'配置：4/5G自动选择；SA、NSA均允许。':null;
      if(this.lastFrame)this.paintHero(this.lastFrame);
 	 const box=document.getElementById('mu-locked');if(!box)return;
 	 const s=this.lockState;
@@ -415,6 +416,7 @@ return view.extend({
 		if(!this.muRoot?.isConnected)return;
 		const current=this.policyMode||(frame.modem?.rat==='4G'?'lte':frame.radio_details?.parsed?.sa_nsa==='SA'?'sa':frame.radio_details?.parsed?.sa_nsa==='NSA'?'nsa':null);
         this.muRoot.querySelectorAll('[data-network-mode]').forEach(b=>{const on=b.dataset.networkMode===current;b.classList.toggle('on',on);b.setAttribute('aria-pressed',String(on));b.title=this.policyMode?'模组读回的配置模式':'当前驻网类型，尚未读回配置模式';});
+        this.muRoot.querySelector('#mu-network-policy').textContent=this.policyLabel||'优先显示模组读回的配置模式；配置未读到时高亮当前驻网类型。';
         const roaming=this.muRoot.querySelector('#mu-roaming');if(roaming){const known=typeof frame.apn?.data_roaming==='boolean';roaming.disabled=this.busy||!known;roaming.textContent='数据漫游：'+(known?(frame.apn.data_roaming?'开启':'关闭'):'未获取');roaming.classList.toggle('on',known&&frame.apn.data_roaming);}
         const m=frame.modem||{},r=frame.radio_details?.parsed,cells=cellular.parseCells({...frame.cells?.serving,carriers:r?.carriers}),c=cells.find(x=>x.serving),p=r?.carriers?.find(x=>x.type==='NR PCC')||r?.carriers?.[0];
 		this.muRoot.querySelector('#mu-lock-rat').textContent=(m.rat!=='4G'&&r?.sa_nsa?'5G '+r.sa_nsa:['4G','5G'].includes(m.rat)?m.rat:c?.rat==='nr'?'5G':c?.rat==='lte'?'4G':'正在注册')+' · '+(m.operator||'未获取');
@@ -440,7 +442,7 @@ return view.extend({
 		 E('div',{'class':'mud-card mud-hero'},[E('div',{'class':'mud-hero-l'},[E('div',{'class':'mud-sub'},'当前驻网'),E('b',{id:'mu-lock-rat'},'正在读取'),E('div',{id:'mu-lock-cellline','class':'mud-cellline'},'')]),E('div',{'class':'mud-hero-r'},[E('div',{id:'mu-lock-rsrp','class':'mud-rsrp'},'—'),E('div',{id:'mu-lock-chips','class':'mud-chips'},'')])]),
 		 E('div',{'class':'m5-lock-summary'},[take('m5-lock-summary'),take('m5-lock-progress')]),
 		 section('载波聚合',E('div',{'class':'mud-scroll'},E('table',{'class':'mud-table'},[E('thead',{},E('tr',{},['载波','制式/频段','ARFCN','PCI','下行频宽','上行频宽','下行MCS','上行MCS'].map(x=>E('th',{},x)))),E('tbody',{id:'mu-lock-ca'},[])]))),
-         section('网络模式',E('div',{},[E('div',{style:'display:flex;justify-content:space-between;align-items:start;gap:16px;flex-wrap:wrap'},[E('div',{},[E('div',{'class':'mud-ctl',style:'grid-template-columns:repeat(4,1fr);max-width:560px'},[mode('自动','auto'),mode('仅4G','lte'),mode('5G SA','sa'),mode('5G NSA','nsa')]),button('刷新锁定状态',()=>this.readLocks())]),button('蜂窝 QoS：读取中',()=>this.changeQos(),{id:'mu-fair-qos','aria-pressed':'false'})]),E('p',{'class':'mud-note'},'优先显示模组读回的配置模式；配置未读到时高亮当前驻网类型。') ])),
+         section('网络模式',E('div',{},[E('div',{style:'display:flex;justify-content:space-between;align-items:start;gap:16px;flex-wrap:wrap'},[E('div',{},[E('div',{'class':'mud-ctl',style:'grid-template-columns:repeat(4,1fr);max-width:560px'},[mode('自动','auto'),mode('仅4G','lte'),mode('5G SA','sa'),mode('5G NSA','nsa')]),button('刷新锁定状态',()=>this.readLocks())]),button('蜂窝 QoS：读取中',()=>this.changeQos(),{id:'mu-fair-qos','aria-pressed':'false'})]),E('p',{id:'mu-network-policy','class':'mud-note'},'优先显示模组读回的配置模式；配置未读到时高亮当前驻网类型。') ])),
          section('数据漫游 · VoLTE · VoNR',E('div',{},[E('div',{'class':'mud-ctl'},[button('数据漫游：读取中',()=>{const enabled=!this.lastFrame?.apn?.data_roaming;ui.showModal('确认数据漫游',[E('p',{},'更改会重新加载蜂窝数据配置，可能短暂断网。'),E('button',{'class':'btn',click:ui.hideModal},'取消'),E('button',{'class':'btn cbi-button-apply',click:async()=>{ui.hideModal();try{const r=await setRoaming(enabled);if(r.code)throw Error(common.resultText(r));}catch(e){common.callError('数据漫游',e);}}},'应用')]);},{id:'mu-roaming'}),disabled('VoLTE：等待接口核实'),disabled('VoNR：等待接口核实')])])),
 
 		 section('频段锁定',E('div',{},[E('div',{'class':'mud-cols'},[bandPanel('nr'),bandPanel('lte')]),take('m5-supported-summary'),take('m5-band-draft'),button('同时应用所选 NR / LTE',()=>this.applyBands())])),
