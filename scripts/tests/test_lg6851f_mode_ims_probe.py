@@ -23,7 +23,7 @@ fi
   return subprocess.run(['sh',str(self.script),*args],env=dict(os.environ,TEST_DIR=str(self.root),PATH=str(self.root/'bin')+':'+os.environ['PATH']),capture_output=True,text=True,timeout=5)
  def test_only_readonly_queries_and_cooldown_ownership(self):
   r=self.run_probe();self.assertEqual(r.returncode,0,r.stderr)
-  self.assertEqual((self.root/'calls').read_text().splitlines(),['mipc --nw_get_rat','mipc --ims_get_config','mipc --ims_get_status','at AT+QCFG=?','at AT+QCFG="ims"','at AT+QCAINFO','at AT+QNWCFG="nr5g_cainfo"','at AT+EIMSCFG?','at AT+CIREG?'])
+  self.assertEqual((self.root/'calls').read_text().splitlines(),['mipc --nw_get_rat','mipc --ims_get_config','mipc --ims_get_status','at AT+QCFG="ims"','at AT+CIREG?'])
   self.assertFalse((self.root/'errors').exists())
   self.assertEqual(len(list(self.root.glob('report.*'))),1)
   self.assertEqual(subprocess.run(['/usr/bin/flock','-n',str(self.root/'lock'),'-c','true']).returncode,0)
@@ -31,7 +31,7 @@ fi
   with (self.root/'lock').open('w') as fd:
    fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB);r=self.run_probe('ims-at')
   self.assertEqual(r.returncode,0,r.stderr)
-  self.assertEqual((self.root/'calls').read_text().splitlines(),['at AT+EIMSCFG?','at AT+CIREG?'])
+  self.assertEqual((self.root/'calls').read_text().splitlines(),['at AT+CIREG?'])
   report=next(self.root.glob('report.*'))
   self.assertEqual(report.stat().st_mode&0o777,0o600)
   self.assertIn('模式：ims-at',report.read_text())

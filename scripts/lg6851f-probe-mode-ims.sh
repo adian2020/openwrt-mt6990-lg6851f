@@ -13,7 +13,7 @@ case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in
 esac
 [ -x /usr/bin/mipc_wan_cli ] && [ -x /usr/bin/modem5g-at ] || { echo '缺少模组查询工具';exit 2; }
 report="$(mktemp /tmp/lg6851f-mode-ims-readonly.XXXXXX)" || exit 5
-printf '只读探针版本：2；模式：%s\n' "$probe_mode" >"$report"
+printf '只读探针版本：3；模式：%s\n' "$probe_mode" >"$report"
 if [ "$probe_mode" = full ];then
 exec 9>/var/lock/luci-modem5g-control.lock
 waited=0
@@ -42,7 +42,7 @@ echo "开始三个只读MIPC查询；每条最多15秒加6秒冷却。报告：$
 flock -u 9
 trap - EXIT
 else
- echo "仅查询IMS配置和注册信息，不重复MIPC或已失败的载波命令。报告：$report"
+ echo "仅查询IMS注册信息，不重复MIPC或已失败的载波命令。报告：$report"
 fi
 # modem5g-at serializes its separate atcid channel; no MIPC lock is held here.
 {
@@ -52,13 +52,12 @@ fi
   timeout -k 3 12 /usr/bin/modem5g-at "$command"
   rc=$?;printf '退出码=%s\n' "$rc"
  done <<'AT_COMMANDS'
-AT+QCFG=?
 AT+QCFG="ims"
-AT+QCAINFO
-AT+QNWCFG="nr5g_cainfo"
 AT_COMMANDS
  fi
- for command in 'AT+EIMSCFG?' 'AT+CIREG?';do
+ # Keep only getters confirmed to return useful fields on this firmware.
+ # ECNCFG and carrier/MCS AT queries failed; EIMSCFG returned empty OK.
+ for command in 'AT+CIREG?';do
   printf '\n=== %s ===\n' "$command"
   timeout -k 3 12 /usr/bin/modem5g-at "$command"
   rc=$?;printf '退出码=%s\n' "$rc"
