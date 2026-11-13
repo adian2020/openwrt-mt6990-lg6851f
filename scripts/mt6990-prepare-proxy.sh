@@ -14,9 +14,12 @@ grep -q '+mihomo-meta' feeds/nikki/nikki/Makefile
 
 # These unselected feed recipes have package-local Kconfig option cycles
 # with this older buildroot. Refuse to silently drop an explicitly enabled app.
-for recipe in video/frameworks/qt5/qt5base luci/applications/luci-app-fwknopd packages/sound/squeezelite; do
+for recipe in video/frameworks/qt5/qt5base video/frameworks/qt6/qt6base luci/applications/luci-app-fwknopd packages/sound/squeezelite; do
     case "$recipe" in
         */qt5base) pattern='qt5base[^=]*' ;;
+        # EGLFS -> DRM -> GUI -> OpenGL -> EGLFS also cycles when unselected.
+        # All Qt6 users need qt6base, so reject any explicit Qt6 selection.
+        */qt6base) pattern='qt6[^=]*' ;;
         */luci-app-fwknopd) pattern='luci-app-fwknopd' ;;
         */squeezelite) pattern='squeezelite[^=]*' ;;
     esac

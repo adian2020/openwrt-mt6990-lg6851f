@@ -57,6 +57,7 @@ jobs:
 
       - name: Prepare OpenClash and optional Nikki packages
         run: |
+          python3 scripts/tests/test_mt6990_prepare_proxy.py
           ./scripts/mt6990-prepare-proxy.sh
           ./scripts/feeds install -a
 
