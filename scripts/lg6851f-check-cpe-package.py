@@ -55,8 +55,10 @@ fan_read = acl['read']['ubus'].get('luci.pwmfan', [])
 if fan_read != ['get_status'] or 'luci.pwmfan' in acl['write']['ubus']:
     errors.append('看板风扇权限必须只允许get_status读取')
 rpc_source = rpc_path.read_text()
-methods = set(re.findall(r'^\t(\w+):\s*\{\s*(?:call|args):', rpc_source, re.M))
+methods = set(re.findall(r'^\s+(\w+):\s*\{\s*(?:call|args):', rpc_source, re.M))
 permitted = set(acl['read']['ubus']['luci.modem5g'] + acl['write']['ubus']['luci.modem5g'])
+for method in permitted:
+    if method not in methods: errors.append('ACL引用了缺失RPC方法：'+method)
 for removed in ['admin/modem5g/cpu','admin/modem5g/sim']:
     if removed in menu: errors.append('已移除的页面重新出现在菜单：'+removed)
 for name, entry in menu.items():
@@ -72,7 +74,10 @@ for path in assets.glob('**/*.js'):
             errors.append(f'RPC 或权限未接入：{path.name} → {method}')
 for module in re.findall(r"from '(lg6851f\.[\w-]+)'", rpc_source):
     required(root/('usr/share/ucode/'+module.replace('.', '/')+'.uc'))
-for name in ['usr/share/ucode/lg6851f/forward.uc','etc/config/lg6851f_sms_forward',
+required(assets/'view/modem5g/sms_v1.css')
+required(root/'etc/init.d/lg6851f-sms-pool',executable=True)
+required(root/'usr/libexec/lg6851f-sms-pool.uc',executable=True)
+for name in ['usr/share/ucode/lg6851f/sms.uc','usr/share/ucode/lg6851f/sms-store.uc','lib/upgrade/keep.d/lg6851f-sms', 'usr/share/ucode/lg6851f/forward.uc','etc/config/lg6851f_sms_forward',
              'lib/upgrade/keep.d/lg6851f-sms-forward','usr/libexec/lg6851f-sms-forward.uc']:
     required(root/name)
 required(root/'etc/init.d/lg6851f-sms-forward',executable=True)
@@ -103,7 +108,7 @@ if args.rootfs:
     required(root/'usr/bin/iwinfo',executable=True)
     required(root/'usr/bin/curl',executable=True)
     required(root/'usr/bin/sha256sum',executable=True)
-    for module in ['fs','uci','ubus','uloop']:
+    for module in ['fs','uci','ubus','uloop','digest']:
         required(root/('usr/lib/ucode/'+module+'.so'))
     # The SDK also ships an old unversioned /usr/lib/libuci.so for its own
     # processes. Native ucode must bind to the modern versioned system ABI.

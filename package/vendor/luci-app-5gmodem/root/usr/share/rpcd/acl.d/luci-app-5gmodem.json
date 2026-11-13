@@ -3,7 +3,9 @@
 		"description": "View the MT6990 integrated 5G modem",
 		"read": {
 			"ubus": {
-				"luci.pwmfan": [ "get_status" ],
+				"luci.pwmfan": [
+					"get_status"
+				],
 				"luci.modem5g": [
 					"get_status",
 					"get_cells",
@@ -21,7 +23,9 @@
 					"get_forward_status",
 					"apn_get",
 					"traffic_get",
-					"get_fair_qos"
+					"get_fair_qos",
+					"sms_pool_list",
+					"sms_pool_job"
 				]
 			}
 		},
@@ -52,7 +56,12 @@
 					"request_radio_details",
 					"set_fair_qos",
 					"set_network_mode",
-					"set_data_roaming"
+					"set_data_roaming",
+					"sms_pool_show",
+					"sms_pool_send",
+					"sms_pool_delete",
+					"sms_pool_sync",
+					"clear_forward_history"
 				]
 			},
 			"uci": [

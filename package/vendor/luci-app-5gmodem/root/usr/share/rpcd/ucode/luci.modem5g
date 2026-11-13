@@ -108,6 +108,24 @@ function forward_call(command, input) {
 	try {response=json(result.output);} catch(e) {response={code:result.code||5,error:'短信转发服务未返回有效结果'};}
 	return response;
 }
+function pool_call(command,input) {
+	if (!board_ok()) return { code: 95, error: '不支持此设备' };
+	let argv=['/usr/bin/ucode','/usr/libexec/lg6851f-sms-pool.uc',command], directory=null, temporary=null;
+	if (input != null) {
+		directory=mkdtemp('/tmp/lg6851f-forward-edit.XXXXXX');
+		if (!directory) return { code: 5, error: '无法创建配置临时目录' };
+		temporary=directory+'/input';
+		let file=open(temporary,'wx',0o600), text=sprintf('%J',input);
+		if (!file || file.write(text)!=length(text) || !file.close()) {
+			unlink(temporary);rmdir(directory);return { code: 5, error: '无法暂存配置' };
+		}
+		push(argv,temporary);
+	}
+	let result=capture(argv,6), response;
+	if (temporary) {unlink(temporary);rmdir(directory);}
+	try {response=json(result.output);} catch(e) {response={code:result.code||5,error:'短信归档服务未返回有效结果'};}
+	return response;
+}
 
 function band_list(value, allowed) {
 	if (type(value) != 'array' || !length(value) || length(value) > 16)
@@ -378,6 +396,13 @@ const methods = {
 		result.serving.code = result.serving.code || 5;
 		return result;
 	} },
+    sms_pool_list: {args:{page:1},call:function(req){return pool_call('list',req.args);}},
+    sms_pool_show: {args:{id:''},call:function(req){return pool_call('show',req.args);}},
+    sms_pool_delete: {args:{id:'',sim:false},call:function(req){return pool_call('delete',req.args);}},
+    sms_pool_send: {args:{number:'',text:''},call:function(req){return pool_call('send',req.args);}},
+    sms_pool_sync: {call:function(){return pool_call('sync');}},
+    sms_pool_job: {call:function(){return pool_call('job');}},
+    clear_forward_history: {call:function(){return forward_call('clear');}},
 	list_sms: { call: function() {
 		let messages = capture([ '/usr/bin/lg6851f-sms-list' ], 40);
 

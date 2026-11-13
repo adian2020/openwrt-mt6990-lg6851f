@@ -20,3 +20,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+SMS and forwarding views are adapted from adian2020/mu300-linux, branch
+minikano-openwrt-feats, commit b35932ab3c7c7f1df3e1ad6a74056835bef13867:
+openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/sms.js,
+forward.js and sms.css. Hardware transport, persistence and delivery logic
+use LG6851F's existing qlril/atcid interfaces rather than MU300's AT stack.

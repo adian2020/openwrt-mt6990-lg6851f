@@ -44,9 +44,11 @@ if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_di
 		exit 1
 	}
 	export UCODE UCODE_LIBRARY
+	"$repo_dir/scripts/lg6851f-build-host-digest.sh"
 	python3 "$repo_dir/scripts/tests/test_lg6851f_dashboard.py"
 	python3 "$repo_dir/scripts/tests/test_lg6851f_qos_probe.py"
 	python3 "$repo_dir/scripts/tests/test_lg6851f_sms_forward.py"
+	python3 "$repo_dir/scripts/tests/test_lg6851f_sms_pool.py"
 	python3 "$repo_dir/scripts/tests/test_lg6851f_traffic.py"
 fi
 

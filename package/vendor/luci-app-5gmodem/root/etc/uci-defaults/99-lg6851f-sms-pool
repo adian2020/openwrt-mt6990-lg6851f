@@ -1,0 +1,6 @@
+#!/bin/sh
+umask 077
+mkdir -p /etc/lg6851f-sms
+chmod 700 /etc/lg6851f-sms
+/etc/init.d/lg6851f-sms-pool enable
+exit 0

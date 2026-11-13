@@ -29,7 +29,7 @@
 		"order": 20,
 		"action": {
 			"type": "view",
-			"path": "modem5g/sms_v2"
+			"path": "modem5g/sms_v3"
 		},
 		"depends": {
 			"acl": [
@@ -94,7 +94,7 @@
 		"order": 30,
 		"action": {
 			"type": "view",
-			"path": "modem5g/forward_v1"
+			"path": "modem5g/forward_v2"
 		},
 		"depends": {
 			"acl": [

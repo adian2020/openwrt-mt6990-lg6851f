@@ -195,5 +195,44 @@ sys.exit(int(os.environ.get('CURL_RESULT','0')))
         for secret in ['secret','example.invalid','13800000000','新增短信']:
             self.assertNotIn(secret,status)
 
+    def test_mu_get_form_headers_timeout_and_service_expectation(self):
+        self.config.update(smtp=False,sms=False,webhook_method='GET',url='https://example.invalid/hook?text={text}',webhook_timeout=120,webhook_headers='X-Fixture: yes',webhook_expect='ok=true')
+        self.cycle();self.write_list(stored(1,'a&中'));self.cycle(WEB_REPLY='{"ok":true}')
+        request=self.deliveries()[0]['config']
+        self.assertIn('request = "GET"',request)
+        self.assertIn('max-time = 120',request)
+        self.assertIn('a%26%E4%B8%AD',request)
+        self.assertIn('X-Fixture: yes',request)
+        self.assertNotIn('data-binary',request)
+        self.assertEqual(json.loads((self.root/'tmp/lg6851f-sms-forward-status.json').read_text())['results']['webhook']['state'],'sent')
+
+    def test_multiple_sms_destinations_keep_independent_dedup_and_self_block(self):
+        self.config.update(webhook=False,smtp=False,phone='10086\n10010\n10000')
+        self.cycle();self.write_list(stored(1,'new',sender='10086'));self.cycle();self.cycle()
+        self.assertEqual([v['args'][1] for v in self.deliveries()],['10010','10000'])
+
+    def test_dingtalk_signing_masks_secret_and_has_expected_response_contract(self):
+        self.config.update(smtp=False,sms=False,webhook_kind='dingtalk',dingtalk_webhook='https://oapi.dingtalk.com/robot/send?access_token=fixture',dingtalk_secret='SEC-private')
+        self.cycle();self.write_list(stored(1,'new'));self.cycle(WEB_REPLY='{"errcode":0}')
+        request=self.deliveries()[0]['config']
+        self.assertIn('&timestamp=',request);self.assertIn('&sign=',request);self.assertNotIn('SEC-private',request)
+        result=subprocess.run(self.command({'TEST_CONFIG':self.config})+[str(self.root/'worker.uc'),'get'],text=True,capture_output=True,check=True)
+        self.assertNotIn('SEC-private',result.stdout);self.assertTrue(json.loads(result.stdout)['values']['dingtalk_secret_set'])
+
+    def test_clear_history_keeps_durable_ledger_and_does_not_replay(self):
+        self.cycle();self.write_list(stored(1,'new'));self.cycle()
+        ledger=self.root/'etc/lg6851f-sms-forward/state.json';before=ledger.read_bytes()
+        result=subprocess.run(self.command({'TEST_CONFIG':self.config})+[str(self.root/'worker.uc'),'clear'],text=True,capture_output=True,check=True)
+        self.assertEqual(json.loads(result.stdout)['code'],0)
+        self.assertEqual(ledger.read_bytes(),before)
+        self.assertEqual(json.loads((self.root/'tmp/lg6851f-sms-forward-status.json').read_text())['history'],[])
+        self.cycle();self.assertEqual(len(self.deliveries()),3)
+
+    def test_blacklist_words_and_invalid_extra_headers(self):
+        for headers in ['Host: injected','X-Fixture: value\r\nInjected: yes','Content-Length: 0']:
+            self.assertIn('error',self.uc('f.validate(CONFIG)',CONFIG=dict(self.config,webhook_headers=headers)))
+        self.config['blacklist_keywords']='secret\n验证码'
+        self.cycle();self.write_list(stored(1,'验证码 1234'));self.cycle();self.assertEqual(self.deliveries(),[])
+
 
 if __name__=='__main__':unittest.main()
