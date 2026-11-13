@@ -47,6 +47,17 @@ at_query() {
 	timeout 10 "$ATCLI" "$command" 2>/dev/null
 }
 
+update_ims() {
+	local output parsed
+	# One read in the existing slow detail cycle; never contend with first dial.
+	[ "${UP:-false}" = true ] || return 75
+	output="$(at_query 'AT+CIREG?')" || return 75
+	parsed="$(printf '%s\n' "$output" | tr -d '\r' | grep -E '^\+CIREG:[[:space:]]*[0-2][[:space:]]*,[[:space:]]*[01]([[:space:]]*,[[:space:]]*[0-9A-Fa-f]{1,8})?[[:space:]]*$' | head -n 1)"
+	[ -n "$parsed" ] || return 1
+	IMS_CIREG="$parsed"
+	IMS_UPDATED="$(date +%s)"
+}
+
 write_state() {
 	now="$(date +%s)"
 	{
@@ -75,6 +86,8 @@ write_state() {
 		printf 'RSSI=%s\n' "$RSSI"
 		printf 'RSRQ=%s\n' "$RSRQ"
 		printf 'SINR=%s\n' "$SINR"
+		printf 'IMS_CIREG=%s\n' "$IMS_CIREG"
+		printf 'IMS_UPDATED=%s\n' "$IMS_UPDATED"
 	} >"$STATE_NEW" && mv "$STATE_NEW" "$STATE"
 }
 
@@ -105,6 +118,8 @@ CESQ=
 RSSI=
 RSRQ=
 SINR=
+IMS_CIREG=
+IMS_UPDATED=
 
 while :; do
 	now="$(date +%s)"
@@ -189,6 +204,7 @@ while :; do
 	fi
 
 	if [ $((now - last_detail)) -ge "$detail_interval" ]; then
+		update_ims
 		value="$(at_query 'AT+CESQ')"
 		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+CESQ:[[:space:]]*//p' | head -n 1)"
 		if [ -n "$parsed" ]; then

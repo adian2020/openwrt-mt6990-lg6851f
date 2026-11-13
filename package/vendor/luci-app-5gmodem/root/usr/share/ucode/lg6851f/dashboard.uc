@@ -67,6 +67,15 @@ export function boot_slot(cmdline) {
  let declared=suffix ? uc(suffix[3]) : null;
  return actual && declared && actual!=declared ? null : actual || declared;
 }
+export function ims_registration(value) {
+	// TS 27.007 8.71: ext_info is HEX, not a decimal status or a VoNR switch.
+	let m=match(value || '', /^\+CIREG:\s*([0-2])\s*,\s*([01])(\s*,\s*([0-9a-fA-F]{1,8}))?\s*$/);
+	if(!m)return null;
+	let registered=m[2]=='1', caps=registered && m[4]!=null ? int(m[4],16) : null;
+	return {registered, capabilities:caps,
+		voice:!registered ? false : caps==null ? null : !!(caps&1),
+		sms:!registered ? false : caps==null ? null : !!(caps&4)};
+}
 export function snapshot() {
 	let memory = {};
 	for (let line in split(text('/proc/meminfo'), '\n')) {
@@ -97,6 +106,8 @@ export function snapshot() {
 		push(power_supplies, { name: basename(dir), type: text(dir + '/type'), status: text(dir + '/status'), capacity: number(dir + '/capacity'),
 			online: number(dir + '/online'), voltage_uv: number(dir + '/voltage_now'), current_ua: number(dir + '/current_now') });
 	let identity = cached();
+	let ims=ims_registration(identity.IMS_CIREG);
+	if(ims){ims.updated=num(identity.IMS_UPDATED);ims.age=ims.updated==null ? null : time()-ims.updated;ims.stale=ims.age==null || ims.age<0 || ims.age>600;}
 	let radio_details = reading('radio-details'), details = radio_details?.parsed;
 	let operators = { '46000': '中国移动', '46002': '中国移动', '46007': '中国移动',
 		'46001': '中国联通', '46006': '中国联通', '46009': '中国联通',
@@ -112,7 +123,7 @@ export function snapshot() {
 		temperatures, frequencies, power_supplies,
 		network_defaults: { ipv4_ttl: number('/proc/sys/net/ipv4/ip_default_ttl'), ipv6_hop_limit: number('/proc/sys/net/ipv6/conf/default/hop_limit') },
 		conntrack: { count: number('/proc/sys/net/netfilter/nf_conntrack_count'), maximum: number('/proc/sys/net/netfilter/nf_conntrack_max'), kind: 'linux-conntrack' },
-		modem: { rat: identity.RAT || null, rat_raw: identity.RAT_RAW || null,
+		modem: { rat: identity.RAT || null, rat_raw: identity.RAT_RAW || null, ims,
 			operator: operators[identity.OPERATOR] || identity.OPERATOR || null,
 			plmn: identity.OPERATOR || null, sim: identity.SIM || null, registered: identity.REGISTERED == 'YES',
 			radio: identity.RADIO || null, rsrp: num(identity.RSRP), rsrq: num(identity.RSRQ), sinr: num(identity.SINR),

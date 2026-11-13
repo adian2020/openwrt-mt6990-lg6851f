@@ -45,6 +45,23 @@ class DashboardTest(unittest.TestCase):
         result=self.run_ucode("import * as d from 'lg6851f.dashboard'; printf('%J',map(lines,d.boot_slot));",lines=['root=/dev/mmcblk0p26 rw','root=/dev/mmcblk0p39','androidboot.slot_suffix=_a','slot_suffix=b','root=/dev/mmcblk0p26 androidboot.slot_suffix=_b','root=/dev/mmcblk0p260',''])
         self.assertEqual(result,['A','B','A','B',None,None,None])
 
+    def test_ims_registration_decodes_hex_capabilities_not_voice_switches(self):
+        result=self.run_ucode("import * as d from 'lg6851f.dashboard';printf('%J',map(lines,d.ims_registration));",lines=['+CIREG: 2,1,5','+CIREG: 2,1,10','+CIREG: 1,1','+CIREG: 2,0,5','+CIREG: 2,1,FFFFFFFF','OK','+CIREG: 2,3,5','+CIREG: 2,1,XYZ','+CIREG: 2,1,5 trailing'])
+        self.assertEqual(result[0],dict(registered=True,capabilities=5,voice=True,sms=True))
+        self.assertEqual(result[1],dict(registered=True,capabilities=16,voice=False,sms=False))
+        self.assertEqual(result[2],dict(registered=True,capabilities=None,voice=None,sms=None))
+        self.assertEqual(result[3],dict(registered=False,capabilities=None,voice=False,sms=False))
+        self.assertEqual(result[4]['capabilities'],0xffffffff)
+        self.assertEqual(result[5:],[None]*4)
+
+    def test_ims_snapshot_retains_last_measurement_time_and_marks_stale(self):
+        self.write('/tmp/lg6851f-modem-status.state','IMS_CIREG=+CIREG: 2,1,5\nIMS_UPDATED=1\n')
+        result=self.run_ucode("import * as d from 'lg6851f.dashboard';printf('%J',d.snapshot().modem.ims);")
+        self.assertTrue(result['registered'])
+        self.assertTrue(result['stale'])
+        self.assertEqual(result['updated'],1)
+        self.assertGreater(result['age'],600)
+
     def test_measurements_keep_fractions_and_unknowns(self):
         self.write('/proc/meminfo', 'MemTotal: 1000 kB\nMemAvailable: 789 kB\n')
         self.write('/sys/class/thermal/thermal_zone0/type', 'cpu_little0')

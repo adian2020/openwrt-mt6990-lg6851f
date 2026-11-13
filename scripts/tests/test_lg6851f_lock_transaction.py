@@ -139,5 +139,29 @@ test_timeout() {
                 result=subprocess.run(['sh','-c',source+'\n'+call],capture_output=True,text=True,timeout=5)
                 self.assertEqual(result.returncode,75,result.stderr)
 
+    def test_ims_collector_preserves_cache_on_failure_and_yields_first_dial(self):
+        source=(SCRIPT.parent/'lg6851f-modem-status').read_text().split("trap 'rm -f")[0]
+        source=source.replace('. /lib/functions.sh','config_load() { :; }; config_get() { :; }')
+        cases=[('false',0,'+CIREG: 2,1,5','old','1',False),
+               ('true',7,'+CIREG: 2,1,5','old','1',True),
+               ('true',0,'OK','old','1',True),
+               ('true',0,'+CIREG: 2,1,5','+CIREG: 2,1,5','42',True),
+               ('true',0,'+CIREG: 2,0','+CIREG: 2,0','42',True)]
+        with tempfile.TemporaryDirectory() as name:
+            for up,rc,output,expected,updated,called in cases:
+                with self.subTest(up=up,rc=rc,output=output):
+                    calls=pathlib.Path(name)/'calls';calls.unlink(missing_ok=True)
+                    mock='''
+at_query() { [ "$1" = 'AT+CIREG?' ] || exit 99; echo call >> "$TEST_DIR/calls"; printf '%s\\n' "$TEST_OUTPUT"; return "$TEST_RC"; }
+date() { echo 42; }
+IMS_CIREG=old; IMS_UPDATED=1
+update_ims
+printf '%s\\n%s\\n' "$IMS_CIREG" "$IMS_UPDATED"
+'''
+                    r=subprocess.run(['sh','-c',source+mock],env=dict(os.environ,UP=up,TEST_RC=str(rc),TEST_OUTPUT=output,TEST_DIR=name),capture_output=True,text=True,timeout=5)
+                    self.assertEqual(r.returncode,0,r.stderr)
+                    self.assertEqual(r.stdout.splitlines(),[expected,updated])
+                    self.assertEqual(calls.exists(),called)
+
 
 if __name__=='__main__':unittest.main()
