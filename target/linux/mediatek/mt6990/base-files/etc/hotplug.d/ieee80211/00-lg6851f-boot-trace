@@ -1,0 +1,6 @@
+#!/bin/sh
+# Handler receipt time, not an exact kernel wiphy_register timestamp.
+[ "$ACTION" = add ] || return 0
+[ -r /lib/functions/lg6851f-boot-trace.sh ] || return 0
+. /lib/functions/lg6851f-boot-trace.sh
+lg6851f_bootmark phy-add-hotplug "${DEVICENAME:-unknown}" "seqnum=${SEQNUM:-unknown}"

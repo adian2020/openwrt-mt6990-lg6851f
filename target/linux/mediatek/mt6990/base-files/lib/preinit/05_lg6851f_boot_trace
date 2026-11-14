@@ -1,0 +1,12 @@
+. /lib/functions/lg6851f-boot-trace.sh
+
+lg6851f_trace_preinit_begin() {
+	lg6851f_bootmark preinit-begin
+}
+
+lg6851f_trace_mount_root() {
+	lg6851f_bootmark mount-root-complete
+}
+
+boot_hook_add preinit_main lg6851f_trace_preinit_begin
+boot_hook_add preinit_mount_root lg6851f_trace_mount_root

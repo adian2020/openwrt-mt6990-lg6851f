@@ -4,7 +4,12 @@
 START=10
 STOP=90
 
+# Other targets keep a no-op. The MT6990 helper appends small monotonic log markers.
+lg6851f_bootmark() { :; }
+[ ! -r /lib/functions/lg6851f-boot-trace.sh ] || . /lib/functions/lg6851f-boot-trace.sh
+
 uci_apply_defaults() {
+	local default_rc
 	. /lib/functions/system.sh
 
 	cd /etc/uci-defaults || return 0
@@ -12,14 +17,26 @@ uci_apply_defaults() {
 	[ -z "$files" ] && return 0
 	applied=""
 	for file in $files; do
-		( . "./$(basename $file)" ) && applied="$applied $file"
+		lg6851f_bootmark defaults-script-begin "$file"
+		if ( . "./$(basename $file)" ); then
+			applied="$applied $file"
+			default_rc=0
+		else
+			default_rc=$?
+		fi
+		lg6851f_bootmark defaults-script-end "$file" "rc=$default_rc"
 	done
+	lg6851f_bootmark defaults-commit-begin
 	uci commit
+	lg6851f_bootmark defaults-sync-begin
 	sync
+	lg6851f_bootmark defaults-sync-end
 	rm -f $applied
 }
 
 boot() {
+	local boot_rc
+	lg6851f_bootmark s10-boot-begin
 	[ -f /proc/mounts ] || /sbin/mount_root
 	[ -f /proc/jffs2_bbc ] && echo "S" > /proc/jffs2_bbc
 
@@ -45,13 +62,28 @@ boot() {
 
 	# update wifi config before additional ieee80211 hotplug events
 	# get executed because of '/sbin/kmodloader' kmod loading.
-	[ -f /etc/board.json ] && /sbin/wifi config
+	if [ -f /etc/board.json ]; then
+		lg6851f_bootmark boot-wifi-config-begin
+		/sbin/wifi config
+		boot_rc=$?
+		lg6851f_bootmark boot-wifi-config-end "rc=$boot_rc"
+	fi
 
+	lg6851f_bootmark kmodloader-begin
 	/sbin/kmodloader
+	boot_rc=$?
+	lg6851f_bootmark kmodloader-end "rc=$boot_rc"
 
+	lg6851f_bootmark defaults-begin
 	uci_apply_defaults
+	boot_rc=$?
+	lg6851f_bootmark defaults-end "rc=$boot_rc"
 	sync
 
 	# temporary hack until configd exists
+	lg6851f_bootmark reload-config-begin
 	/sbin/reload_config
+	boot_rc=$?
+	lg6851f_bootmark s10-boot-end "rc=$boot_rc"
+	return "$boot_rc"
 }

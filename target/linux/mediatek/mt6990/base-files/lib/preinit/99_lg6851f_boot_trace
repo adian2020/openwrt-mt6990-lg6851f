@@ -1,0 +1,5 @@
+lg6851f_trace_preinit_end() {
+	lg6851f_bootmark preinit-complete
+}
+
+boot_hook_add preinit_main lg6851f_trace_preinit_end

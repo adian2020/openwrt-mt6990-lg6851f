@@ -98,6 +98,10 @@ required(chain/'usr/bin/lg6851f-modem-restart',executable=True)
 required(feed_root/'usr/bin/lg6851f-archive-ab-report',executable=True)
 required(feed_root/'etc/init.d/lg6851f-ab-report',executable=True)
 required(feed_root/'usr/bin/lg6851f-setup-apk-library',executable=True)
+required(feed_root/'usr/sbin/lg6851f-boot-observer',executable=True)
+required(feed_root/'etc/init.d/lg6851f-boot-observer',executable=True)
+for item in ['lib/functions/lg6851f-boot-trace.sh','lib/preinit/05_lg6851f_boot_trace','lib/preinit/99_lg6851f_boot_trace','etc/hotplug.d/ieee80211/00-lg6851f-boot-trace']:
+    required(feed_root/item)
 required(root/'usr/bin/lg6851f-radio-collect',executable=True)
 if not args.rootfs:
     required(root/'etc/uci-defaults/99-lg6851f-sms-forward',executable=True)

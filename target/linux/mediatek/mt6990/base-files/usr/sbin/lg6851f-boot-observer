@@ -1,0 +1,46 @@
+#!/bin/sh
+# Observe only: no wifi up/down, network reload, AT, debugfs or flash writes.
+umask 077
+. /lib/functions/lg6851f-boot-trace.sh
+case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in fiberhome,lg6851f|fiberhome_lg6851f) ;; *) exit 95 ;; esac
+work=$(mktemp -d /tmp/lg6851f-boot-observer.XXXXXX) || exit 1
+trap 'rm -rf "$work"' EXIT
+trap 'exit 0' INT TERM
+read -r started rest < /proc/uptime
+# Integer absolute budget, including RPC timeouts. Normally one query per second.
+deadline=$(( ${started%%.*} + 180 ))
+last_negative=unknown
+last_scan=unknown
+lg6851f_bootmark observer-start
+while :; do
+ read -r now rest < /proc/uptime
+ [ "${now%%.*}" -lt "$deadline" ] || break
+ for path in /sys/class/ieee80211/phy*; do
+  [ -d "$path" ] || continue
+  name=${path##*/}
+  [ ! -e "$work/$name" ] || continue
+  lg6851f_bootmark phy-observed "$name" "previous_scan=$last_scan"
+  : > "$work/$name"
+ done
+ # One cached hostapd state query; do not ask netifd to enable anything.
+ last_scan=$now
+ read -r query_started rest < /proc/uptime
+ status=$(ubus -t 1 call hostapd status '{}' 2>/dev/null)
+ if [ "$?" = 0 ]; then
+  running=$(jsonfilter -s "$status" -e '@.interfaces.*.running' 2>/dev/null)
+  read -r observed rest < /proc/uptime
+  if printf '%s\n' "$running" | grep -qx true; then
+   lg6851f_bootmark ap-running-observed "last_not_running=$last_negative"
+   (set -C; printf '%s\n' "$status" > /tmp/lg6851f-boot-first-ap.json) 2>/dev/null || :
+   lg6851f_bootmark observer-end reason=first-ap-running
+   exit 0
+  fi
+  # Only a successful state response is a valid negative observation.
+  if jsonfilter -s "$status" -e '@.interfaces' >/dev/null 2>&1; then
+   last_negative=$query_started
+  fi
+ fi
+ sleep 1
+done
+lg6851f_bootmark observer-end reason=timeout
+exit 0

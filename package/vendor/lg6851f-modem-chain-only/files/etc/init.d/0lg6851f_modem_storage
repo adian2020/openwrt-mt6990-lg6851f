@@ -4,6 +4,8 @@ START=09
 STOP=91
 
 . /lib/functions/system.sh
+lg6851f_bootmark() { :; }
+[ ! -r /lib/functions/lg6851f-boot-trace.sh ] || . /lib/functions/lg6851f-boot-trace.sh
 
 : "${WIFI_EEPROM_SOURCE:=/mnt/vendor/nvcfg/e2p}"
 : "${WIFI_EEPROM_TEMPLATE:=/rom/lib/firmware/mediatek/mt7996/mt7996_eeprom_mt6990.bin}"
@@ -40,8 +42,10 @@ mount_part() {
 
 	mkdir -p "$target"
 	grep -qs " $target " /proc/mounts && return 0
+	lg6851f_bootmark storage-mount-begin "$target"
 	while [ "$attempt" -le 3 ]; do
 		if mount -t ext4 -o noatime "$device" "$target"; then
+			lg6851f_bootmark storage-mount-end "$target" "rc=0" "attempt=$attempt"
 			log_msg "mounted $device on $target (attempt $attempt)"
 			return 0
 		fi
@@ -49,6 +53,7 @@ mount_part() {
 		attempt=$((attempt + 1))
 		sleep 1
 	done
+	lg6851f_bootmark storage-mount-end "$target" rc=1
 	return 1
 }
 
@@ -118,7 +123,8 @@ prepare_wifi_eeprom() {
 }
 
 start() {
-	local slot
+	local slot eeprom_rc
+	lg6851f_bootmark storage-begin
 
 	link_gpt_partitions
 	slot="$(sed -n 's/.*bootslot=\([^ ]*\).*/\1/p' /proc/cmdline)"
@@ -143,7 +149,14 @@ start() {
 	[ -e /vendor/etc ] || ln -s /etc /vendor/etc
 
 	mount_part /dev/block/nvcfg /mnt/vendor/nvcfg
-	prepare_wifi_eeprom || log_msg "ERROR: failed to prepare MT7990 EEPROM"
+	lg6851f_bootmark eeprom-prepare-begin
+	if prepare_wifi_eeprom; then
+		eeprom_rc=0
+	else
+		eeprom_rc=$?
+	fi
+	lg6851f_bootmark eeprom-prepare-end "rc=$eeprom_rc"
+	[ "$eeprom_rc" = 0 ] || log_msg "ERROR: failed to prepare MT7990 EEPROM"
 	mount_part /dev/block/nvdata /mnt/vendor/nvdata
 	mount_part /dev/block/protect1 /mnt/vendor/protect_f
 	mount_part /dev/block/protect2 /mnt/vendor/protect_s
@@ -154,10 +167,12 @@ start() {
 	# FSD partition must not suppress nvram_daemon after nvdata is available.
 	if ! grep -qs ' /mnt/vendor/nvdata ' /proc/mounts; then
 		log_msg "ERROR: nvdata is unavailable; modem boot is unsafe"
+		lg6851f_bootmark storage-end rc=1
 		return 1
 	fi
 	mkdir -p /mnt/vendor/nvdata/md_cmn
 	log_msg "official modem storage setup complete, slot=$slot"
+	lg6851f_bootmark storage-end rc=0
 }
 
 stop() {
