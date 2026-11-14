@@ -7,6 +7,11 @@ repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 : "${UCODE_LIBRARY:?Set UCODE_LIBRARY to its native module directory}"
 set -- "$repo_dir"/build_dir/hostpkg/ucode-*/lib/digest.c
 [ "$#" -eq 1 ] && [ -f "$1" ] || { echo 'ERROR: expected exactly one pinned host ucode digest source' >&2; exit 1; }
-${CC:-cc} -shared -fPIC -O2 -I"$repo_dir/staging_dir/hostpkg/include" \
+# libjson-c/host installs into STAGING_DIR_HOST, unlike ucode's hostpkg.
+[ -s "$repo_dir/staging_dir/host/include/json-c/json.h" ] || {
+ echo 'ERROR: staged host json-c headers are missing; build libjson-c/host first' >&2
+ exit 1
+}
+${CC:-cc} -shared -fPIC -O2 -I"$repo_dir/staging_dir/hostpkg/include" -I"$repo_dir/staging_dir/host/include" \
  "$1" -lmd -o "$UCODE_LIBRARY/digest.so"
 "$UCODE" -L "$UCODE_LIBRARY" -e 'import {sha256} from "digest"; if(sha256("abc")!="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")die("SHA256 self-test failed");'
