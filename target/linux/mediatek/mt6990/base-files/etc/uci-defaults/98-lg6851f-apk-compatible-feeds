@@ -3,6 +3,12 @@
 # LG6851F/MT6990 uses a locally maintained target, kernel ABI and Cortex-A55
 # package ABI. Never mix it with rolling OpenWrt snapshot repositories.
 
+# New builds explicitly carry a same-build library identity. Never silently
+# fall back to the older feed if its setup fails.
+if [ -e /usr/share/mt6990-apk/build.json ]; then
+ exec /usr/bin/lg6851f-setup-apk-library
+fi
+
 arch_file=/etc/apk/arch
 dist_file=/etc/apk/repositories.d/distfeeds.list
 compat_file=/etc/apk/repositories.d/lg6851f-userland.list

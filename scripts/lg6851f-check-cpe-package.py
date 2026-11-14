@@ -97,6 +97,7 @@ required(root/'usr/bin/lg6851f-cellular-refresh',executable=True)
 required(chain/'usr/bin/lg6851f-modem-restart',executable=True)
 required(feed_root/'usr/bin/lg6851f-archive-ab-report',executable=True)
 required(feed_root/'etc/init.d/lg6851f-ab-report',executable=True)
+required(feed_root/'usr/bin/lg6851f-setup-apk-library',executable=True)
 required(root/'usr/bin/lg6851f-radio-collect',executable=True)
 if not args.rootfs:
     required(root/'etc/uci-defaults/99-lg6851f-sms-forward',executable=True)
@@ -107,6 +108,17 @@ for name in ['usr/bin/lg6851f-radio-control','usr/bin/lg6851f-modem-details',
 for name in ['lib/functions/lg6851f-radio.sh','lib/netifd/proto/ql_datacall.sh']:
     required(chain/name)
 if args.rootfs:
+    # Every normal cloud image must carry its own library identity and ROM key.
+    library=root/'usr/share/mt6990-apk'
+    for filename in ['build.json','selection.json','repositories.list','public-key.pem']:
+        required(library/filename)
+    if (library/'build.json').is_file():
+        identity=json.loads((library/'build.json').read_text())
+        if identity.get('source_sha')!=(root/'etc/mt6990-firmware-id').read_text().strip():
+            errors.append('固件源码编号与软件库不匹配')
+        expected=f'https://raw.githubusercontent.com/{identity["repository"]}/apk-lib-{identity["snapshot"]}/{identity["snapshot"]}/packages.adb\n'
+        if (library/'repositories.list').read_text()!=expected:errors.append('固件软件库URL与构建快照不匹配')
+        if (library/'public-key.pem').read_bytes()!=(root/'etc/apk/keys/public-key.pem').read_bytes():errors.append('固件ROM软件库公钥与本次APK签名公钥不匹配')
     required(root/'usr/bin/iwinfo',executable=True)
     required(root/'usr/sbin/miniupnpd',executable=True)
     required(assets/'view/upnp/upnp.js')

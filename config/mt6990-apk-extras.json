@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "applications": [
+    "luci-app-ddns", "luci-app-wol", "luci-app-ttyd", "luci-app-watchcat",
+    "luci-app-nlbwmon", "luci-app-vnstat2", "luci-app-pbr", "luci-app-adblock-fast", "luci-app-aria2"
+  ],
+  "utilities": [
+    "bash", "coreutils-base64", "coreutils-date", "coreutils-nohup", "coreutils-stat",
+    "diffutils", "findutils-find", "findutils-xargs", "gawk", "grep", "sed",
+    "bzip2", "xz-utils", "zstd", "unzip", "jq", "openssl-util",
+    "python3-light", "python3-logging", "python3-urllib", "python3-openssl", "python3-requests",
+    "lua", "luci-compat", "luci-lib-ipkg", "luasocket", "luasec"
+  ]
+}

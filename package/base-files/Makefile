@@ -15,7 +15,7 @@ PKG_NAME:=base-files
 PKG_FLAGS:=nonshared
 PKG_RELEASE:=$(COMMITCOUNT)
 
-PKG_FILE_DEPENDS:=$(PLATFORM_DIR)/ $(GENERIC_PLATFORM_DIR)/base-files/
+PKG_FILE_DEPENDS:=$(PLATFORM_DIR)/ $(GENERIC_PLATFORM_DIR)/base-files/ $(if $(CONFIG_TARGET_mediatek_mt6990),$(wildcard $(TOPDIR)/files/usr/share/mt6990-apk/build.json))
 PKG_BUILD_DEPENDS:=usign/host ucert/host
 PKG_LICENSE:=GPL-2.0
 
@@ -125,6 +125,10 @@ ifndef CONFIG_BUILDBOT
   define Package/base-files/install-key
 	mkdir -p $(1)/etc/apk/keys
 	$(CP) $(BUILD_KEY_APK_PUB) $(1)/etc/apk/keys/
+	if [ "$(CONFIG_TARGET_mediatek_mt6990)" = y ] && [ -s "$(TOPDIR)/files/usr/share/mt6990-apk/build.json" ]; then \
+		mkdir -p $(1)/usr/share/mt6990-apk; \
+		$(CP) $(BUILD_KEY_APK_PUB) $(1)/usr/share/mt6990-apk/public-key.pem; \
+	fi
   endef
 endif
 else

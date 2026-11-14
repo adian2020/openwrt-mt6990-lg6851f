@@ -1,0 +1,51 @@
+#!/bin/sh
+# Select only the complete library built with this image; never fetch a key.
+set -eu
+umask 077
+case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in fiberhome,lg6851f|fiberhome_lg6851f) ;; *) echo 'Unsupported board for firmware APK library' >&2; exit 95 ;; esac
+meta=/usr/share/mt6990-apk
+apk_root=/etc/apk
+[ -s "$meta/build.json" ] && [ -s "$meta/repositories.list" ] && [ -s "$meta/public-key.pem" ] || {
+ echo 'Firmware APK library metadata/key is missing; no repository changes made' >&2; exit 1;
+}
+version=$(jsonfilter -i "$meta/build.json" -e '@.version')
+[ "$version" = 1 ] || { echo 'Unsupported APK library metadata version' >&2; exit 1; }
+snapshot=$(jsonfilter -i "$meta/build.json" -e '@.snapshot')
+source=$(jsonfilter -i "$meta/build.json" -e '@.source_sha')
+repository=$(jsonfilter -i "$meta/build.json" -e '@.repository')
+architecture=$(jsonfilter -i "$meta/build.json" -e '@.architecture')
+printf '%s\n' "$snapshot" | grep -Eq '^[0-9]+-[0-9]+$'
+printf '%s\n' "$source" | grep -Eq '^[0-9a-f]{40}$'
+printf '%s\n' "$repository" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+[ "$architecture" = aarch64_cortex-a55_neon-vfpv4 ]
+[ "$(cat /etc/mt6990-firmware-id)" = "$source" ] || { echo 'Firmware/library source mismatch' >&2; exit 1; }
+expected="https://raw.githubusercontent.com/$repository/apk-lib-$snapshot/$snapshot/packages.adb"
+[ "$(cat "$meta/repositories.list")" = "$expected" ] || { echo 'Unexpected library URL' >&2; exit 1; }
+# Preserve an old build key in /etc if present; install this ROM key under a
+# snapshot-specific name so sysupgrade-restored public-key.pem cannot override it.
+mkdir -p "$apk_root/keys" "$apk_root/repositories.d" "$apk_root/library-backups/$snapshot"
+backup="$apk_root/library-backups/$snapshot"
+for name in distfeeds.list nikki.list firmware.list; do
+ file="$apk_root/repositories.d/$name"
+ [ ! -f "$file" ] || [ -f "$backup/$name" ] || cp -p "$file" "$backup/$name"
+done
+cp "$meta/public-key.pem" "$apk_root/keys/.lg6851f-build-$snapshot.tmp"
+chmod 644 "$apk_root/keys/.lg6851f-build-$snapshot.tmp"
+mv "$apk_root/keys/.lg6851f-build-$snapshot.tmp" "$apk_root/keys/lg6851f-build-$snapshot.pem"
+# Disable the project's older base/Nikki endpoints; do not delete custom repos.
+for name in distfeeds.list nikki.list; do
+ file="$apk_root/repositories.d/$name"
+ [ -f "$file" ] || continue
+ awk -v pinned='13179415360/openwrt-mt6990-lg6851f@760d829021769a0aff5d713e7316c7d36ff40c71/' \
+     -v raw='13179415360/openwrt-mt6990-lg6851f/760d829021769a0aff5d713e7316c7d36ff40c71/' \
+     -v nikki="/$repository/nikki-apk/" \
+     'index($0,pinned)==0 && index($0,raw)==0 && index($0,nikki)==0' "$file" > "$file.library-new"
+ mv "$file.library-new" "$file"
+done
+# Preserve architecture file unless the known old generic entry needs removal.
+touch "$apk_root/arch"
+sed -i '/^aarch64_cortex-a53$/d' "$apk_root/arch"
+grep -qxF "$architecture" "$apk_root/arch" || printf '%s\n' "$architecture" >> "$apk_root/arch"
+cp "$meta/repositories.list" "$apk_root/repositories.d/firmware.list.library-new"
+mv "$apk_root/repositories.d/firmware.list.library-new" "$apk_root/repositories.d/firmware.list"
+printf 'APK library configured: %s\n' "$snapshot"
