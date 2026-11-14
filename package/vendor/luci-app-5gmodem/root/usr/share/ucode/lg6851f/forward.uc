@@ -55,8 +55,11 @@ export function validate(input) {
     let seen={};for(let value in split(result.phone,'\n')){if(!length(value))continue;let key=replace(value,/^\+/,'');if(seen[key])return {error:'短信接收号码重复'};seen[key]=true;}
 	return { values: result };
 }
-function decode(hex) {
+function decode(hex, trailing_terminator) {
 	if (!length(hex) || length(hex) % 4 || !match(hex,/^[0-9A-Fa-f]+$/)) return null;
+	// This modem appends a UCS2 C-string terminator to received bodies.
+	// Strip aligned trailing NUL units only; embedded NULs remain invalid.
+	if(trailing_terminator)while(length(hex)>=4&&substr(hex,-4)=='0000')hex=substr(hex,0,length(hex)-4);
 	let out = '';
 	for (let i=0; i<length(hex); i+=4) {
 		let code=+('0x'+substr(hex,i,4));
@@ -91,12 +94,13 @@ export function parse_sms(raw, include_sent) {
 		let udh=match(row.hex,/^050003([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})/);
 		let wide=match(row.hex,/^060804([0-9A-Fa-f]{4})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})/);
 		let multipart=wide||udh;
-		row.text=decode(substr(row.hex,multipart?(wide?14:12):0));
+		row.text=decode(substr(row.hex,multipart?(wide?14:12):0),true);
 		if (row.text==null) return { error: '短信UCS2数据无效' };
 		if (!multipart) { push(messages,row); continue; }
 		let total=+('0x'+multipart[2]), part=+('0x'+multipart[3]);
 		if (total<1 || total>32 || part<1 || part>total) return { error: '长短信分片信息无效' };
-		let key=row.dir+'|'+row.from+'|'+substr(row.time,0,8)+'|'+uc(multipart[1])+'|'+total;
+		let full_date=match(row.time||'',/^([0-9]{4}\/[0-9]{2}\/[0-9]{2}) /);
+		let key=row.dir+'|'+row.from+'|'+(full_date?full_date[1]:substr(row.time,0,8))+'|'+uc(multipart[1])+'|'+total;
 		let group=groups[key] ||= { from:row.from, time:row.time, total, dir:row.dir, parts:{}, invalid:false };
 		if (group.parts[part] && group.parts[part].text != row.text) group.invalid=true;
 		group.parts[part]=row;

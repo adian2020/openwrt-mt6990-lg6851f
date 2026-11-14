@@ -113,6 +113,31 @@ print((r/'list').read_text() if sys.argv[1]=='AT+CMGL=\"ALL\"' else '\\r\\nOK\\r
         self.assertFalse(result['ok']);self.assertIn('未运行',result['error'])
         self.assertFalse((self.root/'submissions').exists())
 
+    def test_real_modem_terminated_bodies_archive_both_distinct_times(self):
+        raw=''.join(f'+CMGL: {i},"REC READ","10086","","2026/11/14 {stamp}+32"\r\n00740065007300740000\r\n' for i,stamp in [(1,'17:09:55'),(2,'17:15:56')])+'\r\nOK\r\n'
+        (self.root/'list').write_text(raw)
+        result=self.command('sync-now');self.assertTrue(result['ok'],result)
+        data=self.run_uc('p.list(1)');self.assertEqual(data['total'],2)
+        self.assertEqual([m['time'] for m in data['msgs']],['2026-11-14 17:15:56','2026-11-14 17:09:55'])
+        for item in data['msgs']:self.assertTrue(self.run_uc('p.show(ID)',ID=item['id'])['text'].endswith('\n---\ntest'))
+        self.command('sync-now');self.assertEqual(self.run_uc('p.list(1)')['total'],2)
+        ident=data['msgs'][0]['id'];self.command('delete',{'id':ident,'sim':True});self.assertTrue(self.work()['ok'])
+        self.assertIn('AT+CMGD=2',(self.root/'at-calls').read_text())
+
+    def test_ucs2_trailing_terminators_do_not_hide_embedded_invalid_data(self):
+        def raw(hex):return '+CMGL: 1,"REC UNREAD","10086","","2026/11/14 17:09:55+32"\n'+hex+'\nOK\n'
+        for body,expected in [('4F60597D0000','你好'),('D83DDE0000000000','😀'),('00300000','0'),('0000','')]:
+            value=self.run_uc('f.parse_sms(RAW)',RAW=raw(body));self.assertEqual(value['messages'][0]['text'],expected)
+        for body in ['0074000000650000','D8000000','DC000000','0074000']:
+            self.assertIn('error',self.run_uc('f.parse_sms(RAW)',RAW=raw(body)))
+
+    def test_full_year_multipart_reference_does_not_merge_different_days(self):
+        def part(index,day,number,body):return f'+CMGL: {index},"REC UNREAD","10086","","2026/11/{day} 17:09:55+32"\n050003A7020{number}'+body+'0000\n'
+        split_days=part(1,'14',1,'4F60')+part(2,'15',2,'597D')+'OK\n'
+        value=self.run_uc('f.parse_sms(RAW)',RAW=split_days);self.assertEqual(value['messages'],[]);self.assertEqual(value['incomplete'],2)
+        same_day=part(1,'14',1,'4F60')+part(2,'14',2,'597D')+'OK\n'
+        value=self.run_uc('f.parse_sms(RAW)',RAW=same_day);self.assertEqual(value['messages'][0]['text'],'你好');self.assertEqual(value['messages'][0]['time'],'2026/11/14 17:09:55+32')
+
     def test_hmac_and_url_encoding_use_standard_known_values(self):
         result=self.run_uc('b64enc(s.hmac256(KEY,TEXT))',KEY='SEC-secret',TEXT='1790000000000\nSEC-secret')
         import base64

@@ -6,6 +6,8 @@ export function number(value) { return type(value)=='string' && !!match(value,/^
 export function id(sim,message) { return 'm-'+sha256(sprintf('%J',[sim,message.dir||'mt',message.from,message.time,message.text])); }
 export function valid_id(value) { return type(value)=='string'&&!!match(value,/^m-[0-9a-f]{64}$/); }
 export function display_time(value) {
+ let full=match(value||'',/^([0-9]{4})\/([0-9]{2})\/([0-9]{2}) ([0-9:]{8})/);
+ if(full)return full[1]+'-'+full[2]+'-'+full[3]+' '+full[4];
  let m=match(value||'',/^([0-9]{2})\/([0-9]{2})\/([0-9]{2}),([0-9:]{8})/);
  return m?'20'+m[1]+'-'+m[2]+'-'+m[3]+' '+m[4]:value;
 }
