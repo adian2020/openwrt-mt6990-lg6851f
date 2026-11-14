@@ -86,6 +86,42 @@ class BootMeasureTest(unittest.TestCase):
         self.assertIn('phase=kmodloader-end rc=9',text)
         self.assertIn('phase=defaults-script-end 20-failure rc=7',text)
         self.assertIn('phase=s10-boot-end rc=13',text)
+    def test_preinit_hooks_preserve_nested_order_once_flags_and_failure_handling(self):
+        library=ROOT/'package/base-files/files/lib/functions/preinit.sh'
+        program=f'. "{library}"\n'+r'''
+boot_hook_trace() { printf "%s\n" "$*" >> "$TEST_DIR/hook-trace"; }
+boot_hook_init preinit_main
+boot_hook_init nested
+one() { echo "one:$1:$2" >> "$TEST_DIR/calls"; boot_run_hook nested inner; return 7; }
+two() { echo "two:$1:$2" >> "$TEST_DIR/calls"; }
+boot_hook_add preinit_main one
+boot_hook_add preinit_main two
+boot_hook_add nested two
+boot_run_hook preinit_main outer
+first_rc=$?
+boot_run_hook preinit_main outer
+[ "$first_rc" = 0 ] && [ "$PI_RAN_one" = 1 ] && [ "$PI_RAN_two" = 1 ]
+'''
+        result=subprocess.run(['bash','-c',program],env=self.env,capture_output=True,text=True,timeout=5)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual((self.root/'calls').read_text().splitlines(),['one:preinit_main:outer','two:nested:inner'])
+        self.assertEqual((self.root/'hook-trace').read_text().splitlines(),[
+            'preinit-hook-begin preinit_main one','preinit-hook-begin nested two',
+            'preinit-hook-end nested two rc=0','preinit-hook-end preinit_main one rc=7'])
+    def test_mount_root_observation_preserves_original_no_restore_return(self):
+        source=(ROOT/'package/base-files/files/lib/preinit/80_mount_root').read_text()
+        for old,new in [('/sysupgrade.tgz',str(self.root/'no-backup.tgz')),('/tmp/sysupgrade.tar',str(self.root/'no-backup.tar'))]:
+            source=source.replace(old,new)
+        program=r'''
+boot_hook_add() { :; }
+boot_hook_trace() { echo "$*" >> "$TEST_DIR/mount-trace"; }
+mount_root() { echo mount >> "$TEST_DIR/calls"; return 9; }
+boot_run_hook() { echo "$*" >> "$TEST_DIR/calls"; }
+'''+source+'\ndo_mount_root\n'
+        result=self.run_shell(program)
+        self.assertEqual(result.returncode,1,result.stderr)
+        self.assertEqual((self.root/'calls').read_text().splitlines(),['mount','preinit_mount_root'])
+        self.assertIn('mount-root-command-end rc=9',(self.root/'mount-trace').read_text())
     def observer(self, disabled=False):
         (self.root/'phys').mkdir()
         (self.root/'board').write_text('fiberhome,lg6851f')
@@ -147,6 +183,17 @@ LG6851F_BOOT_STAGE uptime=100.00 phase=kmodloader-end rc=0
         self.assertIn('不晚于 45.00 秒',result)
         self.assertNotIn('100.00',result)
         self.assertIn('采样点差',result)
+        detailed='''LG6851F_BOOT_STAGE uptime=4 phase=preinit-hook-begin preinit_main failsafe_wait
+LG6851F_BOOT_STAGE uptime=8 phase=preinit-hook-end preinit_main failsafe_wait rc=1
+LG6851F_BOOT_STAGE uptime=10 phase=ubus-register-begin service
+LG6851F_BOOT_STAGE uptime=12 phase=ubus-register-end service
+LG6851F_BOOT_STAGE uptime=9 phase=ubus-connect-begin attempt=1
+LG6851F_BOOT_STAGE uptime=9.1 phase=ubus-connect-end attempt=1 success=1
+'''
+        summary='\n'.join(analyzer.analyze(detailed))
+        self.assertIn('4.000 秒  preinit_main failsafe_wait rc=1',summary)
+        self.assertIn('2.000 秒  service',summary)
+        self.assertIn('0.100 秒  attempt=1 success=1',summary)
     def test_analyzer_never_uses_wifi_up_as_ap_enabled_and_rejects_mixed_boots(self):
         result='\n'.join(analyzer.analyze('LG6851F_BOOT_STAGE uptime=10 phase=wifi-up-request-end rc=0'))
         self.assertIn('首个热点运行确认：没有记录',result)

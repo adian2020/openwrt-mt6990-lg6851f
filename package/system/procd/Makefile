@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=procd
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL=$(PROJECT_GIT)/project/procd.git
@@ -23,9 +23,12 @@ PKG_LICENSE_FILES:=
 PKG_MAINTAINER:=John Crispin <john@phrozen.org>
 
 PKG_BUILD_FLAGS:=lto
+
+# Board-only, passive timestamps. Other targets compile the calls to no-ops.
+TARGET_CFLAGS += $(if $(filter y,$(CONFIG_TARGET_mediatek_mt6990)),-DLG6851F_BOOT_TRACE)
 PKG_ASLR_PIE_REGULAR:=1
 PKG_CONFIG_DEPENDS:= \
-	CONFIG_TARGET_INIT_PATH CONFIG_KERNEL_SECCOMP CONFIG_PROCD_SHOW_BOOT \
+	CONFIG_TARGET_INIT_PATH CONFIG_TARGET_mediatek_mt6990 CONFIG_KERNEL_SECCOMP CONFIG_PROCD_SHOW_BOOT \
 	CONFIG_KERNEL_NAMESPACES CONFIG_PACKAGE_procd-ujail CONFIG_PACKAGE_procd-seccomp
 
 include $(INCLUDE_DIR)/package.mk

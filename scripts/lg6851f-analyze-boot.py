@@ -30,6 +30,12 @@ def analyze(text):
         else:
             result.append(label + '：起止记录不足，未计算')
     pair('preinit已记录区间', 'preinit-begin', 'preinit-complete')
+    pair('mount_root命令区间', 'mount-root-command-begin', 'mount-root-command-end')
+    pair('通用配置备份还原区间', 'config-restore-begin', 'config-restore-end')
+    pair('preinit子进程退出至procd执行', 'preinit-child-exit', 'procd-exec')
+    pair('procd进入ubus至init', 'procd-ubus-enter', 'procd-init')
+    pair('ubusd启动请求返回（不代表daemon就绪）', 'ubusd-start-begin', 'ubusd-start-return')
+    pair('ubus首次连接及内部注册总区间', 'ubus-connect-scheduled', 'ubus-initial-ready')
     pair('S09存储准备', 'storage-begin', 'storage-end')
     pair('WiFi EEPROM准备', 'eeprom-prepare-begin', 'eeprom-prepare-end')
     pair('S10启动区间', 's10-boot-begin', 's10-boot-end')
@@ -38,6 +44,25 @@ def analyze(text):
     pair('uci-defaults总区间（本次待执行项）', 'defaults-begin', 'defaults-end')
     pair('首次WiFi配置生成', 'wifi-config-begin', 'wifi-config-end')
     pair('wifi up请求返回（不代表热点已启用）', 'wifi-up-request-begin', 'wifi-up-request-end')
+    # Pair nested preinit hooks by hook+function, and ubus attempts/registrations
+    # by their own keys. These are nested intervals, not additive totals.
+    for label, begin, end, key_fields in [
+        ('preinit各钩子（包含嵌套工作，不可重复相加）', 'preinit-hook-begin', 'preinit-hook-end', 2),
+        ('ubus连接尝试（最多前32次）', 'ubus-connect-begin', 'ubus-connect-end', 1),
+        ('ubus内部注册步骤', 'ubus-register-begin', 'ubus-register-end', 1),
+    ]:
+        pending_stages = {}
+        durations = []
+        for stamp, phase, tail in events:
+            key = ' '.join(tail.split()[:key_fields])
+            if phase == begin:
+                pending_stages[key] = stamp
+            elif phase == end and key in pending_stages:
+                durations.append((stamp-pending_stages.pop(key), tail))
+        if durations or pending_stages:
+            result.append(label + '：')
+            result.extend(f'  {duration:.3f} 秒  {tail}' for duration, tail in sorted(durations, reverse=True))
+            result.extend('  未结束：' + key for key in pending_stages)
     scripts = []
     pending = {}
     for stamp, phase, tail in events:

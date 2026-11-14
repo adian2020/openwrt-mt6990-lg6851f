@@ -3,10 +3,10 @@
 umask 077
 report=/tmp/lg6851f-boot-dashboard.txt
 # 排除高频 CCCI 收发统计；它们会挤掉 tail 中真正需要的启动事件。
-boot_pattern='===== MT6990 BOOT|^boot_id=|^cmdline=|LG6851F_BOOT_STAGE|Linux version|Kernel command line|Run /etc/preinit|procd.*(early|ubus|init|stop|timeout)|kmodloader|initcall|lg6851f.wifi|lg6851f.modem.stack|lg6851f_modem_storage|mt799|mt76|hostapd.*(AP-ENABLED|AP-DISABLED|state|setup|failed|error)|netifd.*(Wireless|radio[0-9]|Interface .modem5g. is now up)|wifi.*(held down|enabl|preserv|PHY|generating)|EXT4-fs.*mmcblk0p46'
+boot_pattern='===== MT6990 BOOT|^boot_id=|^cmdline=|^firmware_id=|LG6851F_BOOT_STAGE|Linux version|Kernel command line|Run /etc/preinit|procd.*(early|ubus|init|stop|timeout)|kmodloader|initcall|lg6851f.wifi|lg6851f.modem.stack|lg6851f_modem_storage|mt799|mt76|hostapd.*(AP-ENABLED|AP-DISABLED|state|setup|failed|error)|netifd.*(Wireless|radio[0-9]|Interface .modem5g. is now up)|wifi.*(held down|enabl|preserv|PHY|generating)|EXT4-fs.*mmcblk0p46'
 {
  echo '=== 采集版本 ==='
- echo 'collector_version=4'
+ echo 'collector_version=5'
  echo '=== 固件与运行时间 ==='
  cat /etc/mt6990-firmware-id /proc/sys/kernel/random/boot_id /proc/uptime 2>/dev/null
  uptime

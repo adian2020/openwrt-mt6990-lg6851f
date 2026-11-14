@@ -34,9 +34,14 @@ compose_rootfs_mount_options() {
 }
 
 do_mount_root() {
+	local mount_trace_rc
+	boot_hook_trace mount-root-command-begin
 	mount_root start "$(compose_rootfs_mount_options)"
+	mount_trace_rc=$?
+	boot_hook_trace mount-root-command-end "rc=$mount_trace_rc"
 	boot_run_hook preinit_mount_root
 	[ -f /sysupgrade.tgz -o -f /tmp/sysupgrade.tar ] && {
+		boot_hook_trace config-restore-begin
 		echo "- config restore -"
 		cp /etc/passwd /etc/group /etc/shadow /tmp
 		cd /
@@ -47,7 +52,11 @@ do_mount_root() {
 		missing_lines /tmp/shadow /etc/shadow >> /etc/shadow
 		rm /tmp/passwd /tmp/group /tmp/shadow
 		# Prevent configuration corruption on a power loss
+		boot_hook_trace config-restore-sync-begin
 		sync
+		mount_trace_rc=$?
+		boot_hook_trace config-restore-end "rc=$mount_trace_rc"
+		return "$mount_trace_rc"
 	}
 }
 

@@ -40,6 +40,7 @@ chmod 0700 "$ROOT"
 {
 	printf '\n===== MT6990 BOOT %s =====\n' "$(date -Iseconds 2>/dev/null || date)"
 	printf 'boot_id=%s\n' "$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
+	printf 'firmware_id=%s\n' "$(cat /etc/mt6990-firmware-id 2>/dev/null)"
 	printf 'kernel=%s\n' "$(uname -a)"
 	printf 'cmdline=%s\n' "$(cat /proc/cmdline 2>/dev/null)"
 	# S10 boot and storage have finished. Archive their tmpfs-only timestamps;

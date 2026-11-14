@@ -1,5 +1,13 @@
 . /lib/functions/lg6851f-boot-trace.sh
 
+boot_hook_trace() {
+ case "$2" in
+  preinit_main|preinit_mount_root) lg6851f_bootmark "$@" ;;
+  *) case "$1" in mount-root-*|config-restore-*) lg6851f_bootmark "$@" ;; esac ;;
+ esac
+ return 0
+}
+
 lg6851f_trace_preinit_begin() {
 	lg6851f_bootmark preinit-begin
 }

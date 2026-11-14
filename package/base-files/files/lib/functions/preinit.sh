@@ -50,15 +50,21 @@ boot_hook_shift() {
 	return 1
 }
 
+# Optional board observer; hook order and once-only flags stay unchanged.
+boot_hook_trace() { :; }
+
 boot_run_hook() {
 	local hook="$1"
-	local func
+	local func trace_rc
 
 	while boot_hook_shift "$hook" func; do
 		local ran; eval "ran=\$PI_RAN_$func"
 		[ -n "$ran" ] || {
 			export -n "PI_RAN_$func=1"
+			boot_hook_trace preinit-hook-begin "$hook" "$func"
 			$func "$1" "$2"
+			trace_rc=$?
+			boot_hook_trace preinit-hook-end "$hook" "$func" "rc=$trace_rc"
 		}
 	done
 }

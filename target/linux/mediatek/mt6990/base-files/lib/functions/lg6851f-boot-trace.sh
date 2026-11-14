@@ -10,8 +10,8 @@ lg6851f_bootmark() {
  fi
  [ -f "$trace" ] || return 0
  printf 'LG6851F_BOOT_STAGE uptime=%s phase=%s\n' "$boot_uptime" "$*" >> "$trace" 2>/dev/null || :
- # Debug priority avoids a slow serial console. Existing bounded runtime logs
- # can retain late markers after their initial tmpfs snapshot, without new fsyncs.
+ # Debug priority permits filtering, but ignore_loglevel can still print to
+ # serial. Existing bounded logs retain late markers without new fsyncs.
  if [ -c /dev/kmsg ]; then
   printf '<7>LG6851F_BOOT_STAGE uptime=%s phase=%s\n' "$boot_uptime" "$*" > /dev/kmsg 2>/dev/null || :
  fi

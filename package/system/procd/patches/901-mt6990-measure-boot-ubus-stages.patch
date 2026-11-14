@@ -1,0 +1,166 @@
+--- a/state.c
++++ b/state.c
+@@ -21,6 +21,7 @@
+ #include <sys/types.h>
+ #include <signal.h>
+ 
++#include "lg6851f-boot-trace.h"
+ #include "container.h"
+ #include "procd.h"
+ #include "syslog.h"
+@@ -131,6 +132,7 @@
+ 
+ 	switch (state) {
+ 	case STATE_EARLY:
++		lg6851f_boot_trace("procd-early", "");
+ 		LOG("- early -\n");
+ 		watchdog_init(0);
+ 		hotplug("/etc/hotplug.json");
+@@ -138,6 +140,7 @@
+ 		break;
+ 
+ 	case STATE_UBUS:
++		lg6851f_boot_trace("procd-ubus-enter", "");
+ 		// try to reopen incase the wdt was not available before coldplug
+ 		watchdog_init(0);
+ 		set_stdio("console");
+@@ -145,8 +148,10 @@
+ 		if (p) {
+ 			int ret;
+ 			LOG("- ubus -\n");
++			lg6851f_boot_trace("ubus-runtime-dir-begin", "");
+ 			mkdir(p->pw_dir, 0755);
+ 			ret = chown(p->pw_dir, p->pw_uid, p->pw_gid);
++			lg6851f_boot_trace("ubus-runtime-dir-end", "rc=%d", ret);
+ 			if (ret)
+ 				LOG("- ubus - failed to chown(%s)\n", p->pw_dir);
+ 		} else {
+@@ -154,10 +159,13 @@
+ 		}
+ 
+ 		procd_connect_ubus();
++		lg6851f_boot_trace("ubusd-start-begin", "");
+ 		service_start_early("ubus", ubus_cmd, p?"ubus":NULL, p?"ubus":NULL);
++		lg6851f_boot_trace("ubusd-start-return", "");
+ 		break;
+ 
+ 	case STATE_INIT:
++		lg6851f_boot_trace("procd-init", "");
+ 		LOG("- init -\n");
+ 		procd_inittab();
+ 		procd_inittab_run("respawn");
+@@ -170,6 +178,7 @@
+ 		break;
+ 
+ 	case STATE_RUNNING:
++		lg6851f_boot_trace("procd-running", "");
+ 		LOG("- init complete -\n");
+ 		procd_inittab_run("respawnlate");
+ 		procd_inittab_run("askconsolelate");
+--- a/ubus.c
++++ b/ubus.c
+@@ -18,11 +18,14 @@
+ #include <signal.h>
+ 
+ #include "procd.h"
++#include "lg6851f-boot-trace.h"
+ 
+ const char *ubus_socket = NULL;
+ static struct ubus_context *ctx;
+ static struct uloop_timeout ubus_timer;
+ static int timeout;
++static bool boot_trace_active = true;
++static unsigned int boot_connect_attempts;
+ static struct udebug_ubus udebug;
+ 
+ static void
+@@ -66,7 +69,14 @@
+ static void
+ ubus_connect_cb(struct uloop_timeout *timeout)
+ {
++	if (boot_trace_active) {
++		boot_connect_attempts++;
++		if (boot_connect_attempts <= 32)
++			lg6851f_boot_trace("ubus-connect-begin", "attempt=%u", boot_connect_attempts);
++	}
+ 	ctx = ubus_connect(ubus_socket);
++	if (boot_trace_active && boot_connect_attempts <= 32)
++		lg6851f_boot_trace("ubus-connect-end", "attempt=%u success=%d", boot_connect_attempts, ctx != NULL);
+ 
+ 	if (!ctx) {
+ 		DEBUG(4, "Connection to ubus failed\n");
+@@ -74,22 +84,46 @@
+ 		return;
+ 	}
+ 
++	if (boot_trace_active)
++		lg6851f_boot_trace("ubus-register-begin", "udebug");
+ 	udebug_ubus_init(&udebug, ctx, "procd", procd_udebug_cb);
++	if (boot_trace_active)
++		lg6851f_boot_trace("ubus-register-end", "udebug");
+ 	ctx->connection_lost = ubus_disconnect_cb;
++	if (boot_trace_active)
++		lg6851f_boot_trace("ubus-register-begin", "hotplug");
+ 	ubus_init_hotplug(ctx);
++	if (boot_trace_active)
++		lg6851f_boot_trace("ubus-register-end", "hotplug");
++	if (boot_trace_active)
++		lg6851f_boot_trace("ubus-register-begin", "service");
+ 	ubus_init_service(ctx);
++	if (boot_trace_active)
++		lg6851f_boot_trace("ubus-register-end", "service");
++	if (boot_trace_active)
++		lg6851f_boot_trace("ubus-register-begin", "system");
+ 	ubus_init_system(ctx);
++	if (boot_trace_active)
++		lg6851f_boot_trace("ubus-register-end", "system");
++	if (boot_trace_active)
++		lg6851f_boot_trace("ubus-register-begin", "watch");
+ 	watch_ubus(ctx);
++	if (boot_trace_active)
++		lg6851f_boot_trace("ubus-register-end", "watch");
+ 
+ 	DEBUG(2, "Connected to ubus, id=%08x\n", ctx->local_id);
+ 	reset_timeout();
+ 	ubus_add_uloop(ctx);
++	if (boot_trace_active)
++		lg6851f_boot_trace("ubus-initial-ready", "attempts=%u", boot_connect_attempts);
++	boot_trace_active = false;
+ 	procd_state_ubus_connect();
+ }
+ 
+ void
+ procd_connect_ubus(void)
+ {
++	lg6851f_boot_trace("ubus-connect-scheduled", "first_delay_ms=50");
+ 	ubus_timer.cb = ubus_connect_cb;
+ 	reset_timeout();
+ 	timeout_retry();
+--- a/initd/preinit.c
++++ b/initd/preinit.c
+@@ -27,6 +27,7 @@
+ #include <unistd.h>
+ 
+ #include "init.h"
++#include "../lg6851f-boot-trace.h"
+ #include "../watchdog.h"
+ #include "../sysupgrade.h"
+ 
+@@ -100,7 +101,9 @@
+ 	unsetenv("PREINIT");
+ 	unlink("/tmp/.preinit");
+ 
++	lg6851f_boot_trace("preinit-child-exit", "wait_status=%d", ret);
+ 	check_sysupgrade();
++	lg6851f_boot_trace("preinit-sysupgrade-check-end", "");
+ 
+ 	DEBUG(2, "Exec to real procd now\n");
+ 	if (wdt_fd)
+@@ -111,6 +114,7 @@
+ 		setenv("DBGLVL", dbg, 1);
+ 	}
+ 
++	lg6851f_boot_trace("procd-exec", "");
+ 	execvp(argv[0], argv);
+ }
+ 
