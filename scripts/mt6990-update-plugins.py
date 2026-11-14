@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Resolve latest upstream plugins once per build, preserving local adaptations."""
+import gzip
 import hashlib
 import json
 import pathlib
@@ -137,6 +138,19 @@ def prepare_package(row, latest, folder):
             'version': re.search(r'^PKG_VERSION:=(.+)$', (local / 'Makefile').read_text(), re.M).group(1) if re.search(r'^PKG_VERSION:=(.+)$', (local / 'Makefile').read_text(), re.M) else 'upstream-head'}
 
 
+def smart_asset(release):
+    if release.get('tag_name') != 'Prerelease-Alpha' or release.get('draft'):
+        raise RuntimeError('Expected vernesong Smart Prerelease-Alpha release')
+    assets=[a for a in release['assets'] if re.fullmatch(r'mihomo-linux-arm64-alpha-smart-[0-9a-f]{7,40}\.gz',a['name'])]
+    if len(assets)!=1:raise RuntimeError('Expected exactly one ARM64 Smart alpha asset')
+    asset=assets[0]
+    if not re.fullmatch(r'sha256:[0-9a-f]{64}',asset.get('digest','')):raise RuntimeError('Smart alpha asset has no official SHA256 digest')
+    date=asset.get('updated_at','')[:10].replace('-','')
+    if not re.fullmatch(r'[0-9]{8}',date):raise RuntimeError('Smart alpha asset timestamp is missing')
+    upstream=asset['name'].removeprefix('mihomo-linux-arm64-').removesuffix('.gz')
+    return asset, date+'~'+upstream.replace('-','.'),upstream
+
+
 def main():
     rows = json.loads(REGISTRY.read_text())
     records = []
@@ -152,28 +166,27 @@ def main():
                 latest = api(f'repos/{row["repo"]}/commits/{release["tag_name"]}')['sha']
             records.append(prepare_package(row, latest, folder))
             REGISTRY.write_text(json.dumps(rows, indent=2) + "\n")
-        release = api('repos/MetaCubeX/mihomo/releases/latest')
-        version = release['tag_name'].removeprefix('v')
-        if not re.fullmatch(r'\d+\.\d+\.\d+', version):
-            raise RuntimeError('Unexpected Mihomo stable version')
-        name = f'mihomo-linux-arm64-v{version}.gz'
-        asset = next(a for a in release['assets'] if a['name'] == name)
-        expected = asset.get('digest', '')
-        if not re.fullmatch(r'sha256:[0-9a-f]{64}', expected):
-            raise RuntimeError('Mihomo ARM64 asset has no official SHA256 digest')
+        release = api('repos/vernesong/mihomo/releases/tags/Prerelease-Alpha')
+        asset,version,upstream=smart_asset(release)
+        name=asset['name']
+        expected=asset['digest']
         payload = folder / name
         with payload.open('wb') as stream:
-            subprocess.run(['gh', 'api', f'repos/MetaCubeX/mihomo/releases/assets/{asset["id"]}', '-H', 'Accept: application/octet-stream'], stdout=stream, check=True)
+            subprocess.run(['gh', 'api', f'repos/vernesong/mihomo/releases/assets/{asset["id"]}', '-H', 'Accept: application/octet-stream'], stdout=stream, check=True)
         digest = hashlib.sha256(payload.read_bytes()).hexdigest()
         if expected != 'sha256:' + digest:
             raise RuntimeError('Mihomo asset SHA256 mismatch')
+        binary=gzip.decompress(payload.read_bytes())
+        if binary[:6]!=b'\x7fELF\x02\x01' or int.from_bytes(binary[18:20],'little')!=183 or upstream.encode() not in binary:
+            raise RuntimeError('Smart core is not the expected ARM64 ELF/version')
         path = ROOT / 'package/vendor/mihomo-openclash-core/Makefile'
         text = re.sub(r'^PKG_VERSION:=.*$', 'PKG_VERSION:=' + version, path.read_text(), flags=re.M)
+        text = re.sub(r'^PKG_UPSTREAM_VERSION:=.*$', 'PKG_UPSTREAM_VERSION:=' + upstream, text, flags=re.M)
         text = re.sub(r'^PKG_HASH:=.*$', 'PKG_HASH:=' + digest, text, flags=re.M)
         path.write_text(text)
         (ROOT / 'dl').mkdir(exist_ok=True)
         shutil.copyfile(payload, ROOT / 'dl' / name)
-        records.append({'package': 'mihomo-openclash-core', 'version': version, 'sha256': digest})
+        records.append({'package': 'mihomo-openclash-core', 'repo':'vernesong/mihomo','channel':'Prerelease-Alpha/Smart','version': version, 'asset':name,'sha256': digest})
     configured=set(re.findall(r'^src-(?:git|link)\s+(\S+)',(ROOT/'feeds.conf.default').read_text(),re.M))
     for feed in sorted((ROOT / 'feeds').iterdir()):
         if feed.name in configured and (feed / '.git').exists():

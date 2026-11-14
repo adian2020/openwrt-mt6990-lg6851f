@@ -2,8 +2,24 @@
 # One SMS transaction, through the existing atcid client/lock; no UART reader.
 umask 077
 exec 9>/var/lock/lg6851f-sms-operation.lock
-flock -n 9 || { echo 'SMS list is busy'; exit 75; }
-for command in 'AT+CMGF=1' 'AT+CSCS="UCS2"'; do
-	/usr/bin/timeout 12 /usr/bin/modem5g-at "$command" >/dev/null || exit "$?"
-done
-exec /usr/bin/timeout 12 /usr/bin/modem5g-at 'AT+CMGL="ALL"'
+flock -n 9 || { echo 'SMS_STAGE=operation_lock RC=75' >&2; exit 75; }
+query() {
+ stage=$1
+ command=$2
+ attempt=0
+ while :; do
+  /usr/bin/timeout 12 /usr/bin/modem5g-at "$command"
+  rc=$?
+  [ "$rc" -eq 0 ] && return 0
+  # Retry only explicit busy responses, never an unknown modem error.
+  attempt=$((attempt + 1))
+  if [ "$rc" -ne 75 ] || [ "$attempt" -ge 3 ]; then
+   printf 'SMS_STAGE=%s RC=%s\n' "$stage" "$rc" >&2
+   return "$rc"
+  fi
+  sleep 1
+ done
+}
+query text_mode 'AT+CMGF=1' >/dev/null || exit "$?"
+query charset 'AT+CSCS="UCS2"' >/dev/null || exit "$?"
+query list 'AT+CMGL="ALL"'

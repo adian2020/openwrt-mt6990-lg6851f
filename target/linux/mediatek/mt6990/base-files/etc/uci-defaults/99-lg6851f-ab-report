@@ -1,0 +1,3 @@
+#!/bin/sh
+/etc/init.d/lg6851f-ab-report enable
+exit 0

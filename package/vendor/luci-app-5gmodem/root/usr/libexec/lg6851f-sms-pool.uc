@@ -8,7 +8,7 @@ const REQUEST='/tmp/lg6851f-sms-sync-request';
 const BOOT=trim(readfile('/proc/sys/kernel/random/boot_id')||'');
 function quote(s){return "'"+replace(''+s,"'","'\\''")+"'";}
 function load(path){try{return json(readfile(path)||'null');}catch(e){return null;}}
-function capture(argv,seconds){let p=popen('/usr/bin/timeout '+seconds+' '+join(' ',map(argv,quote))+' 2>/dev/null','r'),text=p?.read('all')||'',code=p?.close();return {text,code:code??5};}
+function capture(argv,seconds,diagnostic){let p=popen('/usr/bin/timeout '+seconds+' '+join(' ',map(argv,quote))+(diagnostic?' 2>&1':' 2>/dev/null'),'r'),text=p?.read('all')||'',code=p?.close();return {text,code:code??5};}
 function monotonic(){return +(split(readfile('/proc/uptime')||'0',' ')[0]);}
 function ready(){
  if(!store.identity())return false;
@@ -23,8 +23,8 @@ function ready(){
 }
 function sync_pool(){
  if(!ready())return {ok:false,error:'等待蜂窝网络稳定后同步'};
- let sim=store.identity(),r=capture(['/usr/bin/lg6851f-sms-list'],42);
- if(r.code!=0)return {ok:false,error:'短信通道忙或读取失败，稍后自动重试'};
+ let sim=store.identity(),r=capture(['/usr/bin/lg6851f-sms-list'],65,true);
+ if(r.code!=0){let stage=match(r.text,/SMS_STAGE=(operation_lock|text_mode|charset|list) RC=([0-9]+)/);return {ok:false,stage:stage?stage[1]:'sim_list',code:r.code,error:r.code==75?'短信通道忙，稍后自动重试':'SIM短信读取失败（'+(stage?stage[1]:'list')+'，退出码'+r.code+'），请核对短信接口'};}
  let parsed=forward.parse_sms(r.text);
  if(parsed.error||sim!=store.identity())return {ok:false,error:parsed.error||'SIM已变化，未采用旧数据'};
  let saved=store.ingest(sim,parsed,null);if(!saved.ok)return saved;
@@ -48,6 +48,8 @@ function queue(kind,input){
  let lock=open('/var/lock/lg6851f-sms-job.lock','a',0o600);if(!lock?.lock('xn'))return {ok:false,error:'短信任务正在排队'};
  let action=function(){
   let worker=open('/var/lock/lg6851f-sms-worker.lock','a',0o600);if(!worker?.lock('xn'))return {ok:false,error:'短信处理进程尚未退出，请稍后重试'};worker.close();
+  let daemon=open('/var/lock/lg6851f-sms-pool-daemon.lock','a',0o600);if(!daemon)return {ok:false,error:'无法检查短信归档服务'};
+  let offline=daemon.lock('xn');daemon.close();if(offline)return {ok:false,error:'短信归档服务未运行，请检查服务状态'};
   if(public_job().running)return {ok:false,error:'已有短信任务正在处理，请稍后重试'};
   if(kind=='send'){
    if(!sms.number(input?.number))return {ok:false,error:'号码应为3至20位数字，可带+'};
@@ -55,8 +57,7 @@ function queue(kind,input){
   }else if(!sms.valid_id(input?.id))return {ok:false,error:'短信编号无效'};
   let id=trim(readfile('/proc/sys/kernel/random/uuid')||'');if(!match(id,/^[a-f0-9-]{36}$/))die('无法创建短信任务编号');
   store.atomic(store.JOB,{id,kind,input,started:time(),started_mono:monotonic(),boot_id:BOOT,running:true,done:false});
-  let r=capture(['/sbin/start-stop-daemon','-S','-b','-x','/usr/bin/ucode','--','/usr/libexec/lg6851f-sms-pool.uc','work',id],5);
-  if(r.code!=0){store.atomic(store.JOB,{id,kind,started:time(),started_mono:monotonic(),boot_id:BOOT,running:false,done:true,ok:false,error:'无法启动短信任务'});return {ok:false,error:'无法启动短信任务'};}
+  let signal=open(REQUEST,'w',0o600);if(signal)signal.close();
   return {ok:true,job:id};
  };let result;try{result=action();}catch(e){lock.close();die(e);}lock.close();return result;
 }
@@ -96,6 +97,13 @@ function delete_sim(job){
   return store.remove(old.id);
  };let result;try{result=action();}catch(e){lock.close();die(e);}lock.close();return result;
 }
+function process_job(id){
+  let worker=open('/var/lock/lg6851f-sms-worker.lock','a',0o600);if(!worker?.lock('xn'))return {ok:false,error:'短信处理进程仍在运行'};
+  let job=load(store.JOB);if(!job||job.id!=id||!job.running||job.boot_id!=BOOT)return {ok:false,error:'任务已失效'};
+  let result;try{result=job.kind=='send'?send(job):delete_sim(job);}catch(e){result={ok:false,error:'短信处理被中断，请核对结果；未自动重复操作'};}
+  store.atomic(store.JOB,{id:job.id,kind:job.kind,started:job.started,started_mono:job.started_mono,boot_id:BOOT,...result,running:false,done:true});return result;
+
+}
 function main(){
  let board=trim(readfile('/tmp/sysinfo/board_name')||'');if(index(['fiberhome,lg6851f','fiberhome_lg6851f'],board)<0)return {ok:false,error:'不支持此设备'};
  let cmd=ARGV[0],input=load(ARGV[1]);
@@ -105,17 +113,12 @@ function main(){
  if(cmd=='sync'){let f=open(REQUEST,'w',0o600);if(!f)return {ok:false,error:'无法排队同步任务'};f.close();return {ok:true,queued:true};}
  if(cmd=='send')return queue('send',input);
  if(cmd=='delete')return input?.sim?queue('delete',input):store.remove(input?.id);
- if(cmd=='work'){
-  let worker=open('/var/lock/lg6851f-sms-worker.lock','a',0o600);if(!worker?.lock('xn'))return {ok:false,error:'短信处理进程仍在运行'};
-  let job=load(store.JOB);if(!job||job.id!=ARGV[1]||!job.running||job.boot_id!=BOOT)return {ok:false,error:'任务已失效'};
-  let result;try{result=job.kind=='send'?send(job):delete_sim(job);}catch(e){result={ok:false,error:'短信处理被中断，请核对结果；未自动重复操作'};}
-  store.atomic(store.JOB,{id:job.id,kind:job.kind,started:job.started,started_mono:job.started_mono,boot_id:BOOT,...result,running:false,done:true});return result;
- }
+ if(cmd=='work')return process_job(ARGV[1]);
  if(cmd!='run')return {ok:false,error:'无效操作'};
  let daemon=open('/var/lock/lg6851f-sms-pool-daemon.lock','a',0o600);if(!daemon?.lock('xn'))return {ok:false,error:'短信归档服务已运行'};
  mkdir('/etc/lg6851f-sms',0o700);chmod('/etc/lg6851f-sms',0o700);
- for(;;){try{unlink(REQUEST);let r=sync_pool();store.atomic('/tmp/lg6851f-sms-pool-status.json',{...r,updated:time(),boot_id:BOOT});}catch(e){store.atomic('/tmp/lg6851f-sms-pool-status.json',{ok:false,error:'短信归档失败，已保留原文件',updated:time(),boot_id:BOOT});}
-  for(let i=0;i<30;i++){sleep(1000);if(readfile(REQUEST)!=null)break;}
+ for(;;){try{let pending=load(store.JOB);if(pending?.running&&pending.boot_id==BOOT)process_job(pending.id);unlink(REQUEST);let r=sync_pool();store.atomic('/tmp/lg6851f-sms-pool-status.json',{...r,updated:time(),boot_id:BOOT});}catch(e){store.atomic('/tmp/lg6851f-sms-pool-status.json',{ok:false,error:'短信归档失败，已保留原文件',updated:time(),boot_id:BOOT});}
+  for(let i=0;i<30;i++){sleep(1000);if(readfile(REQUEST)!=null||public_job().running)break;}
  }
 }
 try{printf('%J\n',main());}catch(e){printf('%J\n',{ok:false,error:'无法读取或保存短信数据，已保留原文件'});exit(5);}

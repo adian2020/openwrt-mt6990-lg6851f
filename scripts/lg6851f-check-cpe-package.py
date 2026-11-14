@@ -95,6 +95,8 @@ required(root/'etc/init.d/lg6851f-traffic',executable=True)
 required(root/'etc/init.d/lg6851f-cellular-refresh',executable=True)
 required(root/'usr/bin/lg6851f-cellular-refresh',executable=True)
 required(chain/'usr/bin/lg6851f-modem-restart',executable=True)
+required(feed_root/'usr/bin/lg6851f-archive-ab-report',executable=True)
+required(feed_root/'etc/init.d/lg6851f-ab-report',executable=True)
 required(root/'usr/bin/lg6851f-radio-collect',executable=True)
 if not args.rootfs:
     required(root/'etc/uci-defaults/99-lg6851f-sms-forward',executable=True)
@@ -106,6 +108,9 @@ for name in ['lib/functions/lg6851f-radio.sh','lib/netifd/proto/ql_datacall.sh']
     required(chain/name)
 if args.rootfs:
     required(root/'usr/bin/iwinfo',executable=True)
+    required(root/'usr/sbin/miniupnpd',executable=True)
+    required(assets/'view/upnp/upnp.js')
+    required(root/'etc/uci-defaults/99-lg6851f-smart-core')
     required(root/'usr/bin/curl',executable=True)
     required(root/'usr/bin/sha256sum',executable=True)
     for module in ['fs','uci','ubus','uloop','digest']:

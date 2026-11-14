@@ -36,8 +36,10 @@ export function list(page) {
  page=+page;if(page<1||page>500||page!=int(page))return {ok:false,error:'页码无效'};
  let snapshot;try{snapshot=json(readfile(SNAPSHOT)||'null');}catch(e){}
  let capacity=snapshot?.sim==identity()&&snapshot?.boot_id==trim(readfile('/proc/sys/kernel/random/boot_id')||'')?snapshot.capacity:null;
+ let collection;try{collection=json(readfile('/tmp/lg6851f-sms-pool-status.json')||'null');}catch(e){}
+ if(collection?.boot_id!=trim(readfile('/proc/sys/kernel/random/boot_id')||''))collection=null;
  let pool=load(),all=sort(values_array(pool.messages),(a,b)=>b.time>a.time?1:b.time<a.time?-1:(b.created||0)-(a.created||0)),n=length(all);
- return {ok:true,page,pages:max(1,int((n+9)/10)),total:n,unread:length(filter(all,m=>m.status=='unread')),
+ return {ok:true,collection,page,pages:max(1,int((n+9)/10)),total:n,unread:length(filter(all,m=>m.status=='unread')),
   msgs:map(slice(all,(page-1)*10,page*10),m=>({id:m.id,peer:m.peer,dir:m.dir,time:m.time,status:m.status,preview:sms.preview(m.text)})),
   sim_seen:capacity?.at||0,sim_used:capacity?.used??null,sim_total:capacity?.total??null};
 }

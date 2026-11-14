@@ -4,7 +4,7 @@
 
 // A shared, read-only visual: all changes to the hardware stay in the existing control page.
 const read = rpc.declare({object:'luci.pwmfan',method:'get_status',nobatch:true,expect:{'':{}}});
-const periods = [1.6, 1.2, .7];
+const periods = [1.8, 1.35, .8];
 const labels = ['安静', '标准模式', '强风'];
 const css = `
 @property --lgfan-hue{syntax:'<number>';inherits:true;initial-value:185}
@@ -13,9 +13,9 @@ const css = `
 .lgfan{--lgfan-play:paused;--lgfan-base:var(--surface,var(--background,#fff));position:relative;width:100%;aspect-ratio:1;background:transparent!important;isolation:isolate;contain:layout style}
 .lgfan-rim{position:absolute;inset:7%;border-radius:50%;animation:lgfan-chameleon 5.6s linear infinite;animation-play-state:var(--lgfan-play);background:transparent;filter:drop-shadow(0 0 2px hsl(var(--lgfan-hue) 90% 65% / .45)) drop-shadow(0 0 5px hsl(calc(var(--lgfan-hue) + 160) 90% 60% / .20))}
 .lgfan-rim:before{content:'';position:absolute;inset:0;border-radius:50%;background:conic-gradient(from -90deg,hsl(var(--lgfan-hue) 88% 63%) 0deg,hsl(calc(var(--lgfan-hue) + 70 + var(--lgfan-shift)) 88% 62%) calc(80deg + var(--lgfan-warp)),hsl(calc(var(--lgfan-hue) + 158 - var(--lgfan-shift)) 88% 61%) calc(174deg - var(--lgfan-warp)),hsl(calc(var(--lgfan-hue) + 263 + var(--lgfan-shift)) 88% 62%) calc(268deg + var(--lgfan-warp)),hsl(var(--lgfan-hue) 88% 63%) 360deg);-webkit-mask:radial-gradient(farthest-side,transparent 94%,#000 95%);mask:radial-gradient(farthest-side,transparent 94%,#000 95%)}
-.lgfan-rotor{position:absolute;inset:13%;animation:lgfan-spin 1.6s linear infinite;animation-play-state:var(--lgfan-play);will-change:transform}
+.lgfan-rotor{position:absolute;inset:13%;animation:lgfan-spin 1.8s linear infinite;animation-play-state:var(--lgfan-play);will-change:transform}
 .lgfan-blade{position:absolute;inset:0;transform:rotate(var(--lgfan-angle))}
-.lgfan-blade:before{content:'';position:absolute;left:45%;top:3%;width:34%;height:45%;border-radius:22% 65% 40% 9%;clip-path:polygon(0 100%,0 20%,50% 0,100% 22%,68% 70%,17% 100%);background:linear-gradient(125deg,color-mix(in srgb,#8da7b8 80%,var(--lgfan-base)),color-mix(in srgb,#314a5e 80%,var(--lgfan-base)));opacity:.9}
+.lgfan-blade:before{content:'';position:absolute;left:45%;top:3%;width:34%;height:45%;border-radius:22% 65% 40% 9%;clip-path:polygon(0 100%,0 20%,50% 0,100% 22%,68% 70%,17% 100%);background:color-mix(in srgb,#688294 85%,var(--lgfan-base))}
 .lgfan-hub{position:absolute;inset:39%;border-radius:50%;background:radial-gradient(circle at 30% 20%,color-mix(in srgb,#768ca1 80%,var(--lgfan-base)),color-mix(in srgb,#273d50 85%,var(--lgfan-base)) 70%);box-shadow:0 0 0 1px #54e3e85e,0 2px 5px #0003}
 .lgfan[data-level='0'],.lgfan[data-level='1'],.lgfan[data-level='2']{--lgfan-play:running}
 .lgfan[data-level='unknown'] .lgfan-rim{opacity:.3}
@@ -70,9 +70,9 @@ function update(node,data) {
   const level=Number(node.dataset.level),period=periods[level];
   if(!period)return;
   const animation=node.querySelector('.lgfan-rotor').getAnimations()[0];
-  if(animation&&animation.playbackRate!==1.6/period){
-   if(animation.updatePlaybackRate)animation.updatePlaybackRate(1.6/period);
-   else animation.playbackRate=1.6/period;
+  if(animation&&animation.playbackRate!==1.8/period){
+   if(animation.updatePlaybackRate)animation.updatePlaybackRate(1.8/period);
+   else animation.playbackRate=1.8/period;
   }
  };
  apply();requestAnimationFrame(apply);

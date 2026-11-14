@@ -1,0 +1,10 @@
+#!/bin/sh
+# Select the explicitly requested Smart alpha channel once; preserve proxy state.
+[ "$(uci -q get openclash.config.lg6851f_smart_core)" = 1 ] && exit 0
+[ -n "$(uci -q get openclash.config)" ] || exit 1
+uci set openclash.config.smart_enable='1'
+uci set openclash.config.release_branch='alpha'
+uci set openclash.config.core_type='Smart'
+uci set openclash.config.lg6851f_smart_core='1'
+uci commit openclash
+exit 0

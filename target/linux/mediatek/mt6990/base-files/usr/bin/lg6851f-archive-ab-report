@@ -1,0 +1,28 @@
+#!/bin/sh
+# Preserve a bounded report on the current overlay; never change boot control.
+set -eu
+umask 077
+case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in fiberhome,lg6851f|fiberhome_lg6851f) ;; *) exit 95 ;; esac
+root=/overlay/lg6851f-ab-reports
+awk '$2=="/overlay" && $4 ~ /(^|,)rw(,|$)/ {found=1} END{exit !found}' /proc/mounts || exit 75
+mkdir -p "$root"
+chmod 700 "$root"
+boot_id=$(cat /proc/sys/kernel/random/boot_id)
+case "$boot_id" in ''|*[!0-9a-f-]*) exit 22 ;; esac
+report="$root/boot-$boot_id.txt.gz"
+[ ! -f "$report" ] || exit 0
+# Keep at least 16MiB free. The existing P46 crash archive remains independent.
+available=$(df -Pk /overlay | awk 'NR==2 {print $4}')
+[ "${available:-0}" -ge 16384 ] || { logger -t lg6851f-ab-report 'Overlay space low; report remains in /tmp'; exit 28; }
+/usr/bin/timeout 30 /usr/bin/lg6851f-collect-ab-failure >/dev/null
+[ -s /tmp/lg6851f-ab-failure.txt ] || exit 5
+tmp="$root/.report-$boot_id.tmp"
+trap 'rm -f "$tmp"' EXIT INT TERM
+gzip -c /tmp/lg6851f-ab-failure.txt > "$tmp"
+chmod 600 "$tmp"
+[ "$(wc -c < "$tmp")" -le 4194304 ] || { logger -t lg6851f-ab-report 'Report exceeds archive budget; original remains in /tmp'; exit 27; }
+mv "$tmp" "$report"
+# Most recent eight reports; filenames are generated only from kernel boot UUIDs.
+{ printf '%s\n' "$report"; ls -1t "$root"/boot-*.txt.gz | awk -v current="$report" '$0 != current'; } | awk 'NR>8' | while IFS= read -r old; do rm -f "$old"; done
+sync
+logger -t lg6851f-ab-report "Saved $report"

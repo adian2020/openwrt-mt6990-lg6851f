@@ -19,7 +19,7 @@ const files={mu:fs.readFileSync(assets+'/modem5g/mu_v1.js','utf8'),adapter:fs.re
    const rpc={declare:spec=>(...args)=>{
     calls.push({method:spec.method,args});
     switch(spec.method){
-     case 'sms_pool_list':return Promise.resolve({ok:true,msgs:deleted?[]:[{id:'m-one',peer:'10086',dir:'mt',status:'unread',time:'2026-11-13 10:20:30',preview:'欢迎使用短信'}],pages:1,total:deleted?0:1,unread:1});
+     case 'sms_pool_list':return Promise.resolve({ok:true,collection:{ok:false,error:'fixture SIM read failure'},msgs:deleted?[]:[{id:'m-one',peer:'10086',dir:'mt',status:'unread',time:'2026-11-13 10:20:30',preview:'欢迎使用短信'}],pages:1,total:deleted?0:1,unread:1});
      case 'sms_pool_show':return Promise.resolve({ok:true,text:'From:10086\n---\n欢迎使用短信\n<危险内容>'});
      case 'sms_pool_sync':return Promise.resolve(fail?{ok:false,error:'fixture sync failure'}:{ok:true});
      case 'sms_pool_delete':if(!fail)deleted=true;return Promise.resolve(fail?{ok:false,error:'fixture delete failure'}:{ok:true});
@@ -38,6 +38,7 @@ const files={mu:fs.readFileSync(assets+'/modem5g/mu_v1.js','utf8'),adapter:fs.re
    window.forwardVM=new Function('view','poll','M',forward)({extend:x=>x},poll,M);
    document.querySelector('main').append(smsVM.render());
   },files);
+  await page.getByText('同步状态：fixture SIM read failure',{exact:true}).waitFor();
   await page.locator('.mud-conv').click();await page.waitForFunction(()=>document.querySelector('.mud-bub .bd')?.textContent.includes('<危险内容>'));
   assert.equal(await page.locator('.mud-bub script').count(),0);
   assert.equal(await page.evaluate(()=>calls.some(c=>['list_sms','get_smsc'].includes(c.method))),false,'UI reload must use cached archive only');

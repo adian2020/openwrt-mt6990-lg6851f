@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Pinned native ucode; mocked modem/sender only. Never sends a real SMS."""
+import fcntl
 import hashlib
 import hmac
 import json
@@ -32,7 +33,7 @@ class SmsPoolTest(unittest.TestCase):
         source=source.replace("if(cmd=='sync'){", "if(cmd=='sync-now')return sync_pool();\n if(cmd=='sync'){")
         (self.root/'worker.uc').write_text(self.remap(source))
         self.binary('ubus',"print('{\"up\":true,\"uptime\":90}')")
-        self.binary('start-stop-daemon','pass')
+        self.binary('start-stop-daemon','raise SystemExit(101)')
         self.binary('lg6851f-sms-list',"print(pathlib.Path(os.environ['TEST_ROOT'],'list').read_text(),end='')")
         self.binary('modem5g-sms-send',"""r=pathlib.Path(os.environ['TEST_ROOT'])
 with (r/'submissions').open('a') as f:f.write(json.dumps(sys.argv[1:])+'\\n')
@@ -43,6 +44,7 @@ sys.exit(int(os.environ.get('SEND_CODE','0')))
 with (r/'at-calls').open('a') as f:f.write(sys.argv[1]+'\\n')
 print((r/'list').read_text() if sys.argv[1]=='AT+CMGL=\"ALL\"' else '\\r\\nOK\\r\\n',end='')
 """)
+        self.daemon_lock=(self.root/'var/lock/lg6851f-sms-pool-daemon.lock').open('a');fcntl.flock(self.daemon_lock,fcntl.LOCK_EX);self.addCleanup(self.daemon_lock.close)
         self.raw('hello')
 
     def remap(self,source):
@@ -86,6 +88,30 @@ print((r/'list').read_text() if sys.argv[1]=='AT+CMGL=\"ALL\"' else '\\r\\nOK\\r
     def work(self):
         path=self.root/'tmp/lg6851f-sms-current-job.json';j=json.loads(path.read_text())
         return self.execute([str(self.root/'worker.uc'),'work',j['id']])
+
+    def test_running_service_consumes_queue_without_external_daemon_launcher(self):
+        import time
+        self.daemon_lock.close()
+        cmd=[UCODE,'-L',os.environ['UCODE_LIBRARY'],'-L',str(self.root/'lib'),str(self.root/'worker.uc'),'run']
+        process=subprocess.Popen(cmd,env=dict(os.environ,TEST_ROOT=str(self.root)),stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
+        try:
+            deadline=time.monotonic()+5
+            while not (self.root/'tmp/lg6851f-sms-pool-status.json').exists() and time.monotonic()<deadline:time.sleep(.05)
+            queued=self.command('send',{'number':'10086','text':'中文'})
+            self.assertTrue(queued['ok'],queued)
+            deadline=time.monotonic()+6
+            while self.command('job')['running'] and time.monotonic()<deadline:time.sleep(.1)
+            self.assertTrue(self.command('job')['ok'])
+            self.assertEqual(len((self.root/'submissions').read_text().splitlines()),1)
+            self.assertEqual(self.run_uc('p.list(1)')['total'],2)
+        finally:
+            process.terminate();process.communicate(timeout=5)
+
+    def test_service_absent_is_explicit_and_does_not_claim_task_started(self):
+        self.daemon_lock.close()
+        result=self.command('send',{'number':'10086','text':'x'})
+        self.assertFalse(result['ok']);self.assertIn('未运行',result['error'])
+        self.assertFalse((self.root/'submissions').exists())
 
     def test_hmac_and_url_encoding_use_standard_known_values(self):
         result=self.run_uc('b64enc(s.hmac256(KEY,TEXT))',KEY='SEC-secret',TEXT='1790000000000\nSEC-secret')

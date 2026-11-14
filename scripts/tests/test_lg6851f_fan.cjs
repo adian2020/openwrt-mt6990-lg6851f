@@ -38,13 +38,16 @@ for(const m of po.matchAll(/^msgid (".*")\nmsgstr (".*")/gm))translations[JSON.p
    },{control,panel,translations,visual});
    await page.waitForFunction(()=>document.querySelector('#pwmfan-fan').dataset.level==='0');
    const drawing=()=>page.locator('#pwmfan-fan');
-   const speed=()=>page.locator('.lgfan-rotor').evaluate(async n=>{const a=n.getAnimations()[0];await a.ready;return Number((1.6/a.playbackRate).toFixed(3));});
-   assert.equal(await speed(),1.6);assert.equal(await page.locator('#pwmfan-auto').getAttribute('aria-pressed'),'true');
+   const speed=()=>page.locator('.lgfan-rotor').evaluate(async n=>{const a=n.getAnimations()[0];await a.ready;return Number((1.8/a.playbackRate).toFixed(3));});
+   assert.equal(await speed(),1.8);assert.equal(await page.locator('#pwmfan-auto').getAttribute('aria-pressed'),'true');
    assert.equal(await page.locator('#pwmfan-bar').evaluate(n=>n.style.width),'32%');
    assert((await page.locator('#pwmfan-rpm').textContent()).includes('无转速反馈'));
+   const bladePaint=await page.locator('.lgfan-blade').evaluateAll(nodes=>nodes.map(n=>{const s=getComputedStyle(n,':before');return [s.backgroundColor,s.backgroundImage,s.opacity];}));
+   assert.equal(bladePaint.length,9);assert.equal(new Set(bladePaint.map(p=>JSON.stringify(p))).size,1,'All nine blades must have identical paint');
+   assert.equal(bladePaint[0][1],'none');assert.equal(bladePaint[0][2],'1','No translucent overlap seam');
    assert.equal(await page.locator('.pwmfan-speed').count(),3);
    assert.deepEqual(await page.locator('.pwmfan-speed').allTextContents(),['安静','标准模式','强风']);
-   for(const [value,level,period]of [[115,'0',1.6],[180,'1',1.2],[220,'2',.7]]){
+   for(const [value,level,period]of [[115,'0',1.8],[180,'1',1.35],[220,'2',.8]]){
     const previous=await drawing().getAttribute('data-level');
     await page.locator(`[data-pwm="${value}"]`).click();
     await page.waitForFunction(v=>document.querySelector(`[data-pwm="${v}"]`).getAttribute('aria-pressed')==='true',value);
@@ -66,7 +69,7 @@ for(const m of po.matchAll(/^msgid (".*")\nmsgstr (".*")/gm))translations[JSON.p
    await page.locator('#pwmfan-auto').click();
    await page.waitForFunction(()=>document.querySelector('#pwmfan-auto').getAttribute('aria-pressed')==='true');
    await page.evaluate(()=>{fanStatus.controller=fanStatus.controller.replace('manual-standard','automatic');vm.update(fanStatus);});
-   assert.equal(await speed(),1.2);assert.equal(await page.locator('#pwmfan-mode-hint').textContent(),'自动温控');
+   assert.equal(await speed(),1.35);assert.equal(await page.locator('#pwmfan-mode-hint').textContent(),'自动温控');
    await page.evaluate(()=>vm.update({...fanStatus,stalled:true}));
    assert.equal(await drawing().getAttribute('data-level'),'unknown');assert.equal(await page.locator('.lgfan-rotor').evaluate(n=>getComputedStyle(n).animationPlayState),'paused');
    await page.evaluate(()=>vm.update({available:false}));assert.equal(await page.locator('.pwmfan-actions button:disabled').count(),4);

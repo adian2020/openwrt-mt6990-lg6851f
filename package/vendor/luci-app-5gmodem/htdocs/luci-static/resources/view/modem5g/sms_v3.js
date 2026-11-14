@@ -25,6 +25,7 @@ return view.extend({
 <div class="mud-sec" style="margin-top:0">
   <div class="mud-sms-heading"><h2>短信</h2><span id="mud-sms-stat"></span></div>
   <div class="mud-note" id="mud-sms-capacity" style="display:none;margin-bottom:10px"></div>
+  <div class="mud-note" id="mud-sms-sync-state" role="status" style="margin-bottom:10px" hidden></div>
   <div class="mud-sms-toolbar">
     <button class="mud-btn" id="mud-sms-refresh">刷新</button>
     <button class="mud-btn" id="mud-sms-sync">从 SIM 同步</button>
@@ -209,6 +210,10 @@ return view.extend({
 
 	build: function(all) {
 		var self = this;
+        var collection=this.stat && this.stat.collection, state=this.Q('sms-sync-state');
+        state.hidden=!collection || collection.ok!==false;
+        state.textContent=collection && collection.ok===false ? '同步状态：'+(collection.error||'读取失败，请查看系统日志') : '';
+        state.style.color='var(--warning,#a96800)';
 		/* 5 秒轮询的防闪烁：数据签名没变（无新消息、无未读状态翻转）就完全
 		 * 不重绘——整块 innerHTML 重建 + 全文异步回填会产生肉眼可见的闪烁 */
 		var sig = (this.stat && this.stat.total) + '|' +

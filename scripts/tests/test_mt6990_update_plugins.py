@@ -8,6 +8,14 @@ spec=importlib.util.spec_from_file_location('updater',ROOT/'scripts/mt6990-updat
 u=importlib.util.module_from_spec(spec);spec.loader.exec_module(u)
 
 class PluginUpdateTest(unittest.TestCase):
+    def test_smart_alpha_asset_is_exact_arm64_and_officially_hashed(self):
+        asset={'name':'mihomo-linux-arm64-alpha-smart-abcdef0.gz','digest':'sha256:'+'a'*64,'updated_at':'2026-11-14T12:00:00Z'}
+        release={'tag_name':'Prerelease-Alpha','assets':[asset,dict(asset,name='mihomo-linux-amd64-alpha-smart-abcdef0.gz')]}
+        chosen,version,upstream=u.smart_asset(release)
+        self.assertEqual(chosen,asset);self.assertEqual(version,'20261114~alpha.smart.abcdef0');self.assertEqual(upstream,'alpha-smart-abcdef0')
+        for bad in [dict(release,tag_name='v1.19.34'),dict(release,assets=[dict(asset,digest='')]),dict(release,assets=[asset,asset])]:
+            with self.assertRaises(RuntimeError):u.smart_asset(bad)
+
     def test_independent_local_and_upstream_changes_merge(self):
         base=b'version=1\na\nb\nc\nd\nboot=unprotected\n'
         local=base.replace(b'boot=unprotected',b'boot=mt6990-protected')
