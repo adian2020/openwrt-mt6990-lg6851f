@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[2]
-VIEW='package/vendor/luci-app-5gmodem/htdocs/luci-static/resources/view/system/lg6851f-slots.js'
+PATCH_VIEW=ROOT/'scripts/tests/fixtures/lg6851f-slots-hotfix2.js'
 
 
 class SlotsHotfixTest(unittest.TestCase):
@@ -24,7 +24,8 @@ class SlotsHotfixTest(unittest.TestCase):
   for name in ['tmp/sysinfo','root','rom/etc','bin']:(self.root/name).mkdir(parents=True,exist_ok=True)
   (self.root/'tmp/sysinfo/board_name').write_text('fiberhome,lg6851f\n')
   self.firmware=self.root/'rom/etc/mt6990-firmware-id';self.firmware.write_text('b7dcaa16ce3d8fced5c314ee48fe3c017a291815\n')
-  (self.root/'download').write_bytes((ROOT/VIEW).read_bytes())
+  self.assertEqual(hashlib.sha256(PATCH_VIEW.read_bytes()).hexdigest(),'53a9990b7626e30ae788e30bd6a7f66180d2f55008b41bee1f5f026ae6b1417c')
+  (self.root/'download').write_bytes(PATCH_VIEW.read_bytes())
   for name,text in [('id','#!/bin/sh\necho 0\n'),('wget','#!/bin/sh\n[ "${FAIL_DOWNLOAD:-0}" = 0 ] || exit 4\nwhile [ "$1" != -O ]; do shift; done\ncp "$FIXTURE/download" "$2"\n')]:
    p=self.root/'bin'/name;p.write_text(text);p.chmod(0o755)
   source=(ROOT/'scripts/lg6851f-slots-ui-hotfix.sh').read_text()
@@ -33,7 +34,7 @@ class SlotsHotfixTest(unittest.TestCase):
  def run_script(self,script=None,args=(),**extra):
   return subprocess.run(['sh',str(script or self.script),*args],env=dict(os.environ,PATH=str(self.root/'bin')+':'+os.environ['PATH'],FIXTURE=str(self.root),**extra),capture_output=True,text=True)
  def test_install_repeat_and_restore_preserve_exact_original(self):
-  r=self.run_script();self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(self.destination.read_bytes(),(ROOT/VIEW).read_bytes())
+  r=self.run_script();self.assertEqual(r.returncode,0,r.stderr);self.assertEqual(self.destination.read_bytes(),PATCH_VIEW.read_bytes())
   folders=list((self.root/'root').glob('lg6851f-slots-ui-before.*'));self.assertEqual(len(folders),1)
   self.assertEqual((folders[0]/'original.js').read_bytes(),self.original);self.assertEqual(self.destination.stat().st_mode&0o777,0o644)
   self.assertEqual(self.run_script().returncode,0);self.assertEqual(len(list((self.root/'root').iterdir())),1)
@@ -52,12 +53,12 @@ class SlotsHotfixTest(unittest.TestCase):
   self.destination.write_bytes(new);self.firmware.write_text('a'*40);self.assertEqual(self.run_script(restore).returncode,95);self.assertEqual(self.destination.read_bytes(),new)
  def test_previously_used_proxy_is_allowed_but_other_arguments_are_rejected(self):
   self.assertEqual(self.run_script(args=['https://example.invalid/']).returncode,22);self.assertEqual(self.destination.read_bytes(),self.original)
-  result=self.run_script(args=['https://v6.gh-proxy.org/']);self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(self.destination.read_bytes(),(ROOT/VIEW).read_bytes())
+  result=self.run_script(args=['https://v6.gh-proxy.org/']);self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(self.destination.read_bytes(),PATCH_VIEW.read_bytes())
  def test_upgrade_from_first_hotfix_restores_the_immediately_previous_view(self):
   previous=(ROOT/'scripts/tests/fixtures/lg6851f-slots-hotfix1.js').read_bytes()
   self.assertEqual(hashlib.sha256(previous).hexdigest(),'5ac75940b6ecd11b0ae24895b5bce9970f2499ef5b9d54ce520478fcf3f210eb')
   self.destination.write_bytes(previous);result=self.run_script();self.assertEqual(result.returncode,0,result.stderr)
-  self.assertEqual(self.destination.read_bytes(),(ROOT/VIEW).read_bytes());restore=next((self.root/'root').glob('*/restore.sh'))
+  self.assertEqual(self.destination.read_bytes(),PATCH_VIEW.read_bytes());restore=next((self.root/'root').glob('*/restore.sh'))
   self.assertEqual(self.run_script(restore).returncode,0);self.assertEqual(self.destination.read_bytes(),previous)
 
 

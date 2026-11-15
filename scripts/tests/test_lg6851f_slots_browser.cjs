@@ -30,7 +30,7 @@ const handler=uiSource.match(/\tcreateHandlerFn\(ctx, fn, \.\.\.args\) \{[\s\S]*
    ui.addNotification=(title,node,type)=>notices.push({text:node.textContent,type});
    ui.showModal=(title,body)=>document.querySelector('#modal').replaceChildren(E('h2',{},title),...body);
    ui.hideModal=()=>document.querySelector('#modal').replaceChildren();
-   window.vm=new Function('view','rpc','ui','E','L',source)({extend:x=>x},rpc,ui,E,L);
+   window.vm=new Function('view','rpc','ui','E','L','G',source)({extend:x=>x},rpc,ui,E,L,{shouldShow:()=>false,show:()=>{}});
    window.mount=()=>document.querySelector('main').replaceChildren(vm.render(structuredClone(state)));mount();
   },{source,attr,handler});
   const button=text=>page.getByRole('button',{name:text,exact:true});

@@ -2,6 +2,7 @@
 'require view';
 'require rpc';
 'require ui';
+'require modem5g.slot_guide_v1 as G';
 
 const getSlots = rpc.declare({object:'luci.modem5g',method:'get_boot_slots',nobatch:true,reject:true,expect:{}});
 const selectSlot = rpc.declare({object:'luci.modem5g',method:'select_boot_slot',params:['target','expected','confirm','allow_vendor_recovery'],nobatch:true,reject:true,expect:{}});
@@ -10,13 +11,19 @@ function label(slot) { return slot==='a'?'A 槽':slot==='b'?'B 槽':'未确认';
 
 return view.extend({
  handleSaveApply:null, handleSave:null, handleReset:null,
- load:function(){return getSlots();},
+ load:function(){this.guidePrompted=false;return getSlots();},
  render:function(data){
   this.data=data;
   const content=E('div',{'class':'cbi-map','id':'lg6851f-slots'},[
-   E('h2',{},'启动槽位'),
+   E('div',{style:'display:flex;align-items:center;gap:10px;flex-wrap:wrap'},[
+    E('h2',{},'启动槽位'),E('button',{type:'button','class':'cbi-button',click:()=>G.show()},'原厂固件切换说明')
+   ]),
    E('p',{},'设置默认启动槽，启动失败时仍保留原厂回退。此操作不刷写或复制系统镜像。')
   ]);
+  if(!this.guidePrompted){
+   this.guidePrompted=true;
+   if(G.shouldShow())requestAnimationFrame(()=>{if(content.isConnected)G.show();});
+  }
   if(data.code || !data.slots){content.appendChild(E('p',{'class':'alert-message error'},data.error||'无法读取槽位'));return content;}
   content.appendChild(E('p',{},'当前实际启动：'+label(data.current)+'；下次启动偏好：'+label(data.next)));
   const table=E('table',{'class':'table'},[

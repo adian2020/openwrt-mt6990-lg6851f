@@ -22,7 +22,7 @@ const state={code:0,current:'b',next:'b',control:'1'.repeat(64),slots:{a:{priori
 const rpc={declare:spec=>async(...args)=>{calls.push({method:spec.method,args});if(spec.method==='get_boot_slots')return state;if(spec.method==='reboot')return {};if(selectError)return {code:75,error:'changed'};state.next=args[0];state.control=String(++selection).repeat(64);return {code:0,control:state.control,backup:'/data/lg6851f-slot-backups/fixture',rebooted:false};}};
 const ui={showModal:(title,nodes)=>{modal=nodes;},hideModal:()=>{modal=null;},createHandlerFn:(self,fn)=>(...args)=>fn.call(self,...args),addNotification:(a,b,c)=>notices.push(c),awaitReconnect:()=>{reconnected=true;}};
 const document={querySelector:()=>new Element('div')};
-const view=new Function('view','rpc','ui','E','L','window','document',source)({extend:x=>x},rpc,ui,E,{hasViewPermission:()=>canWrite,env:{rpctimeout:20}},{location:{host:'192.168.1.1'}},document);
+const view=new Function('view','rpc','ui','E','L','window','document','G',source)({extend:x=>x},rpc,ui,E,{hasViewPermission:()=>canWrite,env:{rpctimeout:20}},{location:{host:'192.168.1.1'}},document,{shouldShow:()=>false,show:()=>{}});
 function walk(nodes){return (Array.isArray(nodes)?nodes:[nodes]).flatMap(n=>n instanceof Element?[n,...walk(n.children)]:[]);}
 function button(text){return walk(modal).find(n=>n.tag==='button'&&n.children[0]===text);}
 function confirm(letter){const inputs=walk(modal).filter(n=>n.tag==='input');inputs[0].checked=true;inputs[1].value=letter;}
