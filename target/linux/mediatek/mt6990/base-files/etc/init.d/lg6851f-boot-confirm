@@ -1,5 +1,6 @@
 #!/bin/sh /etc/rc.common
 START=99
+STOP=00
 USE_PROCD=1
 start_service() {
  procd_open_instance
@@ -9,4 +10,9 @@ start_service() {
  procd_set_param term_timeout 15
  # One bounded worker per boot. No respawn and no repeated timer writes.
  procd_close_instance
+}
+shutdown() {
+ # Called only by the orderly shutdown queue, not stop/restart of this service.
+ stop
+ /usr/sbin/lg6851f-confirm-boot --shutdown || logger -t lg6851f-boot-confirm '正常关机确认未完成，保留原始计数和取证'
 }

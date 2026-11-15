@@ -30,16 +30,20 @@ return view.extend({
   content.appendChild(E('p',{},'成功字段是原厂持久记录，不代表本次启动已经通过健康检查。'));
   content.appendChild(E('p',{'class':'alert-message warning'},'镜像头检查不能证明签名有效、boot/rootfs 配套或系统一定能启动。进入原厂系统后，原厂服务可能恢复并覆盖另一槽。请先保存两槽镜像备份。'));
   const buttons=E('div',{'class':'cbi-page-actions'});
-  ['a','b'].forEach(slot=>buttons.appendChild(E('button',{'class':'cbi-button cbi-button-action','disabled':!data.slots[slot].image_headers_ok||!L.hasViewPermission(),'click':ui.createHandlerFn(this,()=>this.confirmSlot(slot))},'选择 '+label(slot))));
+  const target=data.current==='a'?'b':data.current==='b'?'a':null;
+  buttons.appendChild(E('button',{'class':'cbi-button cbi-button-action','disabled':!target||!data.slots[target].image_headers_ok||!L.hasViewPermission(),'click':ui.createHandlerFn(this,()=>this.confirmSlot(target))},target?'切换到 '+label(target):'当前槽位未确认'));
+  content.appendChild(E('p',{},'按实际运行槽位选择另一槽：A → B、B → A；不假定哪个槽运行原厂或 6.18。普通重启保留默认槽，原厂在线升级的交替写入是另一条流程。'));
   buttons.appendChild(E('button',{'class':'cbi-button','click':ui.createHandlerFn(this,()=>this.refresh())},'刷新状态'));
   content.appendChild(buttons);
   content.appendChild(E('h3',{},'保护机制说明'));
-  content.appendChild(E('p',{},'引导器选择另一槽启动，与原厂系统启动后复制镜像恢复另一槽，是两个阶段。原厂脚本在另一槽重试计数大于 3 时触发恢复；具体计数递增及切槽错误分支仍需本机引导器证据核实。重试计数不是内核错误码。'));
+  content.appendChild(E('p',{},'本机前级先检查旧计数：当前槽大于 3、另一槽不大于 3 且异常检查允许时回退；特定复位路径随后才递增。原厂 Linux 还可能复制恢复另一槽，这与切槽是不同阶段。重试计数不是内核错误码。'));
   return content;
  },
  refresh:function(){return getSlots().then(data=>{const node=this.render(data);document.querySelector('#lg6851f-slots').replaceWith(node);});},
  confirmSlot:function(target){
-  const data=this.data,s=data.slots[target],other=data.slots[target==='a'?'b':'a'];
+  const data=this.data;
+  if(!['a','b'].includes(data.current)||!['a','b'].includes(target)||target===data.current){ui.addNotification(null,E('p',{},'请先确认实际运行槽位，再选择另一槽'),'warning');return;}
+  const s=data.slots[target],other=data.slots[data.current];
   const risk=other.retry>3||s.success!==1;
   const confirm=E('input',{'type':'checkbox'}),typed=E('input',{'type':'text','class':'cbi-input-text','placeholder':target.toUpperCase()});
   const run=async doReboot=>{
@@ -59,6 +63,7 @@ return view.extend({
    }
   };
   ui.showModal('确认选择 '+label(target),[
+   E('p',{},'当前 '+label(data.current)+' → 目标 '+label(target)),
    E('p',{},'设置后默认从该槽启动。该槽真实启动结果仍由引导器和系统决定，失败保护继续有效。'),
    E('p',{'class':'alert-message warning'},risk?'当前字段已满足原厂可能恢复另一槽的条件，进入原厂后可能覆盖另一槽镜像。':'目标原厂系统仍可能依据启动状态同步另一槽，建议保存两槽镜像。'),
    E('label',{'class':'cbi-value'},[confirm,' 我已保存必要备份，并理解原厂恢复可能覆盖另一槽']),

@@ -24,6 +24,9 @@
 #ifndef LG6851F_BOOT_ID_PATH
 #define LG6851F_BOOT_ID_PATH "/proc/sys/kernel/random/boot_id"
 #endif
+#ifndef LG6851F_SHUTDOWN_PATH
+#define LG6851F_SHUTDOWN_PATH LG6851F_READY_PATH ".shutdown"
+#endif
 
 /* A passive PID-1 readiness receipt, independent of the optional trace file.
  * Boot-control writes stay in the late, guarded userspace worker. */
@@ -38,7 +41,9 @@ static inline void lg6851f_boot_ready(int running)
  if (getpid() != 1)
   goto out;
  if (!running) {
-  (void)unlink(LG6851F_READY_PATH);
+  /* Preserve proof of a completed init for the first orderly shutdown hook.
+   * Early shutdown without STATE_RUNNING cannot manufacture this receipt. */
+  (void)rename(LG6851F_READY_PATH, LG6851F_SHUTDOWN_PATH);
   goto out;
  }
  fd = open(LG6851F_BOOT_ID_PATH, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);

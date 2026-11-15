@@ -4,6 +4,20 @@
 
 set -eu
 
+lg6851f_cache_option() {
+	case "${LG6851F_CCACHE:-0}" in
+		0) cache_option= ;;
+		1)
+			[ -z "${CCACHE_SLOPPINESS:-}" ] || { echo 'ERROR: relaxed compiler-cache validation is not allowed' >&2; return 22; }
+			cache_option=CONFIG_CCACHE=y
+			export CCACHE_COMPILERCHECK=content
+			export CCACHE_MAXSIZE=2G
+			;;
+		*) echo 'ERROR: LG6851F_CCACHE must be 0 or 1' >&2; return 22 ;;
+	esac
+}
+lg6851f_cache_option
+
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 record_file="$repo_dir/MT6990设备维修记录.md"
 image_dir="$repo_dir/bin/targets/mediatek/mt6990"
@@ -35,11 +49,14 @@ if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_di
 	# Package host builds assume the standard host tools are already staged.
 	# In a clean runner, libjson-c unpacking needs libdeflate-gzip and ucode
 	# needs the OpenWrt CMake/Ninja toolchain before host/compile can run.
-	make -C "$repo_dir" -j4 V=s tools/install
-	make -C "$repo_dir" -j4 V=s package/system/apk/host/compile
+	make -C "$repo_dir" ${cache_option:+"$cache_option"} -j4 V=s tools/install
+	if [ -n "$cache_option" ]; then
+		CCACHE="$repo_dir/staging_dir/host/bin/ccache" python3 "$repo_dir/scripts/tests/test_mt6990_build_cache.py" NativeCacheTest
+	fi
+	make -C "$repo_dir" ${cache_option:+"$cache_option"} -j4 V=s package/system/apk/host/compile
 	APK="$repo_dir/staging_dir/host/bin/apk" python3 "$repo_dir/scripts/tests/test_mt6990_apk_versions.py"
 	APK="$repo_dir/staging_dir/host/bin/apk" python3 "$repo_dir/scripts/tests/test_mt6990_apk_library_native.py"
-	make -C "$repo_dir" -j4 V=s package/utils/ucode/host/compile
+	make -C "$repo_dir" ${cache_option:+"$cache_option"} -j4 V=s package/utils/ucode/host/compile
 	UCODE="$repo_dir/staging_dir/hostpkg/bin/ucode"
 	UCODE_LIBRARY="$repo_dir/staging_dir/hostpkg/lib/ucode"
 	[ -x "$UCODE" ] && [ -s "$UCODE_LIBRARY/fs.so" ] || {
@@ -56,7 +73,7 @@ if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_di
 	python3 "$repo_dir/scripts/tests/test_lg6851f_traffic.py"
 fi
 
-make -C "$repo_dir" "$@"
+make -C "$repo_dir" ${cache_option:+"$cache_option"} "$@"
 
 # Inspect the assembled image before accepting artifacts for publication.
 if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_dir/.config"; then

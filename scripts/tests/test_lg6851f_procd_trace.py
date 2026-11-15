@@ -166,6 +166,15 @@ int main(void) { errno=E2BIG; lg6851f_boot_ready(1); assert(errno==E2BIG); retur
 #include "lg6851f-boot-trace.h"
 int main(void) { errno=E2BIG; lg6851f_boot_ready(0); assert(errno==E2BIG); assert(access(LG6851F_READY_PATH,F_OK)<0); return 0; }
 ''')
+        self.assertEqual(pathlib.Path(str(self.ready)+'.shutdown').read_text().split(),fields)
+    def test_early_shutdown_does_not_create_a_completed_init_receipt(self):
+        self.compile(r'''
+#include <unistd.h>
+#define getpid() 1
+#include "lg6851f-boot-trace.h"
+int main(void) { lg6851f_boot_ready(0); return 0; }
+''')
+        self.assertFalse(self.ready.exists());self.assertFalse(pathlib.Path(str(self.ready)+'.shutdown').exists())
     def test_receipt_refuses_non_pid1_bad_uuid_existing_file_or_link(self):
         program=r'''
 #include <unistd.h>

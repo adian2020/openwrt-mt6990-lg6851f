@@ -15,6 +15,8 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
+    env:
+      LG6851F_CCACHE: '1'
 
     steps:
       - name: Checkout source
@@ -44,9 +46,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: dl
-          key: openwrt-dl-${{ runner.os }}-${{ hashFiles('feeds.conf.default') }}
+          key: openwrt-dl-${{ runner.os }}-${{ hashFiles('feeds.conf.default') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            openwrt-dl-${{ runner.os }}-${{ hashFiles('feeds.conf.default') }}-
             openwrt-dl-${{ runner.os }}-
+
+      - name: Restore compiler object cache
+        id: ccache
+        uses: actions/cache/restore@v4
+        with:
+          path: .ccache
+          key: lg6851f-ccache-v1-${{ runner.os }}-${{ hashFiles('.config', 'toolchain/**/Makefile', 'tools/ccache/Makefile') }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            lg6851f-ccache-v1-${{ runner.os }}-${{ hashFiles('.config', 'toolchain/**/Makefile', 'tools/ccache/Makefile') }}-
 
       - name: Update feeds
         run: |
@@ -93,6 +105,7 @@ jobs:
           python3 scripts/tests/test_lg6851f_autoreboot.py
           python3 scripts/tests/test_lg6851f_fair_qos.py
           python3 scripts/tests/test_mt6990_apk_library.py
+          python3 scripts/tests/test_mt6990_build_cache.py CacheConfigTest
           python3 scripts/lg6851f-check-cpe-package.py
 
       - name: Generate and verify configuration
@@ -126,8 +139,23 @@ jobs:
           fi
 
       - name: Build and verify LG6851F images
+        id: build
         run: |
           ./scripts/mt6990-build-and-record.sh
+
+      - name: Show compiler cache statistics
+        if: always()
+        run: |
+          if [ -x staging_dir/host/bin/ccache ]; then
+            CCACHE_DIR="$GITHUB_WORKSPACE/.ccache" staging_dir/host/bin/ccache --show-stats
+          fi
+
+      - name: Save compiler object cache
+        if: ${{ always() && !cancelled() && steps.ccache.outcome == 'success' && (steps.build.outcome == 'success' || steps.build.outcome == 'failure') }}
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ${{ steps.ccache.outputs.cache-primary-key }}
 
       - name: Verify and publish firmware-matched APK library
         env:

@@ -25,13 +25,17 @@ function button(text){return walk(modal).find(n=>n.tag==='button'&&n.children[0]
 function confirm(letter){const inputs=walk(modal).filter(n=>n.tag==='input');inputs[0].checked=true;inputs[1].value=letter;}
 (async()=>{
  const rendered=view.render(state);assert(walk(rendered).some(n=>n.tag==='table'));
+ const bButtons=walk(rendered).filter(n=>n.tag==='button'&&String(n.children[0]).startsWith('切换到 '));assert.equal(bButtons.length,1);assert.equal(bButtons[0].children[0],'切换到 A 槽');
  view.confirmSlot('a');await button('仅设置').attrs.click();assert(!calls.some(x=>x.method==='select_boot_slot'));
  confirm('B');await button('仅设置').attrs.click();assert(!calls.some(x=>x.method==='select_boot_slot'));
  confirm('A');selectError=75;await button('设置并重启').attrs.click();assert(!calls.some(x=>x.method==='reboot'));assert(modal);assert(notices.includes('error'));
  selectError=0;await button('仅设置').attrs.click();assert(!modal);assert(!calls.some(x=>x.method==='reboot'));
  const selected=calls.filter(x=>x.method==='select_boot_slot').at(-1);assert.deepEqual(selected.args,['a','1'.repeat(64),true,true]);
+ state.current='a';const aRendered=view.render(state);const aButtons=walk(aRendered).filter(n=>n.tag==='button'&&String(n.children[0]).startsWith('切换到 '));assert.equal(aButtons.length,1);assert.equal(aButtons[0].children[0],'切换到 B 槽');
  view.confirmSlot('b');confirm('b');await button('设置并重启').attrs.click();assert(calls.some(x=>x.method==='reboot'));assert(reconnected);
- canWrite=false;const readonly=view.render(state);assert(walk(readonly).filter(n=>n.tag==='button'&&String(n.children[0]).startsWith('选择 ')).every(n=>n.attrs.disabled));
+ const beforeCalls=calls.length,beforeModal=modal;view.confirmSlot('a');assert.equal(calls.length,beforeCalls);assert.strictEqual(modal,beforeModal);
+ canWrite=false;const readonly=view.render(state);assert(walk(readonly).filter(n=>n.tag==='button'&&String(n.children[0]).startsWith('切换到 ')).every(n=>n.attrs.disabled));
+ const unknown=view.render({...state,current:''});assert(walk(unknown).some(n=>n.tag==='button'&&n.children[0]==='当前槽位未确认'&&n.attrs.disabled));
  const failed=view.render({code:5,error:'fixture'});assert(!walk(failed).some(n=>n.tag==='table'));
  console.log('PASS real view confirmation, stale state, risk acknowledgement, select-only/reboot and read-only controls');
 })().catch(e=>{console.error(e);process.exit(1);});

@@ -2,11 +2,14 @@
 # Confirm a completed LG6851F boot once; never marks SUCCESS or selects a slot.
 set -eu
 umask 077
+mode=boot
+case "$#:${1:-}" in 0:) ;; 1:--shutdown) mode=shutdown;; *) echo '启动确认不接受绕过参数' >&2; exit 22;; esac
 misc=/dev/mmcblk0p1
 lock=/tmp/lg6851f-bootctrl.lock
 worker=/tmp/lg6851f-boot-confirm.worker
 attempt=/tmp/lg6851f-boot-confirm.attempted
 ready=/tmp/lg6851f-init-complete
+[ "$mode" != shutdown ] || ready="$ready.shutdown"
 locked=0
 working=0
 evidence=
@@ -49,7 +52,15 @@ read_state() {
  case "$current" in a) [ "$pa" -gt "$pb" ];; b) [ "$pb" -gt "$pa" ];; esac
 }
 busy() {
- [ -e /tmp/sysupgrade ] || ps w | grep -Eq '[/]etc/init.d/(rcS|zmtk_boot_done)|[z]mtk_boot_done|[/]sbin/(sysupgrade|upgraded)|[/]lib/upgrade/(do_stage2|stage2)'
+ local processes
+ [ ! -e /tmp/sysupgrade ] || return 0
+ processes=$(ps w) || return 0
+ printf '%s\n' "$processes" | grep -Eq '[z]mtk_boot_done|[/]sbin/(sysupgrade|upgraded)|[/]lib/upgrade/(do_stage2|stage2)' && return 0
+ # PID1's renamed receipt permits the orderly K queue, never an upgrade.
+ if [ "$mode" = boot ]; then
+  printf '%s\n' "$processes" | grep -Eq '[/]etc/init.d/rcS' && return 0
+ fi
+ return 1
 }
 receipt_ready() {
  local receipt_boot receipt_time extra now attributes
@@ -95,8 +106,8 @@ shared_storage() {
  [ "$(df -Pk "$shared" | awk 'NR==2 {print $4}')" -ge 1024 ]
 }
 metadata() {
- printf '{"status":"%s","boot_id":"%s","firmware":"%s","current":"%s","uptime":%s,"retry_offset":%s,"before":"%s","expected_after":"%s","observed_after":"%s"}\n' \
- "$1" "$boot_id" "$firmware" "$initial_slot" "$(uptime_seconds)" "$((2048 + index))" "$before" "$after" "${observed:-}" > "$evidence/.status.tmp"
+ printf '{"status":"%s","boot_id":"%s","firmware":"%s","current":"%s","confirmation":"%s","uptime":%s,"retry_offset":%s,"before":"%s","expected_after":"%s","observed_after":"%s"}\n' \
+ "$1" "$boot_id" "$firmware" "$initial_slot" "$mode" "$(uptime_seconds)" "$((2048 + index))" "$before" "$after" "${observed:-}" > "$evidence/.status.tmp"
  mv -f "$evidence/.status.tmp" "$evidence/status.json"
  sync
 }
@@ -106,7 +117,6 @@ rotate_evidence() {
  done
 }
 
-[ "$#" = 0 ] || fail 22 '启动确认不接受手动绕过参数'
 [ "$(id -u)" = 0 ] || fail 1 '启动确认需要root'
 case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in fiberhome,lg6851f|fiberhome_lg6851f) ;; *) fail 95 '设备身份不符，未确认启动';; esac
 case "$(uname -r)" in 6.18.*) ;; *) fail 95 '不是已适配的6.18固件，未确认启动';; esac
@@ -116,6 +126,14 @@ case "$firmware" in *[!0-9a-f]*) fail 95 'ROM固件身份无效';; esac
 boot_id=$(cat /proc/sys/kernel/random/boot_id)
 printf '%s\n' "$boot_id" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || fail 95 '启动UUID无效'
 [ ! -e "$attempt" ] || exit 0
+if [ "$mode" = shutdown ]; then
+ # procd stop can return before its child finishes an in-flight ubus call.
+ for retry in 1 2 3 4 5; do
+  [ -d "$worker" ] || break
+  [ ! -e "$attempt" ] || exit 0
+  sleep 1
+ done
+fi
 mkdir "$worker" 2>/dev/null || fail 75 '已有启动确认进程，未重复执行'
 working=1
 for spec in '1 misc 1024' '25 boot_a 65536' '26 rootfs_a 262144' '38 boot_b 65536' '39 rootfs_b 262144'; do
@@ -127,20 +145,17 @@ before="$record"
 initial_slot="$current"
 initial_index="$index"
 deadline=$(($(uptime_seconds) + 600))
-stable_since=
-previous=
 healthy=0
 while [ "$(uptime_seconds)" -lt "$deadline" ]; do
  if core_ready; then
-  now=$(uptime_seconds)
-  if [ "$signature" != "$previous" ]; then stable_since="$now"; previous="$signature"; fi
-  if [ "$now" -ge 120 ] && [ "$((now - stable_since))" -ge 30 ]; then healthy=1; break; fi
- else
-  stable_since=; previous=
+  previous="$signature"
+  healthy=1
+  break
  fi
- sleep 5
+ [ "$mode" != shutdown ] || break
+ sleep 1
 done
-[ "$healthy" = 1 ] || fail 75 '初始化或核心服务未完成稳定观察，保留重试计数'
+[ "$healthy" = 1 ] || fail 75 '初始化或核心服务尚未就绪，保留重试计数'
 mkdir "$lock" 2>/dev/null || fail 75 '启动控制正被其他操作使用，保留计数'
 locked=1
 [ ! -e "$attempt" ] || exit 0
@@ -151,10 +166,14 @@ root="$shared/lg6851f-boot-confirm"
 [ ! -L "$root" ] || fail 22 '启动确认取证目录不能为符号链接'
 mkdir -p "$root"; chmod 700 "$root"
 evidence="$root/boot-$boot_id"
-mkdir "$evidence" || fail 75 '本次启动已有确认取证，不重复写入'
-chmod 700 "$evidence"
-rotate_evidence
-dd if="$misc" of="$evidence/before.bin" bs=1 skip=2048 count=32 2>/dev/null || fail 5 '保存原始控制记录失败，未写入'
+if mkdir "$evidence" 2>/dev/null; then
+ chmod 700 "$evidence"
+ rotate_evidence
+ dd if="$misc" of="$evidence/before.bin" bs=1 skip=2048 count=32 2>/dev/null || fail 5 '保存原始控制记录失败，未写入'
+else
+ # A stopped boot worker may have saved evidence but not attempted a write.
+ [ "$mode" = shutdown ] && [ -d "$evidence" ] && [ ! -L "$evidence" ] && [ -f "$evidence/before.bin" ] && [ ! -L "$evidence/before.bin" ] || fail 75 '本次启动已有确认取证，不重复写入'
+fi
 [ "$(wc -c < "$evidence/before.bin")" = 32 ] && [ "$(hex_read "$evidence/before.bin" 0 32)" = "$before" ] || fail 5 '原始控制记录备份核对失败，未写入'
 left=$(printf '%s' "$before" | cut -c1-"$((index * 2))")
 right=$(printf '%s' "$before" | cut -c"$((index * 2 + 3))"-)
