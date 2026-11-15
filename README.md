@@ -204,7 +204,7 @@ apk add luci-app-wol
 1. 更新 feeds 和原有插件，安装配方；恢复本仓库配置。
 2. 应用额外软件清单，生成本次源码及运行快照身份，再执行 `make defconfig`。核对新增项仍为 `<M>`、原内置项仍为 `<*>`，签名与目标保持正确。
 3. 完成标准固件构建与原有测试。
-4. 执行 `./scripts/mt6990-build-apk-repository.sh`，合并 APK 并重新生成签名索引。只允许本次公钥，逐批核对全部 APK 和索引签名、架构、包名、内核版本、镜像身份及公钥；在空数据库中逐包模拟安装，验证完整依赖可从该库解析。
+4. 执行 `./scripts/mt6990-build-apk-repository.sh`，合并 APK 并重新生成签名索引。只允许本次公钥，逐批核对全部 APK 和索引签名、架构、包名、内核版本、镜像身份及公钥；从空数据库开始显式请求本次镜像的`/etc/apk/world`基础包集合，再逐包模拟安装；保留真实虚拟包提供者选择，验证完整依赖可从该库解析。
 5. 将验证后的快照追加发布到 `firmware-apk`，原子推送分支及标签；失败不覆盖旧库。随后上传原有固件产物及软件库元数据。
 
 独立构建机还需在配置生成前执行身份准备（`--snapshot` 填入本次唯一的数字运行号和尝试次数）：
@@ -215,7 +215,7 @@ python3 scripts/mt6990-apk-library.py prepare --repository adian2020/openwrt-mt6
 # 沿用现有流程生成 files/etc/mt6990-firmware-id，再执行 defconfig 和标准构建。
 ```
 
-生成目录为 `bin/mt6990-apk-repository/`，其中直接包含所有 APK、`packages.adb`、`public-key.pem`、`build.json`、`selection.json`、`PLUGIN_VERSIONS.json`、`repository.manifest.json` 与 `SHA256SUMS`。检查清单：
+生成目录为 `bin/mt6990-apk-repository/`，其中直接包含所有 APK、`packages.adb`、`public-key.pem`、`build.json`、`selection.json`、`PLUGIN_VERSIONS.json`、`firmware.world`、`repository.manifest.json` 与 `SHA256SUMS`。检查清单：
 
 ```sh
 cat bin/mt6990-apk-repository/repository.manifest.json

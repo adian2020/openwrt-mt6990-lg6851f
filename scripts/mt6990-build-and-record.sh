@@ -38,6 +38,7 @@ if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_di
 	make -C "$repo_dir" -j4 V=s tools/install
 	make -C "$repo_dir" -j4 V=s package/system/apk/host/compile
 	APK="$repo_dir/staging_dir/host/bin/apk" python3 "$repo_dir/scripts/tests/test_mt6990_apk_versions.py"
+	APK="$repo_dir/staging_dir/host/bin/apk" python3 "$repo_dir/scripts/tests/test_mt6990_apk_library_native.py"
 	make -C "$repo_dir" -j4 V=s package/utils/ucode/host/compile
 	UCODE="$repo_dir/staging_dir/hostpkg/bin/ucode"
 	UCODE_LIBRARY="$repo_dir/staging_dir/hostpkg/lib/ucode"

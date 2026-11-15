@@ -26,20 +26,51 @@ class NativeLibraryTest(unittest.TestCase):
   for n in ['build.json','selection.json','repositories.list']:shutil.copy(self.root/'files'/lib.META/n,self.root/'rootfs'/lib.META/n)
   for dst in [self.root/'rootfs/etc/apk/keys/public-key.pem',self.root/'rootfs'/lib.META/'public-key.pem']:shutil.copy(self.root/'public-key.pem',dst)
   (self.root/'files/etc').mkdir(exist_ok=True);(self.root/'files/etc/mt6990-plugin-versions.json').write_text('[]')
+  (self.root/'rootfs/etc/apk/world').write_text('kernel=6.18.44-r1\n')
   for name,version,dep in [('kernel','6.18.44-r1',''),('fixture-lib','1-r0',''),('fixture-app','1-r0','fixture-lib'),('nikki','1-r0',''),('luci-app-nikki','1-r0',''),('luci-i18n-nikki-zh-cn','1-r0',''),('mihomo-meta','1-r0','')]:self.make_package(name,version,dep)
  def run_command(self,args):return subprocess.run([str(a) for a in args],check=True,capture_output=True,text=True)
- def make_package(self,name,version='1-r0',dep='',key=None):
+ def make_package(self,name,version='1-r0',dep='',key=None,provides=''):
   path=self.root/'bin/packages'/lib.ARCH/'base'/f'{name}-{version}.apk'
-  self.run_command([APK,'mkpkg','--info','name:'+name,'--info','version:'+version,'--info','arch:'+lib.ARCH,'--info','depends:'+dep,'--files',self.root/'payload','--sign',key or self.root/'private-key.pem','--output',path]);return path
+  self.run_command([APK,'mkpkg','--info','name:'+name,'--info','version:'+version,'--info','arch:'+lib.ARCH,'--info','depends:'+dep,'--info','provides:'+provides,'--files',self.root/'payload','--sign',key or self.root/'private-key.pem','--output',path]);return path
  def bundle(self):lib.bundle(self.root,self.root/'bin/output',self.root/'rootfs',pathlib.Path(APK))
  def test_real_signed_packages_index_and_transitive_dependency_simulation(self):
   self.bundle();folder=self.root/'bin/output';manifest=lib.readjson(folder/'repository.manifest.json')
   self.assertEqual(manifest['package_count'],7);self.assertEqual(manifest['packages']['fixture-lib'],'1-r0')
   self.assertFalse((folder/'private-key.pem').exists());self.assertEqual(manifest['public_key_sha256'],lib.sha(self.root/'public-key.pem'))
   self.assertFalse((self.root/'rootfs/usr/bin/fixture-app').exists())
+  self.assertEqual(manifest['firmware_world'],['kernel=6.18.44-r1'])
+  self.assertEqual((folder/'firmware.world').read_bytes(),(self.root/'rootfs/etc/apk/world').read_bytes())
+  self.assertEqual(lib.readjson(self.root/'bin/mt6990-apk-validation/validation.json')['status'],'passed')
  def test_missing_dependency_stops_before_publication(self):
   (self.root/'bin/packages'/lib.ARCH/'base/fixture-lib-1-r0.apk').unlink()
   with self.assertRaisesRegex(RuntimeError,"fixture-app"):self.bundle()
+  self.assertFalse((self.root/'bin/output').exists())
+ def test_unversioned_virtual_provider_uses_the_firmware_world(self):
+  self.make_package('ca-bundle',provides='ca-certs')
+  self.make_package('fixture-tls',dep='ca-certs')
+  # The old empty-world request fails even though the provider is in the index.
+  with self.assertRaisesRegex(RuntimeError,'ca-certs'):self.bundle()
+  diagnostics=self.root/'bin/mt6990-apk-validation'
+  self.assertEqual(lib.readjson(diagnostics/'validation.json')['status'],'failed')
+  self.assertTrue((diagnostics/'packages.adb').is_file())
+  self.assertFalse((diagnostics/'private-key.pem').exists())
+  world=self.root/'rootfs/etc/apk/world';world.write_text(world.read_text()+'ca-bundle=1-r0\n')
+  before=world.read_bytes();self.bundle();self.assertEqual(world.read_bytes(),before)
+  self.assertEqual(lib.readjson(self.root/'bin/output/repository.manifest.json')['package_count'],9)
+ def test_world_parser_reads_the_real_apk_generated_format(self):
+  self.make_package('ca-bundle',provides='ca-certs')
+  world=self.root/'rootfs/etc/apk/world';world.write_text(world.read_text()+'ca-bundle=1-r0\n')
+  self.bundle()
+  image=self.root/'actual-image';image.mkdir()
+  self.run_command([APK,'--root',image,'--arch',lib.ARCH,'--keys-dir',self.root/'rootfs/etc/apk/keys','--no-network','--no-scripts','--repositories-file','/dev/null','--repository',self.root/'bin/output/packages.adb','add','--initdb','--usermode','kernel=6.18.44-r1','ca-bundle=1-r0'])
+  versions={'kernel':'6.18.44-r1','ca-bundle':'1-r0'}
+  self.assertEqual(set(lib.firmware_world(image,versions)),{'kernel=6.18.44-r1','ca-bundle=1-r0'})
+ def test_missing_world_or_mismatched_base_constraints_stop_publication(self):
+  world=self.root/'rootfs/etc/apk/world';world.unlink()
+  with self.assertRaisesRegex(ValueError,'world'):self.bundle()
+  for text in ['', '--allow-untrusted\n', 'missing-base\n', 'kernel=other-version\n']:
+   world.write_text(text)
+   with self.assertRaises(ValueError):self.bundle()
   self.assertFalse((self.root/'bin/output').exists())
  def test_foreign_signature_is_rejected(self):
   other=self.root/'other.pem';self.run_command(['openssl','ecparam','-name','prime256v1','-genkey','-noout','-out',other]);self.make_package('foreign',key=other)

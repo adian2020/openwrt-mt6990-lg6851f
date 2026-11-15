@@ -131,7 +131,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          APK="$PWD/staging_dir/host/bin/apk" python3 scripts/tests/test_mt6990_apk_library_native.py
           ./scripts/mt6990-build-apk-repository.sh
           python3 scripts/mt6990-publish-apk-library.py
 
@@ -163,6 +162,10 @@ jobs:
             logs/
             files/usr/share/mt6990-apk/
             bin/mt6990-apk-repository/repository.manifest.json
+            bin/mt6990-apk-validation/packages.adb
+            bin/mt6990-apk-validation/public-key.pem
+            bin/mt6990-apk-validation/firmware.world
+            bin/mt6990-apk-validation/validation.json
           retention-days: 7
 
       - name: Upload APK library metadata
@@ -172,6 +175,7 @@ jobs:
           name: LG6851F-APK-Library-Metadata
           path: |
             bin/mt6990-apk-repository/repository.manifest.json
+            bin/mt6990-apk-repository/firmware.world
             bin/mt6990-apk-repository/build.json
             bin/mt6990-apk-repository/selection.json
             bin/mt6990-apk-repository/PLUGIN_VERSIONS.json

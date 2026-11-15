@@ -80,6 +80,26 @@ def collect_packages(root):
     if not result:raise ValueError('No compiled APKs found')
     return result
 
+def firmware_world(rootfs,versions):
+    # APK intentionally does not auto-select unversioned virtual providers.
+    # Reproduce the image's explicit provider choices, while still resolving
+    # every dependency from this signed library into an empty temporary DB.
+    path=rootfs/'etc/apk/world'
+    if path.is_symlink() or not path.is_file():raise ValueError('Firmware APK world is missing or not a regular file')
+    requests={}
+    for raw in path.read_text().splitlines():
+        value=raw.strip()
+        if not value or value.startswith('#'):continue
+        name,equals,version=value.partition('=')
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9+_.-]*',name) or any(c.isspace() for c in value) or (equals and not version):
+            raise ValueError('Unsupported firmware APK world constraint: '+value)
+        if name not in versions:raise ValueError('Firmware base package is missing from signed library: '+name)
+        if equals and version!=versions[name]:raise ValueError('Firmware base version differs from signed library: '+value)
+        if name in requests and requests[name]!=value:raise ValueError('Conflicting firmware base constraints: '+name)
+        requests[name]=value
+    if not requests:raise ValueError('Firmware APK world is empty')
+    return list(requests.values())
+
 def bundle(root,out,rootfs,apk):
     selection=verify_selection(root,root/'.config');meta=readjson(root/'files'/META/'build.json')
     checked_identity(meta['repository'],meta['snapshot'],meta['source_sha'])
@@ -113,26 +133,46 @@ def bundle(root,out,rootfs,apk):
         if missing:raise ValueError('Requested APK artifacts are missing: '+', '.join(sorted(missing)))
         if 'kernel' not in versions:raise ValueError('Kernel APK/ABI metadata is missing')
         if not re.match(r'^6\.18\.44([~+._-]|$)',versions['kernel']):raise ValueError('Unexpected kernel package version')
+        base_requests=firmware_world(rootfs,versions)
+        # Preserve only public resolver inputs, even when dependency validation
+        # fails. Future diagnostics can replay the real signed index without
+        # uploading package payloads or signing private keys.
+        diagnostics=root/'bin/mt6990-apk-validation';diagnostics.mkdir(parents=True,exist_ok=True)
+        shutil.copy2(dest/'packages.adb',diagnostics/'packages.adb')
+        shutil.copy2(key,diagnostics/'public-key.pem')
+        shutil.copy2(rootfs/'etc/apk/world',diagnostics/'firmware.world')
+        validation={'snapshot':meta['snapshot'],'source_sha':meta['source_sha'],'firmware_world':base_requests,'index_sha256':sha(dest/'packages.adb'),'status':'checking'}
+        writejson(diagnostics/'validation.json',validation)
         with tempfile.TemporaryDirectory(prefix='apk-resolver-') as state:
             state=pathlib.Path(state);(state/'root').mkdir();repos=state/'repos.list';repos.write_text(str(dest/'packages.adb')+'\n')
             common=[apk,'--root',state/'root','--arch',ARCH,'--keys-dir',keys,'--no-network','--no-scripts']
             # A simulation cannot initialize a nonexistent APK database.
             command(common+['--repositories-file','/dev/null','add','--initdb','--usermode'])
-            # Check every published package, including transitive libraries and
-            # optional Nikki, independently. Repositories may contain alternatives
-            # that are not meant to be installed together.
+            # Validate the image's actual base world first. Nothing is installed:
+            # every following simulation starts from the same empty database.
+            try:
+                command(common+['--repositories-file',repos,'add','--usermode','--simulate',*base_requests],capture_output=True,text=True)
+            except subprocess.CalledProcessError as error:
+                writejson(diagnostics/'validation.json',{**validation,'status':'failed','package':'<firmware-base>','error':error.stderr})
+                raise RuntimeError('APK dependency closure failed for firmware base: '+error.stderr) from error
+            # Check every published package, including optional Nikki, against
+            # the actual firmware baseline and its explicit virtual providers.
+            # Optional alternatives are never installed together in this test.
             for name in sorted(versions):
                 try:
-                    command(common+['--repositories-file',repos,'add','--usermode','--simulate',name],capture_output=True,text=True)
+                    command(common+['--repositories-file',repos,'add','--usermode','--simulate',*base_requests,name],capture_output=True,text=True)
                 except subprocess.CalledProcessError as error:
+                    writejson(diagnostics/'validation.json',{**validation,'status':'failed','package':name,'error':error.stderr})
                     raise RuntimeError('APK dependency closure failed for '+name+': '+error.stderr) from error
+        writejson(diagnostics/'validation.json',{**validation,'status':'passed','checked_packages':len(versions)})
+        shutil.copy2(rootfs/'etc/apk/world',dest/'firmware.world')
         shutil.copy2(key,dest/'public-key.pem')
         for name in ['selection.json','build.json']:shutil.copy2(root/'files'/META/name,dest/name)
         plugins=root/'files/etc/mt6990-plugin-versions.json'
         if not plugins.is_file():raise ValueError('Actual upstream plugin/feed versions are missing')
         shutil.copy2(plugins,dest/'PLUGIN_VERSIONS.json')
         manifest={**meta,'config_sha256':sha(root/'.config'),'selection_sha256':sha(root/'files'/META/'selection.json'),'apk_tools':subprocess.check_output([str(apk),'--version'],text=True).strip(),'public_key_sha256':sha(key),'kernel_package':versions['kernel'],
-                  'package_count':len(paths),'dependency_checked_packages':len(versions),'requested_packages':selection,'packages':versions,'plugins_sha256':sha(plugins)}
+                  'firmware_world':base_requests,'firmware_world_sha256':sha(rootfs/'etc/apk/world'),'dependency_check_context':'empty-database-with-explicit-firmware-world','package_count':len(paths),'dependency_checked_packages':len(versions),'requested_packages':selection,'packages':versions,'plugins_sha256':sha(plugins)}
         writejson(dest/'repository.manifest.json',manifest)
         sums=''.join(sha(p)+'  '+p.name+'\n' for p in sorted(dest.iterdir()) if p.is_file())
         (dest/'SHA256SUMS').write_text(sums)
