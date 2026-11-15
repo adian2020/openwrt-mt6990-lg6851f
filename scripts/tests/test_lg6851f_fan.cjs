@@ -8,7 +8,7 @@ const panel=fs.readFileSync(pkg+'/htdocs/luci-static/resources/view/pwmfan/panel
 const po=fs.readFileSync(pkg+'/po/zh_Hans/pwmfan.po','utf8'),translations={};
 for(const m of po.matchAll(/^msgid (".*")\nmsgstr (".*")/gm))translations[JSON.parse(m[1])]=JSON.parse(m[2]);
 (async()=>{
- const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ const browser=await chromium.launch({executablePath:process.env.CHROMIUM||undefined,headless:true,args:['--no-sandbox']});
  try{
   for(const width of [390,1280])for(const theme of ['light','dark']){
    const page=await browser.newPage({viewport:{width,height:1000}}),errors=[];
@@ -44,7 +44,10 @@ for(const m of po.matchAll(/^msgid (".*")\nmsgstr (".*")/gm))translations[JSON.p
    assert((await page.locator('#pwmfan-rpm').textContent()).includes('无转速反馈'));
    const bladePaint=await page.locator('.lgfan-blade').evaluateAll(nodes=>nodes.map(n=>{const s=getComputedStyle(n,':before');return [s.backgroundColor,s.backgroundImage,s.opacity];}));
    assert.equal(bladePaint.length,9);assert.equal(new Set(bladePaint.map(p=>JSON.stringify(p))).size,1,'All nine blades must have identical paint');
-   assert.equal(bladePaint[0][1],'none');assert.equal(bladePaint[0][2],'1','No translucent overlap seam');
+   assert(bladePaint[0][1].includes('linear-gradient'),'Metal blade highlights must be visible');assert.equal(bladePaint[0][2],'1','No translucent overlap seam');
+   const accents=await page.locator('.lgfan-blade').evaluateAll(nodes=>nodes.map(n=>getComputedStyle(n,':after').backgroundImage));
+   assert.equal(new Set(accents).size,1,'All nine blades must share the same RGB accents');assert(accents[0].includes('linear-gradient'));
+   assert.equal(await page.locator('.lgfan').evaluate(n=>getComputedStyle(n).backgroundColor),'rgba(0, 0, 0, 0)');
    assert.equal(await page.locator('.pwmfan-speed').count(),3);
    assert.deepEqual(await page.locator('.pwmfan-speed').allTextContents(),['安静','标准模式','强风']);
    for(const [value,level,period]of [[115,'0',1.8],[180,'1',1.35],[220,'2',.8]]){

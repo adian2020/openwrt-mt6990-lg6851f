@@ -15,8 +15,12 @@ const css = `
 .lgfan-rim:before{content:'';position:absolute;inset:0;border-radius:50%;background:conic-gradient(from -90deg,hsl(var(--lgfan-hue) 88% 63%) 0deg,hsl(calc(var(--lgfan-hue) + 70 + var(--lgfan-shift)) 88% 62%) calc(80deg + var(--lgfan-warp)),hsl(calc(var(--lgfan-hue) + 158 - var(--lgfan-shift)) 88% 61%) calc(174deg - var(--lgfan-warp)),hsl(calc(var(--lgfan-hue) + 263 + var(--lgfan-shift)) 88% 62%) calc(268deg + var(--lgfan-warp)),hsl(var(--lgfan-hue) 88% 63%) 360deg);-webkit-mask:radial-gradient(farthest-side,transparent 94%,#000 95%);mask:radial-gradient(farthest-side,transparent 94%,#000 95%)}
 .lgfan-rotor{position:absolute;inset:13%;animation:lgfan-spin 1.8s linear infinite;animation-play-state:var(--lgfan-play);will-change:transform}
 .lgfan-blade{position:absolute;inset:0;transform:rotate(var(--lgfan-angle))}
-.lgfan-blade:before{content:'';position:absolute;left:45%;top:3%;width:34%;height:45%;border-radius:22% 65% 40% 9%;clip-path:polygon(0 100%,0 20%,50% 0,100% 22%,68% 70%,17% 100%);background:color-mix(in srgb,#688294 85%,var(--lgfan-base))}
-.lgfan-hub{position:absolute;inset:39%;border-radius:50%;background:radial-gradient(circle at 30% 20%,color-mix(in srgb,#768ca1 80%,var(--lgfan-base)),color-mix(in srgb,#273d50 85%,var(--lgfan-base)) 70%);box-shadow:0 0 0 1px #54e3e85e,0 2px 5px #0003}
+.lgfan-blade:before,.lgfan-blade:after{content:'';position:absolute;left:45%;top:3%;width:34%;height:45%;border-radius:22% 65% 40% 9%;clip-path:polygon(0 100%,0 20%,50% 0,100% 22%,68% 70%,17% 100%)}
+.lgfan-blade:before{background:repeating-linear-gradient(128deg,#d4f3ff1c 0 1px,transparent 1px 4px),linear-gradient(145deg,#17283b 0%,#7ca2b7 18%,#2b435e 33%,#101c30 70%,#4c708b 100%)}
+.lgfan-blade:after{background:linear-gradient(127deg,transparent 0 22%,#b8fff7 22% 24%,#17cfda 24% 29%,transparent 29% 57%,#b374ff 57% 60%,#f2aaff 60% 61%,transparent 61%);filter:drop-shadow(0 0 1px #3de4f6)}
+.lgfan-hub{position:absolute;inset:38%;border-radius:50%;background:radial-gradient(circle at 32% 22%,#93b2c8,#344c67 37%,#102136 72%);box-shadow:inset 0 0 0 1px #b4dfff70,0 0 0 1px #12283db3,0 2px 5px #0003}
+.lgfan-hub:before{content:'';position:absolute;inset:18%;clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%);background:conic-gradient(from 30deg,#86fff1,#15a9cf,#9c76ff,#ed9aff,#86fff1)}
+.lgfan-hub:after{content:'';position:absolute;inset:25%;clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%);background:linear-gradient(125deg,#182b43 0 34%,#81fff1 34% 41%,#102339 41% 57%,#bb8fff 57% 64%,#182b43 64%)}
 .lgfan[data-level='0'],.lgfan[data-level='1'],.lgfan[data-level='2']{--lgfan-play:running}
 .lgfan[data-level='unknown'] .lgfan-rim{opacity:.3}
 .lgfan-hidden .lgfan-rotor,.lgfan-hidden .lgfan-rim{animation-play-state:paused!important}
