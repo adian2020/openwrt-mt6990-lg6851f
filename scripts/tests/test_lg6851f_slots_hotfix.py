@@ -53,6 +53,12 @@ class SlotsHotfixTest(unittest.TestCase):
  def test_previously_used_proxy_is_allowed_but_other_arguments_are_rejected(self):
   self.assertEqual(self.run_script(args=['https://example.invalid/']).returncode,22);self.assertEqual(self.destination.read_bytes(),self.original)
   result=self.run_script(args=['https://v6.gh-proxy.org/']);self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(self.destination.read_bytes(),(ROOT/VIEW).read_bytes())
+ def test_upgrade_from_first_hotfix_restores_the_immediately_previous_view(self):
+  previous=(ROOT/'scripts/tests/fixtures/lg6851f-slots-hotfix1.js').read_bytes()
+  self.assertEqual(hashlib.sha256(previous).hexdigest(),'5ac75940b6ecd11b0ae24895b5bce9970f2499ef5b9d54ce520478fcf3f210eb')
+  self.destination.write_bytes(previous);result=self.run_script();self.assertEqual(result.returncode,0,result.stderr)
+  self.assertEqual(self.destination.read_bytes(),(ROOT/VIEW).read_bytes());restore=next((self.root/'root').glob('*/restore.sh'))
+  self.assertEqual(self.run_script(restore).returncode,0);self.assertEqual(self.destination.read_bytes(),previous)
 
 
 if __name__=='__main__':unittest.main()
