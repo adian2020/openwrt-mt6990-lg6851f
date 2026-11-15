@@ -104,8 +104,12 @@ case "$target" in a) [ "$valid_a" = true ] || fail 95 'A槽镜像头检查未通
 [ "${#expected}" = 64 ] || fail 22 '控制记录长度错误'
 case "$expected" in *[!0-9a-f]*) fail 22 '控制记录格式错误';; esac
 [ "$expected" = "$record" ] || fail 75 '启动记录已变化，请刷新后重新确认'
-if [ -e /tmp/sysupgrade ] || ps w | grep -Eq '[/]etc/init.d/(rcS|zmtk_boot_done)|[z]mtk_boot_done|[/]sbin/(sysupgrade|upgraded)|[/]lib/upgrade/(do_stage2|stage2)'; then
- fail 75 '检测到启动/升级过程或遗留标记，拒绝同时切槽'
+[ ! -e /tmp/sysupgrade ] || fail 75 '存在升级标记/tmp/sysupgrade，拒绝同时切槽'
+# Snapshot before starting grep. The old duplicated literal zmtk_boot_done in
+# grep's argv matched its own [z] alternative and falsely blocked selection.
+processes=$(ps w) || fail 75 '无法读取进程状态，未设置槽位'
+if printf '%s\n' "$processes" | grep -Eq '[/]etc/init.d/rcS|[z]mtk_boot_done|[/]sbin/(sysupgrade|upgraded)|[/]lib/upgrade/(do_stage2|stage2)'; then
+ fail 75 '检测到启动/升级进程，拒绝同时切槽'
 fi
 risk=false
 case "$target" in a) [ "$rb" -le 3 ] && [ "$sa" = 1 ] || risk=true;; b) [ "$ra" -le 3 ] && [ "$sb" = 1 ] || risk=true;; esac

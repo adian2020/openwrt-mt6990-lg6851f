@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run actual slot control shell against ordinary files, never block devices."""
-import json,os,pathlib,struct,subprocess,tempfile,unittest,tarfile
+import json,os,pathlib,struct,subprocess,tempfile,unittest,tarfile,re
 ROOT=pathlib.Path(__file__).resolve().parents[2]
 SOURCE=ROOT/'target/linux/mediatek/mt6990/base-files/usr/sbin/lg6851f-slotctl'
 PLATFORM=ROOT/'target/linux/mediatek/mt6990/base-files/lib/upgrade/platform.sh'
@@ -59,6 +59,24 @@ sys.exit(rc)
  def select(self,target='a',token=None,allow=False,**extra):return self.run_cli('select',target,'--expect',token or self.record().hex(),'--confirm',*(['--allow-vendor-recovery'] if allow else []),**extra)
 
 class SlotTest(SlotFixture):
+ def test_activity_guard_does_not_match_its_actual_grep_process(self):
+  pattern=re.search(r"grep -Eq '([^']+)'",SOURCE.read_text()).group(1)
+  process=subprocess.Popen(['grep','-Eq',pattern],stdin=subprocess.PIPE)
+  try:
+   row=subprocess.check_output(['ps','ww','-p',str(process.pid),'-o','pid=,args='],text=True)
+  finally:
+   process.stdin.close();process.wait(timeout=5)
+  (self.root/'ps-row').write_text(row);self.binary('ps','#!/bin/sh\ncat "$FIXTURE/ps-row"\n')
+  result,data=self.select('a');self.assertEqual(result.returncode,0,(result.stderr,data));self.assertEqual(self.record()[12],15)
+ def test_activity_guard_still_blocks_real_boot_and_upgrade_processes(self):
+  before=self.misc.read_bytes();self.binary('ps','#!/bin/sh\ncat "$FIXTURE/ps-row"\n')
+  for command in ['/bin/sh /etc/init.d/rcS S boot','/bin/sh /etc/init.d/zmtk_boot_done start','zmtk_boot_done start','/sbin/sysupgrade /tmp/fw.bin','/sbin/upgraded','/bin/sh /lib/upgrade/stage2','/bin/sh /lib/upgrade/do_stage2']:
+   with self.subTest(command=command):
+    (self.root/'ps-row').write_text('123 root '+command+'\n');result,data=self.select('a');self.assertEqual(result.returncode,75,data);self.assertEqual(self.misc.read_bytes(),before)
+  self.assertFalse((self.root/'writes').exists())
+ def test_process_read_failure_or_upgrade_marker_cannot_bypass_guard(self):
+  self.binary('ps','#!/bin/sh\nexit 1\n');before=self.misc.read_bytes();result,data=self.select('a');self.assertEqual(result.returncode,75,data);self.assertEqual(self.misc.read_bytes(),before)
+  self.binary('ps','#!/bin/sh\nexit 0\n');(self.root/'tmp/sysupgrade').touch();result,data=self.select('a');self.assertEqual(result.returncode,75,data);self.assertEqual(self.misc.read_bytes(),before)
  def test_show_uses_actual_cmdline_not_priority(self):
   b=bytearray(self.record());b[12]=15;b[17]=14;self.set_record(b)
   before=self.misc.read_bytes();r,d=self.run_cli('show');self.assertEqual(r.returncode,0,r.stderr);self.assertEqual((d['current'],d['next']),('b','a'));self.assertEqual(self.misc.read_bytes(),before);self.assertFalse((self.root/'writes').exists())
