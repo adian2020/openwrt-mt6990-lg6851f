@@ -45,6 +45,19 @@ class DashboardTest(unittest.TestCase):
         result=self.run_ucode("import * as d from 'lg6851f.dashboard'; printf('%J',map(lines,d.boot_slot));",lines=['root=/dev/mmcblk0p26 rw','root=/dev/mmcblk0p39','androidboot.slot_suffix=_a','slot_suffix=b','root=/dev/mmcblk0p26 androidboot.slot_suffix=_b','root=/dev/mmcblk0p260',''])
         self.assertEqual(result,['A','B','A','B',None,None,None])
 
+    def test_slot_rpc_validates_confirmation_and_preserves_backend_failure(self):
+        args=dict(target='a',expected='1'*64,confirm=True,allow_vendor_recovery=False)
+        failure=dict(code=75,error='启动记录已变化，请刷新后重新确认')
+        response=self.rpc('select_boot_slot',args,TEST_RESPONSES={"'/usr/sbin/lg6851f-slotctl' 'select'":json.dumps(failure)})
+        self.assertEqual(response['result'],failure)
+        self.assertEqual(len(response['commands']),1)
+        self.assertIn("'select' 'a' '--expect' '"+'1'*64+"' '--confirm'",response['commands'][0])
+        for field,value in [('confirm',False),('confirm','true'),('target','c'),('allow_vendor_recovery','false')]:
+            with self.subTest(field=field):
+                rejected=self.rpc('select_boot_slot',dict(args,**{field:value}))
+                self.assertEqual(rejected['result']['code'],22)
+                self.assertEqual(rejected['commands'],[])
+
     def test_boot_confirmation_requires_current_boot_slot_and_valid_state(self):
         self.write('/proc/sys/kernel/random/boot_id','test-boot')
         self.write('/proc/cmdline','bootslot=b root=/dev/mmcblk0p39')

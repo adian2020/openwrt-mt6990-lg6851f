@@ -13,7 +13,7 @@ const handler=uiSource.match(/\tcreateHandlerFn\(ctx, fn, \.\.\.args\) \{[\s\S]*
   const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.setContent('<main></main><aside id="modal"></aside>');
   await page.evaluate(({source,attr,handler})=>{
-   window.L={bind:(fn,ctx,...args)=>fn.bind(ctx,...args),hasViewPermission:()=>window.canWrite};
+   window.L={bind:(fn,ctx,...args)=>fn.bind(ctx,...args),hasViewPermission:()=>window.canWrite,env:{rpctimeout:20}};
    const dom=new Function('return ({elem:node=>node instanceof Element,'+attr+'})')();
    window.E=(tag,attrs={},children=[])=>{const el=document.createElement(tag);dom.attr(el,attrs);const add=v=>{if(Array.isArray(v))v.forEach(add);else if(v!=null)el.append(v instanceof Node?v:document.createTextNode(String(v)));};add(children);return el;};
    // This reproduces the reported bug using the actual framework function.
@@ -21,7 +21,7 @@ const handler=uiSource.match(/\tcreateHandlerFn\(ctx, fn, \.\.\.args\) \{[\s\S]*
    window.canWrite=true;window.calls=[];window.notices=[];window.readError=false;window.selectError=false;
    window.state={code:0,current:'b',next:'b',control:'1'.repeat(64),slots:{a:{priority:14,retry:0,success:1,upgrade:1,image_headers_ok:true},b:{priority:15,retry:0,success:1,upgrade:1,image_headers_ok:true}}};
    const rpc={declare:spec=>async(...args)=>{
-    calls.push({method:spec.method,args});
+    calls.push({method:spec.method,args,timeout:L.env.rpctimeout,nobatch:spec.nobatch,reject:spec.reject});
     if(spec.method==='get_boot_slots'){if(readError)throw Error('synthetic read failure');return structuredClone(state);}
     if(spec.method==='select_boot_slot'){if(selectError)throw Error('synthetic request failure');state.next=args[0];state.control='2'.repeat(64);return {code:0,control:state.control,backup:'/fixture/backup'};}
     throw Error('No real reboot allowed');
@@ -37,13 +37,14 @@ const handler=uiSource.match(/\tcreateHandlerFn\(ctx, fn, \.\.\.args\) \{[\s\S]*
   assert.equal(await button('切换到 A 槽').isEnabled(),true);
   assert.equal(await button('切换到 A 槽').getAttribute('disabled'),null);
   await button('切换到 A 槽').click();assert(await page.getByRole('heading',{name:'确认选择 A 槽'}).isVisible());
-  await button('仅设置').click();assert.equal(await page.evaluate(()=>calls.filter(c=>c.method==='select_boot_slot').length),0);
+  assert(await button('仅设置').isDisabled());assert(await button('设置并重启').isDisabled());assert((await page.locator('.lg6851f-slot-feedback').textContent()).includes('勾选'));
   await page.locator('#modal input[type=checkbox]').check();await page.locator('#modal input[type=text]').fill('A');
   await page.evaluate(()=>window.selectError=true);await button('仅设置').click();
-  await page.waitForFunction(()=>notices.some(n=>n.text.includes('synthetic request failure')));assert(await button('仅设置').isEnabled());
-  await page.evaluate(()=>window.selectError=false);await button('仅设置').click();
+  await page.waitForFunction(()=>document.querySelector('.lg6851f-slot-feedback').textContent.includes('synthetic request failure'));assert(await button('仅设置').isDisabled());assert(await button('取消').isEnabled());
+  await button('取消').click();await page.evaluate(()=>window.selectError=false);await button('切换到 A 槽').click();await page.locator('#modal input[type=checkbox]').check();await page.locator('#modal input[type=text]').fill('A');await button('仅设置').click();
   await page.waitForFunction(()=>!document.querySelector('#modal').children.length);
   assert.deepEqual(await page.evaluate(()=>calls.filter(c=>c.method==='select_boot_slot').at(-1).args),['a','1'.repeat(64),true,false]);
+  const sent=await page.evaluate(()=>calls.filter(c=>c.method==='select_boot_slot').at(-1));assert.equal(sent.timeout,60);assert(sent.nobatch&&sent.reject);assert.equal(await page.evaluate(()=>L.env.rpctimeout),20);
   await button('刷新状态').click();await page.waitForFunction(()=>notices.some(n=>n.text.includes('槽位状态已刷新')));
   await page.evaluate(()=>window.readError=true);await button('刷新状态').click();
   await page.waitForFunction(()=>notices.some(n=>n.text.includes('synthetic read failure')));assert(await button('刷新状态').isEnabled());

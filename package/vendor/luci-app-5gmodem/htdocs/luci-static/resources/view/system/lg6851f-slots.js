@@ -3,9 +3,9 @@
 'require rpc';
 'require ui';
 
-const getSlots = rpc.declare({object:'luci.modem5g',method:'get_boot_slots',expect:{}});
-const selectSlot = rpc.declare({object:'luci.modem5g',method:'select_boot_slot',params:['target','expected','confirm','allow_vendor_recovery'],expect:{}});
-const reboot = rpc.declare({object:'system',method:'reboot'});
+const getSlots = rpc.declare({object:'luci.modem5g',method:'get_boot_slots',nobatch:true,reject:true,expect:{}});
+const selectSlot = rpc.declare({object:'luci.modem5g',method:'select_boot_slot',params:['target','expected','confirm','allow_vendor_recovery'],nobatch:true,reject:true,expect:{}});
+const reboot = rpc.declare({object:'system',method:'reboot',nobatch:true,reject:true});
 function label(slot) { return slot==='a'?'A 槽':slot==='b'?'B 槽':'未确认'; }
 
 return view.extend({
@@ -57,14 +57,32 @@ return view.extend({
   const s=data.slots[target],other=data.slots[data.current];
   if(!s?.image_headers_ok){ui.addNotification(null,E('p',{},'目标镜像头未确认，未设置槽位'),'warning');return;}
   const risk=other.retry>3||s.success!==1;
-  const confirm=E('input',{'type':'checkbox'}),typed=E('input',{'type':'text','class':'cbi-input-text','placeholder':target.toUpperCase()});
+  const confirm=E('input',{'type':'checkbox'}),typed=E('input',{'type':'text','class':'cbi-input-text','placeholder':'请输入字母 '+target.toUpperCase(),'autocomplete':'off','autocapitalize':'characters'});
+  const feedback=E('p',{'role':'status','aria-live':'polite','class':'lg6851f-slot-feedback','style':'min-height:1.6em;white-space:pre-wrap;overflow-wrap:anywhere'});
+  const message=(text,error)=>{feedback.textContent=text;feedback.style.color=error?'var(--danger,#bd2838)':'var(--text,currentColor)';};
+  let buttons=[],cancel,uncertain=false;
+  const ready=()=>confirm.checked&&typed.value.trim().normalize('NFKC').toLowerCase()===target;
+  const update=()=>{
+   const valid=ready(),busy=!!this.selecting;
+   buttons.forEach(button=>button.disabled=busy||uncertain||!valid);
+   confirm.disabled=typed.disabled=busy;if(cancel)cancel.disabled=busy;
+   if(!busy)message(uncertain?'上次请求结果未确认，请取消弹窗并刷新核对槽位。':!confirm.checked?'请先勾选备份与恢复风险确认。':!valid?'请在输入框填写目标槽字母 '+target.toUpperCase()+'。':'确认条件已满足，请选择“仅设置”或“设置并重启”。',uncertain);
+  };
+  confirm.addEventListener('change',update);typed.addEventListener('input',update);
   const run=async doReboot=>{
-   if(this.selecting)return;
-   if(!confirm.checked||typed.value.trim().toLowerCase()!==target){ui.addNotification(null,E('p',{},'请确认备份与恢复风险，并输入目标槽字母'),'warning');return;}
-   this.selecting=true;
+   if(this.selecting||uncertain)return;
+   if(!ready()){update();return;}
+   this.selecting=true;update();message('正在备份并设置目标槽位，请等待，勿重复提交。',false);
    try{
-    const result=await selectSlot(target,data.control,true,risk);
-    if(result.code){ui.addNotification(null,E('p',{},result.error||'槽位设置失败'),'error');return;}
+    // The server budgets 45s for backup/sync. Set the transport budget only
+    // while dispatching this unbatched call, without extending other RPCs.
+    const previous=L.env.rpctimeout;
+    let request;
+    try{L.env.rpctimeout=60;request=selectSlot(target,data.control,true,risk);}
+    finally{L.env.rpctimeout=previous;}
+    const result=await request;
+    if(result.code){message('槽位设置未完成：'+(result.error||'错误码 '+result.code),true);return;}
+    if(!/^[0-9a-f]{64}$/.test(result.control||'')||!result.backup){uncertain=true;message('槽位响应不完整，结果未确认；请取消弹窗后刷新核对，勿重复提交。',true);return;}
     ui.hideModal();
     if(doReboot){
      ui.showModal('正在重启',[E('p',{'class':'spinning'},'目标已设置为 '+label(target)+'，正在重启…')]);
@@ -76,20 +94,19 @@ return view.extend({
     }else{
      ui.addNotification(null,E('p',{},'已设置 '+label(target)+'，未重启。控制记录备份：'+result.backup),'info');await this.refresh();
     }
-   }catch(e){ui.addNotification(null,E('p',{},'设置槽位请求未确认：'+(e.message||String(e))+'；请先刷新核对槽位状态。'),'error');}
-   finally{this.selecting=false;}
+   }catch(e){uncertain=true;message('设置槽位请求未确认：'+(e.message||String(e))+'；请取消弹窗后刷新核对，勿重复提交。',true);}
+   finally{this.selecting=false;buttons.forEach(button=>button.disabled=uncertain||!ready());confirm.disabled=typed.disabled=false;cancel.disabled=false;}
   };
+  cancel=E('button',{'type':'button','class':'cbi-button','click':()=>ui.hideModal()},'取消');
+  buttons=[E('button',{'type':'button','class':'cbi-button cbi-button-action','click':()=>run(false)},'仅设置'),E('button',{'type':'button','class':'cbi-button cbi-button-negative','click':()=>run(true)},'设置并重启')];
+  update();
   ui.showModal('确认选择 '+label(target),[
    E('p',{},'当前 '+label(data.current)+' → 目标 '+label(target)),
    E('p',{},'设置后默认从该槽启动。该槽真实启动结果仍由引导器和系统决定，失败保护继续有效。'),
    E('p',{'class':'alert-message warning'},risk?'当前字段已满足原厂可能恢复另一槽的条件，进入原厂后可能覆盖另一槽镜像。':'目标原厂系统仍可能依据启动状态同步另一槽，建议保存两槽镜像。'),
    E('label',{'class':'cbi-value'},[confirm,' 我已保存必要备份，并理解原厂恢复可能覆盖另一槽']),
-   E('p',{},'输入目标槽字母 '+target.toUpperCase()+'：'),typed,
-   E('div',{'class':'right'},[
-    E('button',{'type':'button','class':'cbi-button','click':()=>ui.hideModal()},'取消'),
-    E('button',{'type':'button','class':'cbi-button cbi-button-action','click':ui.createHandlerFn(this,()=>run(false))},'仅设置'),
-    E('button',{'type':'button','class':'cbi-button cbi-button-negative','click':ui.createHandlerFn(this,()=>run(true))},'设置并重启')
-   ])
+   E('p',{},'输入目标槽字母 '+target.toUpperCase()+'：'),typed,feedback,
+   E('div',{'class':'right'},[cancel,...buttons])
   ]);
  }
 });

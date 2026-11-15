@@ -9,10 +9,12 @@ class SlotViewTest(unittest.TestCase):
 const assert=require('assert'),fs=require('fs');
 const source=fs.readFileSync(process.argv[1],'utf8');
 class Element {
- constructor(tag,attrs,children){this.tag=tag;this.attrs=attrs||{};this.children=Array.isArray(children)?children:[children];this.value='';this.checked=false;}
+ constructor(tag,attrs,children){this.tag=tag;this.attrs=attrs||{};this.children=Array.isArray(children)?children:[children];this.value='';this.checked=false;this.style={};}
+ addEventListener(name,fn){this.attrs[name]=fn;}
  appendChild(n){this.children.push(n);}
  replaceWith(n){this.replacement=n;}
  get disabled(){return this.attrs.disabled!=null;}
+ set disabled(value){if(value)this.attrs.disabled=true;else delete this.attrs.disabled;}
 }
 const E=(...args)=>new Element(...args),calls=[],notices=[];
 let modal=null,canWrite=true,selectError=0,reconnected=false,selection=1;
@@ -20,7 +22,7 @@ const state={code:0,current:'b',next:'b',control:'1'.repeat(64),slots:{a:{priori
 const rpc={declare:spec=>async(...args)=>{calls.push({method:spec.method,args});if(spec.method==='get_boot_slots')return state;if(spec.method==='reboot')return {};if(selectError)return {code:75,error:'changed'};state.next=args[0];state.control=String(++selection).repeat(64);return {code:0,control:state.control,backup:'/data/lg6851f-slot-backups/fixture',rebooted:false};}};
 const ui={showModal:(title,nodes)=>{modal=nodes;},hideModal:()=>{modal=null;},createHandlerFn:(self,fn)=>(...args)=>fn.call(self,...args),addNotification:(a,b,c)=>notices.push(c),awaitReconnect:()=>{reconnected=true;}};
 const document={querySelector:()=>new Element('div')};
-const view=new Function('view','rpc','ui','E','L','window','document',source)({extend:x=>x},rpc,ui,E,{hasViewPermission:()=>canWrite},{location:{host:'192.168.1.1'}},document);
+const view=new Function('view','rpc','ui','E','L','window','document',source)({extend:x=>x},rpc,ui,E,{hasViewPermission:()=>canWrite,env:{rpctimeout:20}},{location:{host:'192.168.1.1'}},document);
 function walk(nodes){return (Array.isArray(nodes)?nodes:[nodes]).flatMap(n=>n instanceof Element?[n,...walk(n.children)]:[]);}
 function button(text){return walk(modal).find(n=>n.tag==='button'&&n.children[0]===text);}
 function confirm(letter){const inputs=walk(modal).filter(n=>n.tag==='input');inputs[0].checked=true;inputs[1].value=letter;}
@@ -30,7 +32,7 @@ function confirm(letter){const inputs=walk(modal).filter(n=>n.tag==='input');inp
  assert(!bButtons[0].disabled,'LuCI serializes disabled=false as a disabled HTML button');assert.equal(bButtons[0].attrs.type,'button');
  view.confirmSlot('a');await button('仅设置').attrs.click();assert(!calls.some(x=>x.method==='select_boot_slot'));
  confirm('B');await button('仅设置').attrs.click();assert(!calls.some(x=>x.method==='select_boot_slot'));
- confirm('A');selectError=75;await button('设置并重启').attrs.click();assert(!calls.some(x=>x.method==='reboot'));assert(modal);assert(notices.includes('error'));
+ confirm('A');selectError=75;await button('设置并重启').attrs.click();assert(!calls.some(x=>x.method==='reboot'));assert(modal);assert(walk(modal).some(n=>String(n.textContent).includes('changed')));
  selectError=0;await button('仅设置').attrs.click();assert(!modal);assert(!calls.some(x=>x.method==='reboot'));
  const selected=calls.filter(x=>x.method==='select_boot_slot').at(-1);assert.deepEqual(selected.args,['a','1'.repeat(64),true,true]);
  state.current='a';const aRendered=view.render(state);const aButtons=walk(aRendered).filter(n=>n.tag==='button'&&String(n.children[0]).startsWith('切换到 '));assert.equal(aButtons.length,1);assert.equal(aButtons[0].children[0],'切换到 B 槽');
