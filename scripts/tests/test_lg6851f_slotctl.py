@@ -122,6 +122,23 @@ class ProbeTest(SlotFixture):
   archives=list((self.root/'tmp').glob('lg6851f-bootchain.*.tar.gz'));self.assertEqual(len(archives),1)
   with tarfile.open(archives[0]) as t:self.assertEqual(t.extractfile('./lk_a.img').read(),lk.read_bytes());self.assertIn('./identity.txt',t.getnames())
   self.assertEqual(before,{p.name:p.read_bytes() for p in (self.root/'dev').glob('mmcblk*')});self.assertFalse((self.root/'writes').exists())
+ def test_missing_block_device_creates_diagnostic_archive_and_visible_stage(self):
+  lk=self.add_lk();lk.unlink()
+  r=self.run_probe();self.assertEqual(r.returncode,95);self.assertIn('device:lk_a',r.stderr);self.assertIn('.tar.gz',r.stderr)
+  archive=next((self.root/'tmp').glob('lg6851f-bootchain.*.tar.gz'))
+  with tarfile.open(archive) as t:
+   status=t.extractfile('./status.txt').read().decode();self.assertIn('exit_code=95',status);self.assertIn('completed_lk_images=0',status)
+ def test_timeout_preserves_partial_dump_and_marks_it_incomplete(self):
+  self.add_lk()
+  self.binary('timeout',"#!/usr/bin/env python3\nimport pathlib,sys\np=next(x[3:] for x in sys.argv if x.startswith('of='));pathlib.Path(p).write_bytes(b'partial-LK');sys.exit(124)\n")
+  r=self.run_probe();self.assertEqual(r.returncode,124);self.assertIn('read:lk_a',r.stderr)
+  archive=next((self.root/'tmp').glob('lg6851f-bootchain.*.tar.gz'))
+  with tarfile.open(archive) as t:
+   self.assertIn('./lk_a.img.partial',t.getnames());self.assertNotIn('./lk_a.img',t.getnames());self.assertIn('status=incomplete',t.extractfile('./status.txt').read().decode())
+ def test_early_identity_failure_still_prints_archive_outside_redirected_report(self):
+  (self.root/'proc/uptime').unlink()
+  r=self.run_probe();self.assertNotEqual(r.returncode,0);self.assertIn('阶段=identity',r.stderr);self.assertIn('.tar.gz',r.stderr)
+  self.assertTrue(list((self.root/'tmp').glob('lg6851f-bootchain.*.tar.gz')))
  def test_absent_or_oversized_lk_refuses_partition_dump(self):
   r=self.run_probe();self.assertEqual(r.returncode,95)
   self.add_lk(16385);r=self.run_probe();self.assertEqual(r.returncode,27);self.assertFalse(list((self.root/'tmp').glob('*/lk_a.img')))
