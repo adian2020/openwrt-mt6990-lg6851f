@@ -104,7 +104,7 @@ class SlotTest(SlotFixture):
   r=subprocess.run(['sh',str(script)],capture_output=True,text=True);self.assertNotEqual(r.returncode,0);self.assertNotIn('upgrade-called',r.stdout)
   lock.rmdir();r=subprocess.run(['sh',str(script)],capture_output=True,text=True);self.assertEqual(r.returncode,0,r.stderr);self.assertIn('upgrade-called',r.stdout);self.assertFalse(lock.exists())
 class ProbeTest(SlotFixture):
- def run_probe(self,deadline=None):
+ def run_probe(self,deadline=None,args=()):
   import re
   text=(ROOT/'scripts/lg6851f-probe-bootloader.sh').read_text()
   text=re.sub(r'/(?:dev|sys|proc|var|tmp)/',lambda m:str(self.root/m[0].strip('/'))+'/',text).replace('[ -b ','[ -f ')
@@ -112,7 +112,7 @@ class ProbeTest(SlotFixture):
   path=self.root/'probe';path.write_text(text)
   self.binary('timeout',"#!/bin/sh\ntouch \"$FIXTURE/timeout-called\"\nexit 99\n")
   self.binary('dmesg',"#!/bin/sh\necho fixture-kernel\n")
-  return subprocess.run(['sh',str(path)],env=dict(os.environ,PATH=str(self.root/'bin')+':'+os.environ['PATH'],FIXTURE=str(self.root)),capture_output=True,text=True,timeout=8)
+  return subprocess.run(['sh',str(path),*args],env=dict(os.environ,PATH=str(self.root/'bin')+':'+os.environ['PATH'],FIXTURE=str(self.root)),capture_output=True,text=True,timeout=8)
  def add_lk(self,sectors=1024):
   sys=self.root/'sys/class/block/mmcblk0p23';sys.mkdir()
   (sys/'uevent').write_text('PARTNAME=lk_a\nDEVNAME=mmcblk0p23\n')
@@ -157,5 +157,36 @@ class ProbeTest(SlotFixture):
  def test_absent_or_oversized_lk_refuses_partition_dump(self):
   r=self.run_probe();self.assertEqual(r.returncode,95)
   self.add_lk(16385);r=self.run_probe();self.assertEqual(r.returncode,27);self.assertFalse(list((self.root/'tmp').glob('*/lk_a.img')))
+ def add_boot_areas(self):
+  for n in [0,1]:
+   name=f'mmcblk0boot{n}';sys=self.root/'sys/class/block'/name;sys.mkdir()
+   for f,v in [('uevent',f'DEVNAME={name}\nDEVTYPE=disk\nMAJOR=179\nMINOR={8+n}'),('dev',f'179:{8+n}'),('size','4096'),('force_ro','1')]:
+    (sys/f).write_text(v+'\n')
+   (self.root/'dev'/name).write_bytes(bytes([n+1])*(2*1024*1024))
+ def test_explicit_preloader_mode_reads_only_bounded_prefixes_and_keeps_force_ro(self):
+  self.add_boot_areas();lk=self.add_lk()
+  before={p.name:p.read_bytes() for p in (self.root/'dev').glob('mmcblk*')}
+  r=self.run_probe(args=('--preloader',));self.assertEqual(r.returncode,0,r.stderr)
+  archive=next((self.root/'tmp').glob('lg6851f-bootchain.*.tar.gz'))
+  with tarfile.open(archive) as t:
+   self.assertNotIn('./lk_a.img',t.getnames())
+   for n in [0,1]:self.assertEqual(t.extractfile(f'./mmcblk0boot{n}.prefix.img').read(),before[f'mmcblk0boot{n}'][:1048576])
+   status=t.extractfile('./status.txt').read().decode();self.assertIn('mode=preloader',status);self.assertIn('completed_preloader_prefixes=2',status);self.assertIn('not full partition backups',status)
+  self.assertEqual(before,{p.name:p.read_bytes() for p in (self.root/'dev').glob('mmcblk*')})
+  for n in [0,1]:self.assertEqual((self.root/f'sys/class/block/mmcblk0boot{n}/force_ro').read_text(),'1\n')
+  self.assertFalse((self.root/'writes').exists());self.assertFalse((self.root/'timeout-called').exists())
+ def test_preloader_requires_verified_layout_and_boot_area_identity(self):
+  self.add_boot_areas();p=self.root/'sys/class/block/mmcblk0p46/size';p.write_text('1')
+  r=self.run_probe(args=('--preloader',));self.assertEqual(r.returncode,95);self.assertIn('preloader-layout',r.stderr)
+  self.assertFalse(list((self.root/'tmp').glob('*/*.prefix.img')))
+  p.write_text('5187456');p=self.root/'sys/class/block/mmcblk0boot0/dev';p.write_text('8:8')
+  r=self.run_probe(args=('--preloader',));self.assertEqual(r.returncode,95);self.assertFalse(list((self.root/'tmp').glob('*/*.prefix.img')))
+ def test_preloader_oversize_or_missing_boot_area_does_not_dump(self):
+  self.add_boot_areas();p=self.root/'sys/class/block/mmcblk0boot0/size';p.write_text('16385')
+  r=self.run_probe(args=('--preloader',));self.assertEqual(r.returncode,27);self.assertFalse(list((self.root/'tmp').glob('*/*.prefix.img')))
+  p.write_text('4096');(self.root/'dev/mmcblk0boot0').unlink()
+  r=self.run_probe(args=('--preloader',));self.assertEqual(r.returncode,95);self.assertFalse(list((self.root/'tmp').glob('*/*.prefix.img')))
+ def test_unknown_probe_mode_is_rejected(self):
+  r=self.run_probe(args=('--write',));self.assertEqual(r.returncode,22);self.assertFalse(list((self.root/'tmp').glob('lg6851f-bootchain.*')))
 
 if __name__=='__main__':unittest.main()

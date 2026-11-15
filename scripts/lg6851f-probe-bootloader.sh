@@ -1,12 +1,19 @@
 #!/bin/sh
-# Read-only, bounded LK collection. Archive diagnostics even on guarded failure.
+# Read-only, bounded boot-chain collection. Never writes boot partitions.
 set -eu
 umask 077
+mode=lk
+case "$#:${1:-}" in
+ 0:) ;;
+ 1:--preloader) mode=preloader;;
+ *) echo '用法：sh lg6851f-probe-bootloader.sh [--preloader]' >&2; exit 22;;
+esac
 root=$(mktemp -d /tmp/lg6851f-bootchain.XXXXXX)
 report="$root/identity.txt"
 exec 3>&1 4>&2
 stage=identity
 found=0
+preloaders=0
 reading=
 reader_pid=
 reader_stamp=
@@ -21,10 +28,10 @@ stop_child() {
  if same_child "$1" "$2"; then kill -KILL "$1" 2>/dev/null || :; fi
  wait "$1" 2>/dev/null || :
 }
-read_lk() {
+read_image() {
  local rc timed_out="$root/read-timed-out"
  rm -f "$timed_out"
- dd if="$device" of="$reading" bs=65536 count="$(((sectors * 512 + 65535) / 65536))" 2>> "$report" &
+ dd if="$device" of="$reading" bs="$read_bs" count="$read_count" 2>> "$report" &
  reader_pid=$!
  reader_stamp=$(child_stamp "$reader_pid")
  (
@@ -44,7 +51,7 @@ read_lk() {
  reader_pid=; reader_stamp=
  stop_child "$guard_pid" "$guard_stamp"
  guard_pid=; guard_stamp=
- [ ! -f "$timed_out" ] || { echo 'LK读取超过12秒，已请求停止采集子进程' >> "$report"; return 124; }
+ [ ! -f "$timed_out" ] || { echo '引导镜像读取超过12秒，已请求停止采集子进程' >> "$report"; return 124; }
  return "$rc"
 }
 finish() {
@@ -57,7 +64,8 @@ finish() {
   mv "$reading" "$reading.partial"
  fi
  {
-  printf 'collector_version=3\nexit_code=%s\nstage=%s\ncompleted_lk_images=%s\n' "$rc" "$stage" "$found"
+  printf 'collector_version=4\nmode=%s\nexit_code=%s\nstage=%s\ncompleted_lk_images=%s\ncompleted_preloader_prefixes=%s\n' "$mode" "$rc" "$stage" "$found" "$preloaders"
+  [ "$mode" != preloader ] || echo 'scope=boot0/boot1 prefixes only; at most 1MiB each; not full partition backups'
   [ "$rc" -ne 0 ] || echo 'status=complete'
   [ "$rc" -eq 0 ] || echo 'status=incomplete; partial images are not complete firmware dumps'
  } > "$root/status.txt"
@@ -84,7 +92,7 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 die() { printf '%s\n' "$2" >> "$report"; printf '%s\n' "$2" >&4; exit "$1"; }
 {
- echo 'collector_version=3'
+ printf 'collector_version=4\nmode=%s\n' "$mode"
  uname -a
  cat /proc/cmdline /proc/sys/kernel/random/boot_id /proc/uptime
  echo '=== Fixed partition identities (metadata only) ==='
@@ -98,6 +106,7 @@ die() { printf '%s\n' "$2" >> "$report"; printf '%s\n' "$2" >&4; exit "$1"; }
  fi
 } > "$report" 2>&1
 stage=partition-scan
+if [ "$mode" = lk ]; then
 for sys in /sys/class/block/mmcblk0p*; do
  [ -r "$sys/uevent" ] || continue
  name=$(sed -n 's/^PARTNAME=//p' "$sys/uevent")
@@ -120,7 +129,9 @@ for sys in /sys/class/block/mmcblk0p*; do
  stage="read:$name"
  reading="$root/$name.img"
  # Keep each read below the budget; no whole-eMMC or rootfs hash scan.
- read_lk
+ read_bs=65536
+ read_count=$(((sectors * 512 + 65535) / 65536))
+ read_image
  stage="verify:$name"
  [ "$(wc -c < "$reading")" -eq "$((sectors * 512))" ] || die 5 'LK读取不完整'
  reading=
@@ -129,6 +140,47 @@ for sys in /sys/class/block/mmcblk0p*; do
 done
 stage=partition-scan
 [ "$found" -gt 0 ] || die 95 '未找到lk_a/lk_b分区，保留分区诊断信息'
+else
+ # The uploaded stock upgrade library maps preloader_a/b to boot0/boot1.
+ # Check the known board layout before reading either hardware boot area.
+ stage=preloader-layout
+ for spec in '1 misc 1024' '25 boot_a 65536' '26 rootfs_a 262144' '38 boot_b 65536' '39 rootfs_b 262144' '46 user_data 5187456'; do
+  set -- $spec
+  sys="/sys/class/block/mmcblk0p$1"
+  [ -b "/dev/mmcblk0p$1" ] && [ "$(cat "$sys/partition" 2>/dev/null)" = "$1" ] &&
+   [ "$(cat "$sys/size" 2>/dev/null)" = "$3" ] && grep -qx "PARTNAME=$2" "$sys/uevent" || die 95 '不是已核实的LG6851F分区布局，未读取preloader'
+ done
+ for name in mmcblk0boot0 mmcblk0boot1; do
+  stage="identity:$name"
+  sys="/sys/class/block/$name"
+  device="/dev/$name"
+  [ -b "$device" ] && grep -qx "DEVNAME=$name" "$sys/uevent" &&
+   grep -qx 'DEVTYPE=disk' "$sys/uevent" || die 95 'eMMC启动区身份不匹配，拒绝读取'
+  major=$(sed -n 's/^MAJOR=//p' "$sys/uevent")
+  minor=$(sed -n 's/^MINOR=//p' "$sys/uevent")
+  case "$major:$minor" in *[!0-9:]*|:*|*:) die 95 '启动区设备号无效';; esac
+  [ "$(cat "$sys/dev")" = "$major:$minor" ] || die 95 '启动区sysfs设备号不一致'
+  sectors=$(cat "$sys/size")
+  case "$sectors" in ''|*[!0-9]*) die 95 '启动区大小无效';; esac
+  [ "$sectors" -gt 0 ] && [ "$sectors" -le 16384 ] || die 27 '启动区超过已核实的8MiB容量边界，未读取'
+  read_count="$sectors"
+  [ "$read_count" -le 2048 ] || read_count=2048
+  read_bs=512
+  {
+   echo "=== $name: prefix only; partition_sectors=$sectors read_sectors=$read_count ==="
+   cat "$sys/uevent" "$sys/size" "$sys/dev"
+   if [ -r "$sys/force_ro" ]; then printf 'force_ro='; cat "$sys/force_ro"; fi
+  } >> "$report" 2>&1
+  reading="$root/$name.prefix.img"
+  stage="read:$name"
+  read_image
+  stage="verify:$name"
+  [ "$(wc -c < "$reading")" -eq "$((read_count * 512))" ] || die 5 'preloader前缀读取不完整'
+  reading=
+  preloaders=$((preloaders+1))
+  sleep 1
+ done
+fi
 stage=kernel-log
 dmesg > "$root/kernel.log" 2>/dev/null || :
 stage=hashes
