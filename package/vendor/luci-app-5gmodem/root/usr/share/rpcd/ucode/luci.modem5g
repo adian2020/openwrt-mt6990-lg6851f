@@ -34,6 +34,14 @@ function capture(argv, seconds) {
 	return { output: trim(output), code: code || 0 };
 }
 
+function slot_call(argv) {
+ if (!board_ok()) return {code:95,error:'当前设备不支持槽位设置'};
+ let result=capture(['/usr/sbin/lg6851f-slotctl',...argv],45), response;
+ try {response=json(result.output);} catch(e) {return {code:result.code||5,error:'槽位工具未返回有效结果'};}
+ if (result.code && !response.code) return {code:result.code,error:'槽位工具异常退出'};
+ return response;
+}
+
 function launch_lock(argv) {
 	let directory=mkdtemp('/tmp/lg6851f-lock-job.XXXXXX');
 	if(!directory)return {code:5,error:'无法创建锁定任务'};
@@ -325,6 +333,15 @@ function save_apn(req) {
 }
 
 const methods = {
+	get_boot_slots: {call:function(){return slot_call(['show']);}},
+	select_boot_slot: {args:{target:'',expected:'',confirm:false,allow_vendor_recovery:false},call:function(req){
+  let a=req.args;
+  if(index(['a','b'],a.target)<0 || type(a.expected)!='string' || !match(a.expected,/^[0-9a-f]{64}$/) || a.confirm!==true || type(a.allow_vendor_recovery)!='bool')
+   return {code:22,error:'槽位或确认参数无效'};
+  let argv=['select',a.target,'--expect',a.expected,'--confirm'];
+  if(a.allow_vendor_recovery)push(argv,'--allow-vendor-recovery');
+  return slot_call(argv);
+ }},
 	dashboard_action: {args:{operation:''},call:function(req){
 		if(!board_ok())return {code:95,error:'当前设备不支持此操作'};
 		let op=req.args?.operation;

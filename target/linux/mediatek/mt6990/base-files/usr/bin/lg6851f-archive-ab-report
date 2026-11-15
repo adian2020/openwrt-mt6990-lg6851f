@@ -26,11 +26,15 @@ available=$(df -Pk "$shared" | awk 'NR==2 {print $4}')
 # Keep a standalone reader for manual use from stock after fallback. Never
 # install an init hook in stock or execute an unverified shared script at boot.
 tool_tmp="$tools/.collector-$boot_id.tmp"
+slot_tmp="$tools/.slotctl-$boot_id.tmp"
 tmp="$root/.report-$boot_id.tmp"
-trap 'rm -f "$tmp" "$tool_tmp"' EXIT INT TERM
+trap 'rm -f "$tmp" "$tool_tmp" "$slot_tmp"' EXIT INT TERM
 cp /usr/bin/lg6851f-collect-ab-failure "$tool_tmp"
 chmod 700 "$tool_tmp"
 mv -f "$tool_tmp" "$tools/collect-ab-failure.sh"
+cp /usr/sbin/lg6851f-slotctl "$slot_tmp"
+chmod 700 "$slot_tmp"
+mv -f "$slot_tmp" "$tools/slotctl.sh"
 report="$root/boot-$boot_id.txt.gz"
 [ ! -f "$report" ] || exit 0
 /usr/bin/timeout 30 /usr/bin/lg6851f-collect-ab-failure >/dev/null

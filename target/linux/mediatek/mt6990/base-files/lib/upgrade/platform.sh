@@ -261,7 +261,7 @@ platform_check_image() {
 	return 0
 }
 
-platform_do_upgrade() {
+lg6851f_do_locked_upgrade() {
 	local image="$1" bootctrl_before bootctrl_after expected_bootctrl control magic
 	local connsys_expected connsys_actual
 
@@ -386,6 +386,20 @@ platform_do_upgrade() {
 	lg6851f_trace "COMPLETE connsys_gnss_b+boot_b+rootfs_b; verification=GNSS-sha256+boot/rootfs-magic slot_a=untouched bootctrl=priority-and-b-retry"
 	umount "$LG6851F_TRACE_MNT" 2>/dev/null || true
 	echo "LG6851F B-slot upgrade complete. Slot A is untouched; B is the verified next boot target."
+}
+
+# Serialize the manual slot selector with this firmware's upgrade writes.
+# A failed process may leave a lock: fail closed until its evidence is checked.
+platform_do_upgrade() {
+	local lock=/tmp/lg6851f-bootctrl.lock rc
+	mkdir "$lock" 2>/dev/null || {
+		echo 'LG6851F boot control is locked; refusing concurrent upgrade.' >&2
+		return 1
+	}
+	lg6851f_do_locked_upgrade "$@"
+	rc=$?
+	rmdir "$lock" || return 1
+	return "$rc"
 }
 
 platform_copy_config() {

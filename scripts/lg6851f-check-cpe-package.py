@@ -57,6 +57,12 @@ if fan_read != ['get_status'] or 'luci.pwmfan' in acl['write']['ubus']:
 rpc_source = rpc_path.read_text()
 methods = set(re.findall(r'^\s+(\w+):\s*\{\s*(?:call|args):', rpc_source, re.M))
 permitted = set(acl['read']['ubus']['luci.modem5g'] + acl['write']['ubus']['luci.modem5g'])
+slot_acl_path=root/'usr/share/rpcd/acl.d/luci-app-lg6851f-slots.json'
+if required(slot_acl_path):
+    slot_acl=json.loads(slot_acl_path.read_text())['luci-app-lg6851f-slots']
+    if slot_acl['read']!={'ubus':{'luci.modem5g':['get_boot_slots']}} or slot_acl['write']!={'ubus':{'luci.modem5g':['select_boot_slot'],'system':['reboot']}}:
+        errors.append('启动槽位读写权限范围不符')
+    permitted.update(slot_acl['read']['ubus'].get('luci.modem5g',[])+slot_acl['write']['ubus'].get('luci.modem5g',[]))
 for method in permitted:
     if method not in methods: errors.append('ACL引用了缺失RPC方法：'+method)
 for removed in ['admin/modem5g/cpu','admin/modem5g/sim']:
@@ -97,6 +103,7 @@ required(root/'usr/bin/lg6851f-cellular-refresh',executable=True)
 required(chain/'usr/bin/lg6851f-modem-restart',executable=True)
 required(feed_root/'usr/bin/lg6851f-archive-ab-report',executable=True)
 required(feed_root/'usr/bin/lg6851f-collect-ab-failure',executable=True)
+required(feed_root/'usr/sbin/lg6851f-slotctl',executable=True)
 required(feed_root/'etc/init.d/lg6851f-ab-report',executable=True)
 required(feed_root/'usr/bin/lg6851f-setup-apk-library',executable=True)
 required(feed_root/'usr/sbin/lg6851f-boot-observer',executable=True)

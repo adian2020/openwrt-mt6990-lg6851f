@@ -1,0 +1,22 @@
+{
+	"luci-app-lg6851f-slots": {
+		"description": "Read and explicitly select the LG6851F boot slot",
+		"read": {
+			"ubus": {
+				"luci.modem5g": [
+					"get_boot_slots"
+				]
+			}
+		},
+		"write": {
+			"ubus": {
+				"luci.modem5g": [
+					"select_boot_slot"
+				],
+				"system": [
+					"reboot"
+				]
+			}
+		}
+	}
+}

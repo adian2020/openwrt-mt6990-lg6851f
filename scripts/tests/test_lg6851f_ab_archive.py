@@ -46,7 +46,8 @@ class ArchiveTest(SharedFixture):
  def setUp(self):
   super().setUp()
   self.collector=self.binary('collect','printf "fixture boot and crash evidence\\n" > '+str(self.root/'tmp/lg6851f-ab-failure.txt'))
-  text=self.fixture_script(SOURCE.read_text()).replace('/usr/bin/lg6851f-collect-ab-failure',str(self.collector)).replace('\nsync\n','\n:\n')
+  self.slotctl=self.binary('slotctl',':')
+  text=self.fixture_script(SOURCE.read_text()).replace('/usr/bin/lg6851f-collect-ab-failure',str(self.collector)).replace('/usr/sbin/lg6851f-slotctl',str(self.slotctl)).replace('\nsync\n','\n:\n')
   self.run=self.root/'run';self.run.write_text(text)
   self.reports=self.root/'p46/lg6851f-ab-reports';self.tool=self.root/'p46/lg6851f-ab-tools/collect-ab-failure.sh'
  def run_report(self,index=1):return self.run_script(self.run,index)
@@ -57,6 +58,7 @@ class ArchiveTest(SharedFixture):
   for path in files:
    self.assertEqual(gzip.decompress(path.read_bytes()),b'fixture boot and crash evidence\n');self.assertEqual(path.stat().st_mode&0o777,0o600)
   self.assertEqual(self.tool.read_bytes(),self.collector.read_bytes());self.assertEqual(self.tool.stat().st_mode&0o777,0o700)
+  self.assertEqual((self.tool.parent/'slotctl.sh').read_bytes(),self.slotctl.read_bytes())
   before={p.name:p.read_bytes() for p in files};self.assertEqual(self.run_report(10).returncode,0)
   self.assertEqual(before,{p.name:p.read_bytes() for p in files})
  def test_current_report_survives_clock_reset_relative_to_old_files(self):
