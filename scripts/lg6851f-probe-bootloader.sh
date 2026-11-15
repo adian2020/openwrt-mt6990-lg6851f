@@ -8,15 +8,56 @@ exec 3>&1 4>&2
 stage=identity
 found=0
 reading=
+reader_pid=
+reader_stamp=
+guard_pid=
+guard_stamp=
+# Only inspect our own children. Compare start time as well as PID before kill.
+process_root=/proc
+child_stamp() { awk -v parent="$$" '$4==parent {print $22}' "$process_root/$1/stat" 2>/dev/null || :; }
+same_child() { [ -n "$2" ] && [ "$(child_stamp "$1")" = "$2" ]; }
+stop_child() {
+ [ -n "$1" ] || return 0
+ if same_child "$1" "$2"; then kill -KILL "$1" 2>/dev/null || :; fi
+ wait "$1" 2>/dev/null || :
+}
+read_lk() {
+ local rc timed_out="$root/read-timed-out"
+ rm -f "$timed_out"
+ dd if="$device" of="$reading" bs=65536 count="$(((sectors * 512 + 65535) / 65536))" 2>> "$report" &
+ reader_pid=$!
+ reader_stamp=$(child_stamp "$reader_pid")
+ (
+  trap - EXIT INT TERM HUP
+  exec 3>&- 4>&-
+  sleep 12
+  if same_child "$reader_pid" "$reader_stamp"; then
+   : > "$timed_out"
+   kill -TERM "$reader_pid" 2>/dev/null || :
+   sleep 1
+   if same_child "$reader_pid" "$reader_stamp"; then kill -KILL "$reader_pid" 2>/dev/null || :; fi
+  fi
+ ) </dev/null >/dev/null 2>&1 &
+ guard_pid=$!
+ guard_stamp=$(child_stamp "$guard_pid")
+ if wait "$reader_pid"; then rc=0; else rc=$?; fi
+ reader_pid=; reader_stamp=
+ stop_child "$guard_pid" "$guard_stamp"
+ guard_pid=; guard_stamp=
+ [ ! -f "$timed_out" ] || { echo 'LK读取超过12秒，已请求停止采集子进程' >> "$report"; return 124; }
+ return "$rc"
+}
 finish() {
  local rc="$1" archive="$root.tar.gz" archive_rc
  trap - EXIT INT TERM HUP
  set +e
+ stop_child "$guard_pid" "$guard_stamp"
+ stop_child "$reader_pid" "$reader_stamp"
  if [ "$rc" -ne 0 ] && [ -n "$reading" ] && [ -f "$reading" ]; then
   mv "$reading" "$reading.partial"
  fi
  {
-  printf 'collector_version=2\nexit_code=%s\nstage=%s\ncompleted_lk_images=%s\n' "$rc" "$stage" "$found"
+  printf 'collector_version=3\nexit_code=%s\nstage=%s\ncompleted_lk_images=%s\n' "$rc" "$stage" "$found"
   [ "$rc" -ne 0 ] || echo 'status=complete'
   [ "$rc" -eq 0 ] || echo 'status=incomplete; partial images are not complete firmware dumps'
  } > "$root/status.txt"
@@ -43,7 +84,7 @@ trap 'exit 143' TERM
 trap 'exit 129' HUP
 die() { printf '%s\n' "$2" >> "$report"; printf '%s\n' "$2" >&4; exit "$1"; }
 {
- echo 'collector_version=2'
+ echo 'collector_version=3'
  uname -a
  cat /proc/cmdline /proc/sys/kernel/random/boot_id /proc/uptime
  echo '=== Fixed partition identities (metadata only) ==='
@@ -79,7 +120,7 @@ for sys in /sys/class/block/mmcblk0p*; do
  stage="read:$name"
  reading="$root/$name.img"
  # Keep each read below the budget; no whole-eMMC or rootfs hash scan.
- timeout 12 dd if="$device" of="$reading" bs=65536 count="$(((sectors * 512 + 65535) / 65536))" 2>> "$report"
+ read_lk
  stage="verify:$name"
  [ "$(wc -c < "$reading")" -eq "$((sectors * 512))" ] || die 5 'LK读取不完整'
  reading=

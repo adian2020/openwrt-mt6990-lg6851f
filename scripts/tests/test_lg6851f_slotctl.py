@@ -104,13 +104,15 @@ class SlotTest(SlotFixture):
   r=subprocess.run(['sh',str(script)],capture_output=True,text=True);self.assertNotEqual(r.returncode,0);self.assertNotIn('upgrade-called',r.stdout)
   lock.rmdir();r=subprocess.run(['sh',str(script)],capture_output=True,text=True);self.assertEqual(r.returncode,0,r.stderr);self.assertIn('upgrade-called',r.stdout);self.assertFalse(lock.exists())
 class ProbeTest(SlotFixture):
- def run_probe(self):
+ def run_probe(self,deadline=None):
   import re
   text=(ROOT/'scripts/lg6851f-probe-bootloader.sh').read_text()
   text=re.sub(r'/(?:dev|sys|proc|var|tmp)/',lambda m:str(self.root/m[0].strip('/'))+'/',text).replace('[ -b ','[ -f ')
+  if deadline is not None:text=text.replace('sleep 12','sleep '+str(deadline))
   path=self.root/'probe';path.write_text(text)
+  self.binary('timeout',"#!/bin/sh\ntouch \"$FIXTURE/timeout-called\"\nexit 99\n")
   self.binary('dmesg',"#!/bin/sh\necho fixture-kernel\n")
-  return subprocess.run(['sh',str(path)],env=dict(os.environ,PATH=str(self.root/'bin')+':'+os.environ['PATH'],FIXTURE=str(self.root)),capture_output=True,text=True)
+  return subprocess.run(['sh',str(path)],env=dict(os.environ,PATH=str(self.root/'bin')+':'+os.environ['PATH'],FIXTURE=str(self.root)),capture_output=True,text=True,timeout=8)
  def add_lk(self,sectors=1024):
   sys=self.root/'sys/class/block/mmcblk0p23';sys.mkdir()
   (sys/'uevent').write_text('PARTNAME=lk_a\nDEVNAME=mmcblk0p23\n')
@@ -121,17 +123,30 @@ class ProbeTest(SlotFixture):
   r=self.run_probe();self.assertEqual(r.returncode,0,r.stderr)
   archives=list((self.root/'tmp').glob('lg6851f-bootchain.*.tar.gz'));self.assertEqual(len(archives),1)
   with tarfile.open(archives[0]) as t:self.assertEqual(t.extractfile('./lk_a.img').read(),lk.read_bytes());self.assertIn('./identity.txt',t.getnames())
-  self.assertEqual(before,{p.name:p.read_bytes() for p in (self.root/'dev').glob('mmcblk*')});self.assertFalse((self.root/'writes').exists())
+  self.assertEqual(before,{p.name:p.read_bytes() for p in (self.root/'dev').glob('mmcblk*')});self.assertFalse((self.root/'writes').exists());self.assertFalse((self.root/'timeout-called').exists())
  def test_missing_block_device_creates_diagnostic_archive_and_visible_stage(self):
   lk=self.add_lk();lk.unlink()
   r=self.run_probe();self.assertEqual(r.returncode,95);self.assertIn('device:lk_a',r.stderr);self.assertIn('.tar.gz',r.stderr)
   archive=next((self.root/'tmp').glob('lg6851f-bootchain.*.tar.gz'))
   with tarfile.open(archive) as t:
    status=t.extractfile('./status.txt').read().decode();self.assertIn('exit_code=95',status);self.assertIn('completed_lk_images=0',status)
+ def slow_read(self,ignore_term):
+  p=self.root/'bin/dd';text=p.read_text()
+  code="if vals.get('of','').endswith('lk_a.img'):\n import time,signal\n pathlib.Path(vals['of']).write_bytes(b'partial-LK')\n"
+  if ignore_term:code+=" signal.signal(signal.SIGTERM,signal.SIG_IGN)\n"
+  code+=" time.sleep(60)\n"
+  p.write_text(text.replace("rc=subprocess.run(['/bin/dd',*args]).returncode",code+"rc=subprocess.run(['/bin/dd',*args]).returncode"))
+ def test_read_ignoring_term_is_stopped_by_escalation(self):
+  self.add_lk();self.slow_read(True)
+  r=self.run_probe(deadline=0.2);self.assertEqual(r.returncode,124);self.assertIn('read:lk_a',r.stderr);self.assertFalse((self.root/'timeout-called').exists())
+ def test_dd_error_preserves_actual_code_and_partial_evidence(self):
+  self.add_lk();p=self.root/'bin/dd';text=p.read_text()
+  p.write_text(text.replace("rc=subprocess.run(['/bin/dd',*args]).returncode","if vals.get('of','').endswith('lk_a.img'):\n pathlib.Path(vals['of']).write_bytes(b'failed-read');sys.exit(7)\nrc=subprocess.run(['/bin/dd',*args]).returncode"))
+  r=self.run_probe();self.assertEqual(r.returncode,7);self.assertIn('read:lk_a',r.stderr)
  def test_timeout_preserves_partial_dump_and_marks_it_incomplete(self):
   self.add_lk()
-  self.binary('timeout',"#!/usr/bin/env python3\nimport pathlib,sys\np=next(x[3:] for x in sys.argv if x.startswith('of='));pathlib.Path(p).write_bytes(b'partial-LK');sys.exit(124)\n")
-  r=self.run_probe();self.assertEqual(r.returncode,124);self.assertIn('read:lk_a',r.stderr)
+  self.slow_read(False)
+  r=self.run_probe(deadline=0.2);self.assertEqual(r.returncode,124);self.assertIn('read:lk_a',r.stderr)
   archive=next((self.root/'tmp').glob('lg6851f-bootchain.*.tar.gz'))
   with tarfile.open(archive) as t:
    self.assertIn('./lk_a.img.partial',t.getnames());self.assertNotIn('./lk_a.img',t.getnames());self.assertIn('status=incomplete',t.extractfile('./status.txt').read().decode())
