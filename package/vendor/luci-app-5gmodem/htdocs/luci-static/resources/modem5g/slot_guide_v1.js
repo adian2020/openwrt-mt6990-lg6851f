@@ -66,7 +66,7 @@ function content(withWarning) {
  injectCss();
  const root=E('div',{'class':'lg6851f-slot-guide'});
  if(withWarning)root.appendChild(E('h3',{'class':'lg6851f-slot-guide-warning'},'注意！！！'));
- root.appendChild(E('p',{},'本说明位于自编译固件中。切入原厂前，请保存必要备份和对应的 SSH 命令，并确认目标槽已安装自编译固件；进入原厂后，在 SSH 中执行对应命令，返回目标槽现有系统。'));
+ root.appendChild(E('p',{},'适用于一个槽位使用 OpenWrt 固件、另一个槽位使用原厂固件，方便来回切换。本说明位于自编译固件中。切入原厂前，请保存必要备份和对应的 SSH 命令；进入原厂后，在 SSH 中执行对应命令，返回目标槽现有系统。'));
  root.appendChild(E('p',{},'根据原厂系统当前实际运行的槽位，选择对应的一组命令。代码只设置下次启动槽位，保留原厂失败保护；成功读回后，再单独执行 reboot。遇到报错先保留输出，不要直接重启。'));
  for(const current of ['a','b']){
   const target=current==='a'?'b':'a',text=commands(current),heading='原厂 '+current.toUpperCase()+' 槽 → 自编译 '+target.toUpperCase()+' 槽';
