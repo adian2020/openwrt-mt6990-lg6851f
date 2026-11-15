@@ -65,6 +65,7 @@ if tick==1:
   return subprocess.run(['sh',str(self.script),*args],env=dict(os.environ,PATH=str(self.root/'bin')+':'+os.environ['PATH'],FIXTURE=str(self.root),**extra),capture_output=True,text=True,timeout=20)
  def statuses(self):return [json.loads(p.read_text()) for p in self.evidence.glob('boot-*/status.json')]
  def current_status(self):return json.loads((self.evidence/('boot-'+self.boot_id)/'status.json').read_text())
+ def ui_status(self):return json.loads((self.root/'tmp/lg6851f-boot-confirm-status.json').read_text())
  def test_both_slots_change_only_their_retry_and_persist_original(self):
   for slot,index,pa,pb,rootpart in [('a',13,15,14,26),('b',18,14,15,39)]:
    with self.subTest(slot=slot):
@@ -73,6 +74,7 @@ if tick==1:
     before=self.misc.read_bytes();r=self.run_confirm();self.assertEqual(r.returncode,0,(r.stdout,r.stderr,(self.root/'log').read_text()))
     expected=bytearray(before);expected[2048+index]=0;self.assertEqual(self.misc.read_bytes(),expected)
     data=self.current_status();self.assertEqual(data['status'],'confirmed');self.assertEqual(data['before'],before[2048:2080].hex());self.assertGreaterEqual(data['uptime'],180)
+    ui=self.ui_status();self.assertEqual((ui['state'],ui['current'],ui['boot_id'],ui['exit_code']),('confirmed',slot,self.boot_id,0));self.assertEqual((self.root/'tmp/lg6851f-boot-confirm-status.json').stat().st_mode&0o777,0o600)
     folder=self.evidence/('boot-'+self.boot_id);self.assertEqual((folder/'before.bin').read_bytes(),before[2048:2080]);self.assertEqual(folder.stat().st_mode&0o777,0o700);self.assertEqual((folder/'before.bin').stat().st_mode&0o777,0o600)
     writes=(self.root/'writes').read_text();self.assertEqual(len(writes.splitlines()),1);self.assertIn(f'seek={2048+index} count=1',writes)
     # A service restart must never erase a newly changed counter this boot.
@@ -135,6 +137,7 @@ if not (r/'mutated').exists():
   r=self.run_confirm();self.assertEqual(r.returncode,75);self.assertFalse((self.root/'writes').exists());self.assertIn('refused',[s['status'] for s in self.statuses()])
  def test_failed_write_does_not_retry_or_claim_confirmation(self):
   before=self.misc.read_bytes();r=self.run_confirm(FAIL_WRITE='1');self.assertEqual(r.returncode,5);self.assertEqual(self.misc.read_bytes(),before);self.assertEqual(self.statuses()[0]['status'],'write-failed')
+  self.assertEqual((self.ui_status()['state'],self.ui_status()['exit_code']),('failed',5))
   count=(self.root/'writes').read_text();self.assertEqual(self.run_confirm().returncode,0);self.assertEqual((self.root/'writes').read_text(),count)
  def test_foreign_readback_is_preserved_without_whole_record_rollback(self):
   r=self.run_confirm(FOREIGN_WRITE='1');self.assertEqual(r.returncode,5);self.assertEqual(self.record()[24],88);self.assertEqual(self.statuses()[0]['status'],'readback-failed');self.assertEqual(len((self.root/'writes').read_text().splitlines()),1)
@@ -168,6 +171,9 @@ if not (r/'mutated').exists():
   before=(self.evidence/('boot-'+self.boot_id)/'before.bin').read_bytes();self.binary('sync','#!/bin/sh\nexit 0\n');(self.root/'bad-core').unlink()
   self.ready.rename(str(self.ready)+'.shutdown');r=self.run_confirm('--shutdown');self.assertEqual(r.returncode,0,r.stderr)
   self.assertEqual((self.evidence/('boot-'+self.boot_id)/'before.bin').read_bytes(),before);self.assertEqual(self.current_status()['confirmation'],'shutdown')
+ def test_ui_cache_failure_cannot_prevent_durable_boot_confirmation(self):
+  self.binary('mktemp','#!/bin/sh\nexit 1\n')
+  result=self.run_confirm();self.assertEqual(result.returncode,0,result.stderr);self.assertEqual(self.current_status()['status'],'confirmed');self.assertEqual(self.record()[18],0)
 
 
 if __name__ == '__main__':unittest.main()

@@ -102,7 +102,7 @@ return view.extend({
 
 <div class="mud-sec">
   <h3>无线 · 局域网 · 设备 · SIM</h3>
-  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><div class="mud-temp" id="mud-temps"></div><span id="mud-slot" class="mud-sub" style="margin-left:auto;white-space:nowrap"></span></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap"><div class="mud-temp" id="mud-temps"></div><div class="mud-boot-state" style="margin-left:auto;display:flex;align-items:center;justify-content:flex-end;gap:6px 12px;flex-wrap:wrap"><span id="mud-boot-confirm" role="status" aria-live="polite" style="font-size:12px;white-space:nowrap"></span><span id="mud-slot" style="font-size:14px;font-weight:600;white-space:nowrap"></span></div></div>
   <div class="mud-kpis" style="margin-top:8px">
     <div class="mud-kpi"><b id="mud-cpu">--</b><span>CPU 占用</span><div class="mud-meter"><i id="mud-cpu-bar" style="background:var(--brand,var(--primary,#3b82f6))"></i></div></div>
     <div class="mud-kpi"><b id="mud-ram">--</b><span>内存 · <span class="mud-sub" id="mud-ram-sub">--</span></span><div class="mud-meter"><i id="mud-ram-bar" style="background:var(--info,#0ea5e9)"></i></div></div>
@@ -203,6 +203,12 @@ return view.extend({
   const systemCpu=C.cpu(this.systemTicks,data.cpu_ticks);this.systemTicks=data.cpu_ticks;
   if(systemCpu!=null){this.set('cpu',systemCpu.toFixed(1)+'%');this.q('cpu-bar').style.width=systemCpu+'%';}
   this.set('slot','当前槽位：'+(['A','B'].includes(data.current_slot)?data.current_slot+'槽':'未获取'));
+  const bootState=data.boot_confirmation?.state;
+  const bootLabels={pending:'待确认',waiting:'确认中',confirmed:'已完成',failed:'失败',unknown:'未获取'};
+  this.set('boot-confirm','启动确认：'+(bootLabels[bootState]||bootLabels.pending));
+  const bootNode=this.q('boot-confirm');
+  bootNode.style.color=bootState==='confirmed'?'var(--success,#16865c)':bootState==='failed'?'var(--danger,#d23b46)':'var(--text-muted,var(--text-light,#777))';
+  bootNode.title=bootState==='failed'?'本次启动确认未完成，错误码 '+data.boot_confirmation.exit_code+'；请查看 lg6851f-boot-confirm 日志。这不等于内核崩溃。':bootState==='confirmed'?'本次启动已完成初始化和核心服务检查；保留原厂失败回退机制。':'等待本次启动的有效确认记录。';
   this.data=data;const m=data.modem||{},n=data.network||{},radio=data.radio_details?.parsed;
   const cells=C.cellular.parseCells({...data.cells?.serving,carriers:radio?.carriers||data.cells?.serving?.carriers}),serving=cells.find(x=>x.serving),sig=serving||m;
   const carriers=radio?.carriers||[],primary=carriers.find(x=>x.type==='NR PCC')||carriers[0];

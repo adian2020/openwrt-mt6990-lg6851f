@@ -267,6 +267,7 @@ function dashboard_state() {
   model:trim(readfile('/tmp/sysinfo/model')||''),board:trim(readfile('/tmp/sysinfo/board_name')||''),
   collector_phase:'pending'};
  frame.modem_restart=trim(readfile('/tmp/lg6851f-modem-restart.state')||'');
+ frame.boot_confirmation=dashboard.boot_confirmation();
  frame.collector_age=age;frame.collector_stale=age==null||age<0||age>60;
  try {frame.qos=json(readfile('/tmp/lg6851f-modem-qos.json')||'null');}catch(e){}
  if(frame.qos?.boot_id!=boot)frame.qos=null;

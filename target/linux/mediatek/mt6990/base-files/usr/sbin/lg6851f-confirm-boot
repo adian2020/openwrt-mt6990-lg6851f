@@ -12,13 +12,16 @@ ready=/tmp/lg6851f-init-complete
 [ "$mode" != shutdown ] || ready="$ready.shutdown"
 locked=0
 working=0
+reported=
 evidence=
 cleanup() {
+ local rc="$?"
+ if [ "$working" = 1 ] && [ "$rc" -ne 0 ] && [ "$reported" != confirmed ] && [ "$reported" != failed ]; then boot_status failed "$rc"; fi
  [ "$locked" = 0 ] || rmdir "$lock" 2>/dev/null || :
  [ "$working" = 0 ] || rmdir "$worker" 2>/dev/null || :
 }
 trap cleanup EXIT
-fail() { logger -t lg6851f-boot-confirm "$2"; exit "$1"; }
+fail() { [ "$working" != 1 ] || boot_status failed "$1"; logger -t lg6851f-boot-confirm "$2"; exit "$1"; }
 trap 'fail 143 "启动确认已停止，保留已有取证；本轮不重试"' TERM INT HUP
 uptime_seconds() {
  local value idle
@@ -26,6 +29,21 @@ uptime_seconds() {
  value=${value%%.*}
  case "$value" in ''|*[!0-9]*) return 1;; esac
  printf '%s\n' "$value"
+}
+boot_status() {
+ # Best-effort, atomic UI cache. It neither replaces durable P46 evidence nor
+ # changes the outcome of any boot-control guard, write or readback.
+ local temporary slot="${current:-}" stamp
+ reported="$1"
+ case "$slot" in a|b) ;; *) slot=;; esac
+ stamp=$(uptime_seconds) || return 0
+ temporary=$(mktemp /tmp/lg6851f-boot-confirm-status.XXXXXX) || return 0
+ if printf '{"state":"%s","boot_id":"%s","current":"%s","uptime":%s,"exit_code":%s}\n' "$1" "$boot_id" "$slot" "$stamp" "$2" > "$temporary"; then
+  mv -f "$temporary" /tmp/lg6851f-boot-confirm-status.json || rm -f "$temporary"
+ else
+  rm -f "$temporary"
+ fi
+ return 0
 }
 hex_read() { dd if="$1" bs=1 skip="$2" count="$3" 2>/dev/null | hexdump -v -e '1/1 "%02x"'; }
 byte() { printf '%s' "$1" | cut -c"$(($2 * 2 + 1))-$(($2 * 2 + 2))"; }
@@ -136,6 +154,7 @@ if [ "$mode" = shutdown ]; then
 fi
 mkdir "$worker" 2>/dev/null || fail 75 '已有启动确认进程，未重复执行'
 working=1
+boot_status waiting 0
 for spec in '1 misc 1024' '25 boot_a 65536' '26 rootfs_a 262144' '38 boot_b 65536' '39 rootfs_b 262144'; do
  set -- $spec
  layout "$1" "$2" "$3" || fail 95 '固定分区身份不符，未确认启动'
@@ -193,4 +212,5 @@ fi
 observed=$(hex_read "$misc" 2048 32)
 if [ "$observed" != "$after" ]; then metadata readback-failed; fail 5 '启动计数读回不符，保留取证且不重试，不覆盖未知状态'; fi
 metadata confirmed
+boot_status confirmed 0
 logger -t lg6851f-boot-confirm "正常启动已确认：slot=$current，只清本槽TRY；记录=$evidence"

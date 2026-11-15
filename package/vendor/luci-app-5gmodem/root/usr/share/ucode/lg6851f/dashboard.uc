@@ -67,6 +67,23 @@ export function boot_slot(cmdline) {
  let declared=suffix ? uc(suffix[3]) : null;
  return actual && declared && actual!=declared ? null : actual || declared;
 }
+export function boot_confirmation() {
+ let raw=text('/tmp/lg6851f-boot-confirm-status.json'), row;
+ if(!raw)return {state:'pending'};
+ try{row=json(raw);}catch(e){return {state:'unknown'};}
+ let boot=text('/proc/sys/kernel/random/boot_id'), slot=boot_slot(text('/proc/cmdline'));
+ let now=num(split(text('/proc/uptime'), /\s+/)[0]);
+ if(type(row)!='object' || !boot || row.boot_id!=boot ||
+    index(['waiting','confirmed','failed'],row.state)<0 ||
+    type(row.current)!='string' || index(['','a','b'],row.current)<0 ||
+    type(row.uptime)!='int' || row.uptime<0 || now==null || row.uptime>now ||
+    type(row.exit_code)!='int' || row.exit_code<0 || row.exit_code>255 ||
+    (row.current!='' && row.current!=lc(slot || '')) ||
+    (row.state=='failed' && row.exit_code==0) ||
+    (row.state!='failed' && row.exit_code!=0) ||
+    (row.state=='confirmed' && (!slot || row.current!=lc(slot))))return {state:'unknown'};
+ return {state:row.state,exit_code:row.exit_code};
+}
 export function ims_registration(value) {
 	// TS 27.007 8.71: ext_info is HEX, not a decimal status or a VoNR switch.
 	let m=match(value || '', /^\+CIREG:\s*([0-2])\s*,\s*([01])(\s*,\s*([0-9a-fA-F]{1,8}))?\s*$/);
@@ -116,6 +133,7 @@ export function snapshot() {
 	return {
 		hostname: text('/proc/sys/kernel/hostname'), model: text('/tmp/sysinfo/model'), board: text('/tmp/sysinfo/board_name'),
 		current_slot: boot_slot(text('/proc/cmdline')),
+		boot_confirmation: boot_confirmation(),
 		firmware_id: text('/etc/mt6990-firmware-id'), release: text('/etc/openwrt_release'),
 		uptime: num(split(text('/proc/uptime'), /\s+/)[0]),
 		cpu_ticks: ticks(split(text('/proc/stat'), '\n')[0]),

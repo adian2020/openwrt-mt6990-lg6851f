@@ -45,6 +45,32 @@ class DashboardTest(unittest.TestCase):
         result=self.run_ucode("import * as d from 'lg6851f.dashboard'; printf('%J',map(lines,d.boot_slot));",lines=['root=/dev/mmcblk0p26 rw','root=/dev/mmcblk0p39','androidboot.slot_suffix=_a','slot_suffix=b','root=/dev/mmcblk0p26 androidboot.slot_suffix=_b','root=/dev/mmcblk0p260',''])
         self.assertEqual(result,['A','B','A','B',None,None,None])
 
+    def test_boot_confirmation_requires_current_boot_slot_and_valid_state(self):
+        self.write('/proc/sys/kernel/random/boot_id','test-boot')
+        self.write('/proc/cmdline','bootslot=b root=/dev/mmcblk0p39')
+        self.write('/proc/uptime','45.0 0.0\n')
+        path='/tmp/lg6851f-boot-confirm-status.json'
+        source="import * as d from 'lg6851f.dashboard'; printf('%J',d.boot_confirmation());"
+        self.assertEqual(self.run_ucode(source),dict(state='pending'))
+        valid=dict(state='confirmed',boot_id='test-boot',current='b',uptime=44,exit_code=0)
+        for state,code in [('waiting',0),('confirmed',0),('failed',75)]:
+            self.write(path,json.dumps(dict(valid,state=state,exit_code=code)))
+            self.assertEqual(self.run_ucode(source),dict(state=state,exit_code=code))
+        for fields in [dict(boot_id='old-boot'),dict(current='a'),dict(current=''),dict(state='prepared'),dict(uptime=46),dict(uptime='44'),dict(exit_code=5),dict(state='failed',exit_code=0)]:
+            with self.subTest(fields=fields):
+                self.write(path,json.dumps(dict(valid,**fields)))
+                self.assertEqual(self.run_ucode(source),dict(state='unknown'))
+        self.write(path,'not-json');self.assertEqual(self.run_ucode(source),dict(state='unknown'))
+
+    def test_boot_confirmation_live_record_overrides_cached_dashboard_status(self):
+        self.write('/proc/sys/kernel/random/boot_id','test-boot')
+        self.write('/proc/cmdline','bootslot=b root=/dev/mmcblk0p39')
+        self.write('/proc/uptime','45.0 0.0\n')
+        self.write('/tmp/lg6851f-boot-confirm-status.json',json.dumps(dict(state='failed',boot_id='test-boot',current='b',uptime=44,exit_code=75)))
+        frame=dict(boot_id='test-boot',collected_at=int(time.time()),boot_confirmation=dict(state='confirmed'))
+        result=self.rpc('get_dashboard',TEST_FILES={'/tmp/lg6851f-dashboard-v2.json':json.dumps(frame)})
+        self.assertEqual(result['result']['boot_confirmation'],dict(state='failed',exit_code=75))
+
     def test_ims_registration_decodes_hex_capabilities_not_voice_switches(self):
         result=self.run_ucode("import * as d from 'lg6851f.dashboard';printf('%J',map(lines,d.ims_registration));",lines=['+CIREG: 2,1,5','+CIREG: 2,1,10','+CIREG: 1,1','+CIREG: 2,0,5','+CIREG: 2,1,FFFFFFFF','OK','+CIREG: 2,3,5','+CIREG: 2,1,XYZ','+CIREG: 2,1,5 trailing'])
         self.assertEqual(result[0],dict(registered=True,capabilities=5,voice=True,sms=True))
