@@ -54,6 +54,11 @@ jobs:
           fi
           test -s RELEASE_NOTES.md
           {
+            printf '[固件更新历史](https://github.com/%s/blob/cloud-build/docs/FIRMWARE_HISTORY.md)\n\n' "$GITHUB_REPOSITORY"
+            cat RELEASE_NOTES.md
+          } > release-notes-with-history.md
+          mv release-notes-with-history.md RELEASE_NOTES.md
+          {
             printf '\n## 构建信息\n\n'
             printf -- '- 源码分支：`cloud-build`\n'
             printf -- '- 源码提交：[ %s ](https://github.com/%s/commit/%s)\n' "$source_sha" "$GITHUB_REPOSITORY" "$source_sha"
@@ -174,3 +179,69 @@ jobs:
           generate_release_notes: false
           draft: false
           prerelease: false
+
+      - name: Update published firmware history
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          TAG_NAME: ${{ steps.version.outputs.tag_name }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import re
+          import subprocess
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          tag = os.environ['TAG_NAME']
+          source = os.environ['SOURCE_SHA']
+          assert re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag), 'Invalid version tag'
+          assert re.fullmatch(r'[0-9a-f]{40}', source), 'Invalid source SHA'
+
+          def api(path):
+              result = subprocess.run(['gh', 'api', 'repos/'+repo+'/'+path], capture_output=True, text=True)
+              if result.returncode:
+                  raise RuntimeError('GitHub API read failed: '+path+' '+result.stderr)
+              return json.loads(result.stdout)
+
+          release = api('releases/tags/'+tag)
+          assert release['tag_name'] == tag and not release['draft'] and not release['prerelease']
+          assert re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ', release.get('published_at') or '')
+          assert release['html_url'] == 'https://github.com/'+repo+'/releases/tag/'+tag
+          ref = api('git/ref/tags/'+tag)
+          assert ref['object']['type'] == 'commit' and ref['object']['sha'] == source, 'Release source mismatch'
+          body = release.get('body') or ''
+          body = '\n'.join(line for line in body.splitlines() if not line.startswith('[固件更新历史]('))
+          body = body.split('\n## 构建信息', 1)[0].strip()
+          body = re.sub(r'^# 本版本更新\s*\n', '', body).strip()
+          body = re.sub(r'^## ', '### ', body, flags=re.M)
+          assert body, 'Published release has no update notes'
+          marker = '<!-- release:'+tag+' -->'
+          date = release['published_at'].replace('T', ' ').replace('Z', ' UTC')
+          entry = (marker+'\n## '+tag+'\n\n发布时间：'+date+' · [查看该版 Release]('+release['html_url']+')'
+                   +' · [源码 '+source[:7]+'](https://github.com/'+repo+'/commit/'+source+')\n\n'+body+'\n\n')
+          path = 'contents/docs/FIRMWARE_HISTORY.md'
+          for attempt in range(3):
+              record = api(path+'?ref=cloud-build')
+              history = base64.b64decode(record['content'], validate=False).decode('utf-8')
+              if marker in history.splitlines():
+                  print('History already contains '+tag+'; no changes.')
+                  break
+              prefix, separator, previous = history.partition('<!-- firmware-history -->')
+              assert separator, 'Missing firmware history insertion marker'
+              updated = prefix+separator+'\n\n'+entry+previous.lstrip('\n')
+              payload = dict(message='Record firmware history for '+tag, branch='cloud-build', sha=record['sha'],
+                             content=base64.b64encode(updated.encode('utf-8')).decode('ascii'))
+              result = subprocess.run(['gh', 'api', '--method', 'PUT', 'repos/'+repo+'/'+path, '--input', '-'],
+                                      input=json.dumps(payload), capture_output=True, text=True)
+              if result.returncode == 0:
+                  assert re.fullmatch(r'[0-9a-f]{40}', json.loads(result.stdout)['commit']['sha'])
+                  print('Recorded '+tag+' with its actual publication time.')
+                  break
+              if 'HTTP 409' not in result.stderr or attempt == 2:
+                  raise RuntimeError('History update failed: '+result.stderr)
+              # Another writer advanced this file: re-read and preserve its changes.
+          else:
+              raise RuntimeError('History update retry budget exhausted')
+          PY
