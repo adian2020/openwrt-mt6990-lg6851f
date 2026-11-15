@@ -43,13 +43,13 @@ jobs:
           jq -e '.status == "completed" and .conclusion == "success" and .head_branch == "cloud-build" and .path == ".github/workflows/lg6851f-cloud-build.yml"' source-run.json > /dev/null
           source_sha=$(jq -r .head_sha source-run.json)
           echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+          # Prefer a reviewed per-build summary, including builds already running.
+          # The override is keyed by the exact source SHA, never the branch tip's notes.
           # Read Markdown as data. Never run code from a workflow_run artifact.
-          if gh api "repos/$GITHUB_REPOSITORY/contents/RELEASE_NOTES.md?ref=$source_sha" > notes.json; then
+          if gh api "repos/$GITHUB_REPOSITORY/contents/docs/releases/$source_sha.md?ref=cloud-build" > notes.json; then
             jq -r .content notes.json | base64 -d > RELEASE_NOTES.md
           else
-            # A build already in progress may predate the notes file. The
-            # backfill is keyed by its exact SHA, not the latest branch tip.
-            gh api "repos/$GITHUB_REPOSITORY/contents/docs/releases/$source_sha.md?ref=cloud-build" > notes.json
+            gh api "repos/$GITHUB_REPOSITORY/contents/RELEASE_NOTES.md?ref=$source_sha" > notes.json
             jq -r .content notes.json | base64 -d > RELEASE_NOTES.md
           fi
           test -s RELEASE_NOTES.md
