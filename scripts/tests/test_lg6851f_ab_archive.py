@@ -102,12 +102,14 @@ class CollectorTest(SharedFixture):
   upgrade=self.root/'p46/openwrt-sysupgrade';upgrade.mkdir()
   (upgrade/'upgrade-trace.log').write_text('COMPLETE fixture upgrade\n')
   (self.root/'p46/.mt6990-firmware-id').write_text('history-not-current-slot\n')
+  confirmation=self.root/'p46/lg6851f-boot-confirm/boot-fixture';confirmation.mkdir(parents=True)
+  (confirmation/'status.json').write_text('{"status":"confirmed","before":"fixture-before","expected_after":"fixture-after"}\n')
  def test_standalone_reader_finds_stock_alias_and_preserves_public_evidence(self):
   self.mount(options='ro')
   before={str(p):p.read_bytes() for p in (self.root/'p46').rglob('*') if p.is_file()}
   result=self.run_script(self.run);self.assertEqual(result.returncode,0,result.stderr)
   report=(self.root/'tmp/lg6851f-ab-failure.txt').read_text()
-  for text in ['collector_version=3','real-historical-source','fixture-stage','boot-fixture.txt.gz','COMPLETE fixture upgrade','history-not-current-slot','[QL_AB] restore _b','retry_a:01,retry_b:04','current_slot=_a','bootctrl=fixture','updating success a 01']:
+  for text in ['collector_version=4','real-historical-source','fixture-stage','boot-fixture.txt.gz','COMPLETE fixture upgrade','history-not-current-slot','[QL_AB] restore _b','retry_a:01,retry_b:04','current_slot=_a','bootctrl=fixture','updating success a 01','fixture-before','fixture-after']:
    self.assertIn(text,report)
   self.assertEqual(before,{str(p):p.read_bytes() for p in (self.root/'p46').rglob('*') if p.is_file()})
  def test_unmounted_or_wrong_partition_does_not_scan_other_storage(self):

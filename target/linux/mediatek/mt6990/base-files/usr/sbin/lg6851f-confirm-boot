@@ -1,0 +1,177 @@
+#!/bin/sh
+# Confirm a completed LG6851F boot once; never marks SUCCESS or selects a slot.
+set -eu
+umask 077
+misc=/dev/mmcblk0p1
+lock=/tmp/lg6851f-bootctrl.lock
+worker=/tmp/lg6851f-boot-confirm.worker
+attempt=/tmp/lg6851f-boot-confirm.attempted
+ready=/tmp/lg6851f-init-complete
+locked=0
+working=0
+evidence=
+cleanup() {
+ [ "$locked" = 0 ] || rmdir "$lock" 2>/dev/null || :
+ [ "$working" = 0 ] || rmdir "$worker" 2>/dev/null || :
+}
+trap cleanup EXIT
+fail() { logger -t lg6851f-boot-confirm "$2"; exit "$1"; }
+trap 'fail 143 "启动确认已停止，保留已有取证；本轮不重试"' TERM INT HUP
+uptime_seconds() {
+ local value idle
+ read -r value idle < /proc/uptime
+ value=${value%%.*}
+ case "$value" in ''|*[!0-9]*) return 1;; esac
+ printf '%s\n' "$value"
+}
+hex_read() { dd if="$1" bs=1 skip="$2" count="$3" 2>/dev/null | hexdump -v -e '1/1 "%02x"'; }
+byte() { printf '%s' "$1" | cut -c"$(($2 * 2 + 1))-$(($2 * 2 + 2))"; }
+number() { printf '%d' "0x$1"; }
+layout() {
+ local part="$1" name="$2" size="$3" sys="/sys/class/block/mmcblk0p$1"
+ [ -b "/dev/mmcblk0p$part" ] && [ "$(cat "$sys/partition" 2>/dev/null)" = "$part" ] &&
+ [ "$(cat "$sys/size" 2>/dev/null)" = "$size" ] && grep -qx "PARTNAME=$name" "$sys/uevent"
+}
+read_state() {
+ local rootdev pa pb sa sb ua ub
+ current=$(awk '{for(i=1;i<=NF;i++)if($i~/^bootslot=/){sub(/^bootslot=/,"",$i);print $i}}' /proc/cmdline)
+ rootdev=$(awk '{for(i=1;i<=NF;i++)if($i~/^root=/){sub(/^root=/,"",$i);print $i}}' /proc/cmdline)
+ case "$current:$rootdev" in a:/dev/mmcblk0p26) index=13;; b:/dev/mmcblk0p39) index=18;; *) return 1;; esac
+ record=$(hex_read "$misc" 2048 32)
+ [ "${#record}" = 64 ] || return 1
+ case "$record" in *[!0-9a-f]*) return 1;; esac
+ [ "$(printf '%s' "$record" | cut -c9-16)" = 42434142 ] &&
+ [ "$(byte "$record" 8)" = 01 ] && [ "$(byte "$record" 9)" = 02 ] || return 1
+ pa=$(number "$(byte "$record" 12)"); pb=$(number "$(byte "$record" 17)")
+ sa=$(number "$(byte "$record" 14)"); sb=$(number "$(byte "$record" 19)")
+ ua=$(number "$(byte "$record" 15)"); ub=$(number "$(byte "$record" 20)")
+ [ "$pa" -le 15 ] && [ "$pb" -le 15 ] && [ "$sa" -le 1 ] && [ "$sb" -le 1 ] && [ "$ua" -le 4 ] && [ "$ub" -le 4 ] || return 1
+ case "$current" in a) [ "$pa" -gt "$pb" ];; b) [ "$pb" -gt "$pa" ];; esac
+}
+busy() {
+ [ -e /tmp/sysupgrade ] || ps w | grep -Eq '[/]etc/init.d/(rcS|zmtk_boot_done)|[z]mtk_boot_done|[/]sbin/(sysupgrade|upgraded)|[/]lib/upgrade/(do_stage2|stage2)'
+}
+receipt_ready() {
+ local receipt_boot receipt_time extra now attributes
+ [ -f "$ready" ] && [ ! -L "$ready" ] || return 1
+ # This image does not enable BusyBox stat; use existing numeric ls output.
+ attributes=$(ls -ldn "$ready") || return 1
+ set -- $attributes
+ [ "$#" -ge 3 ] && [ "$1" = -rw------- ] && [ "$3" = 0 ] || return 1
+ read -r receipt_boot receipt_time extra < "$ready" || return 1
+ [ "$receipt_boot" = "$boot_id" ] && [ -z "$extra" ] || return 1
+ case "$receipt_time" in ''|*[!0-9]*) return 1;; esac
+ [ "$(cat /proc/sys/kernel/random/boot_id)" = "$boot_id" ] || return 1
+ now=$(uptime_seconds) || return 1
+ [ "$receipt_time" -le "$now" ]
+}
+core_ready() {
+ local services service running pids pid dump
+ receipt_ready && ! busy || return 1
+ services=$(ubus -S -t 3 call service list) || return 1
+ signature=
+ for service in network rpcd uhttpd; do
+  running=$(jsonfilter -s "$services" -e "@.$service.instances.*.running") || return 1
+  printf '%s\n' "$running" | grep -qx true || return 1
+  pids=$(jsonfilter -s "$services" -e "@.$service.instances.*.pid") || return 1
+  [ -n "$pids" ] || return 1
+  for pid in $pids; do
+   case "$pid" in *[!0-9]*) return 1;; esac
+   [ "$pid" -gt 1 ] || return 1
+  done
+  signature="$signature $service=$pids"
+ done
+ # netifd must actually answer; no AT, SIM, WAN, carrier or Internet test.
+ dump=$(ubus -S -t 3 call network.interface dump) || return 1
+ [ -n "$(jsonfilter -s "$dump" -e '@.interface')" ]
+}
+shared_storage() {
+ local sys=/sys/class/block/mmcblk0p46 devno
+ layout 46 user_data 5187456 || return 1
+ devno=$(cat "$sys/dev")
+ shared=$(awk -v dev="$devno" '$3==dev && $4=="/" && $6 ~ /(^|,)rw(,|$)/ {for(i=7;i<=NF;i++)if($i=="-" && $(i+1)=="ext4"){print $5;exit}}' /proc/self/mountinfo)
+ [ -n "$shared" ] || return 1
+ shared=$(printf '%b' "$shared")
+ [ "$(df -Pk "$shared" | awk 'NR==2 {print $4}')" -ge 1024 ]
+}
+metadata() {
+ printf '{"status":"%s","boot_id":"%s","firmware":"%s","current":"%s","uptime":%s,"retry_offset":%s,"before":"%s","expected_after":"%s","observed_after":"%s"}\n' \
+ "$1" "$boot_id" "$firmware" "$initial_slot" "$(uptime_seconds)" "$((2048 + index))" "$before" "$after" "${observed:-}" > "$evidence/.status.tmp"
+ mv -f "$evidence/.status.tmp" "$evidence/status.json"
+ sync
+}
+rotate_evidence() {
+ { printf '%s\n' "$evidence"; ls -1td "$root"/boot-* | awk -v current="$evidence" '$0 != current'; } | awk 'NR>8' | while IFS= read -r old; do
+  [ -d "$old" ] && [ ! -L "$old" ] && rm -rf "$old"
+ done
+}
+
+[ "$#" = 0 ] || fail 22 '启动确认不接受手动绕过参数'
+[ "$(id -u)" = 0 ] || fail 1 '启动确认需要root'
+case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in fiberhome,lg6851f|fiberhome_lg6851f) ;; *) fail 95 '设备身份不符，未确认启动';; esac
+case "$(uname -r)" in 6.18.*) ;; *) fail 95 '不是已适配的6.18固件，未确认启动';; esac
+firmware=$(cat /rom/etc/mt6990-firmware-id 2>/dev/null) || fail 95 '缺少ROM固件身份，未确认启动'
+[ "${#firmware}" = 40 ] || fail 95 'ROM固件身份无效'
+case "$firmware" in *[!0-9a-f]*) fail 95 'ROM固件身份无效';; esac
+boot_id=$(cat /proc/sys/kernel/random/boot_id)
+printf '%s\n' "$boot_id" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' || fail 95 '启动UUID无效'
+[ ! -e "$attempt" ] || exit 0
+mkdir "$worker" 2>/dev/null || fail 75 '已有启动确认进程，未重复执行'
+working=1
+for spec in '1 misc 1024' '25 boot_a 65536' '26 rootfs_a 262144' '38 boot_b 65536' '39 rootfs_b 262144'; do
+ set -- $spec
+ layout "$1" "$2" "$3" || fail 95 '固定分区身份不符，未确认启动'
+done
+read_state || fail 95 '实际槽位、优先级或BCAB不匹配，未确认启动'
+before="$record"
+initial_slot="$current"
+initial_index="$index"
+deadline=$(($(uptime_seconds) + 600))
+stable_since=
+previous=
+healthy=0
+while [ "$(uptime_seconds)" -lt "$deadline" ]; do
+ if core_ready; then
+  now=$(uptime_seconds)
+  if [ "$signature" != "$previous" ]; then stable_since="$now"; previous="$signature"; fi
+  if [ "$now" -ge 120 ] && [ "$((now - stable_since))" -ge 30 ]; then healthy=1; break; fi
+ else
+  stable_since=; previous=
+ fi
+ sleep 5
+done
+[ "$healthy" = 1 ] || fail 75 '初始化或核心服务未完成稳定观察，保留重试计数'
+mkdir "$lock" 2>/dev/null || fail 75 '启动控制正被其他操作使用，保留计数'
+locked=1
+[ ! -e "$attempt" ] || exit 0
+read_state && [ "$current" = "$initial_slot" ] && [ "$index" = "$initial_index" ] && [ "$record" = "$before" ] || fail 75 '观察期间槽位记录已变化，未清计数'
+core_ready && [ "$signature" = "$previous" ] || fail 75 '写入前核心状态变化，未清计数'
+shared_storage || fail 75 '共享P46不可写或空间不足，拒绝无取证确认'
+root="$shared/lg6851f-boot-confirm"
+[ ! -L "$root" ] || fail 22 '启动确认取证目录不能为符号链接'
+mkdir -p "$root"; chmod 700 "$root"
+evidence="$root/boot-$boot_id"
+mkdir "$evidence" || fail 75 '本次启动已有确认取证，不重复写入'
+chmod 700 "$evidence"
+rotate_evidence
+dd if="$misc" of="$evidence/before.bin" bs=1 skip=2048 count=32 2>/dev/null || fail 5 '保存原始控制记录失败，未写入'
+[ "$(wc -c < "$evidence/before.bin")" = 32 ] && [ "$(hex_read "$evidence/before.bin" 0 32)" = "$before" ] || fail 5 '原始控制记录备份核对失败，未写入'
+left=$(printf '%s' "$before" | cut -c1-"$((index * 2))")
+right=$(printf '%s' "$before" | cut -c"$((index * 2 + 3))"-)
+after="${left}00${right}"
+metadata prepared
+# Recheck after durable evidence. Manual selection/upgrades must not be undone.
+core_ready && [ "$signature" = "$previous" ] && read_state && [ "$record" = "$before" ] && [ "$current" = "$initial_slot" ] || { metadata refused; fail 75 '取证期间状态变化，未清计数'; }
+mkdir "$attempt" || fail 75 '本次启动已尝试确认，不重复写入'
+if [ "$after" != "$before" ]; then
+ if ! printf '\000' | dd of="$misc" bs=1 seek="$((2048 + index))" count=1 conv=notrunc 2>/dev/null; then
+  observed=$(hex_read "$misc" 2048 32)
+  metadata write-failed
+  fail 5 '启动计数写入失败，保留取证且不重试，不覆盖未知状态'
+ fi
+ sync
+fi
+observed=$(hex_read "$misc" 2048 32)
+if [ "$observed" != "$after" ]; then metadata readback-failed; fail 5 '启动计数读回不符，保留取证且不重试，不覆盖未知状态'; fi
+metadata confirmed
+logger -t lg6851f-boot-confirm "正常启动已确认：slot=$current，只清本槽TRY；记录=$evidence"

@@ -84,6 +84,7 @@ jobs:
           python3 scripts/tests/test_lg6851f_sms_list.py
           python3 scripts/tests/test_lg6851f_ab_archive.py
           python3 scripts/tests/test_lg6851f_slotctl.py
+          python3 scripts/tests/test_lg6851f_boot_confirm.py
           python3 scripts/tests/test_lg6851f_slots_ui.py
           python3 scripts/tests/test_lg6851f_wifi_start.py
           python3 scripts/tests/test_lg6851f_procd_trace.py

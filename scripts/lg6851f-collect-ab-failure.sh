@@ -5,7 +5,7 @@ umask 077
 report=/tmp/lg6851f-ab-failure.txt
 [ -d /tmp ] || report=/data/local/tmp/lg6851f-ab-failure.txt
 {
- echo 'collector_version=3'
+ echo 'collector_version=4'
  echo '=== 当前系统与槽位线索（不是失败原因判定） ==='
  uname -a
  cat /etc/mt6990-firmware-id /etc/openwrt_release 2>/dev/null
@@ -45,9 +45,19 @@ report=/tmp/lg6851f-ab-failure.txt
   [ -n "$mountpoint" ] || continue
   mountpoint=$(printf '%b' "$mountpoint")
   echo "共享P46挂载位置：$mountpoint"
-  for dir in "$mountpoint/MT6990_CRASH_LOGS" "$mountpoint/MT6990_RUNTIME_LOGS" "$mountpoint/lg6851f-ab-reports" "$mountpoint/lg6851f-ab-tools"; do
+  for dir in "$mountpoint/MT6990_CRASH_LOGS" "$mountpoint/MT6990_RUNTIME_LOGS" "$mountpoint/lg6851f-ab-reports" "$mountpoint/lg6851f-ab-tools" "$mountpoint/lg6851f-boot-confirm"; do
    [ -d "$dir" ] || continue
    ls -lt "$dir"
+  done
+  echo '=== 正常启动确认记录（原始计数与单字节读回） ==='
+  confirmations=0
+  for f in "$mountpoint"/lg6851f-boot-confirm/boot-*/status.json; do
+   [ -f "$f" ] && [ ! -L "$f" ] || continue
+   confirmations=$((confirmations + 1))
+   [ "$confirmations" -le 8 ] || break
+   echo "--- $f ---"
+   head -c 4096 "$f"
+   echo
   done
   for f in "$mountpoint"/MT6990_RUNTIME_LOGS/runtime.log*; do
    [ -r "$f" ] || continue

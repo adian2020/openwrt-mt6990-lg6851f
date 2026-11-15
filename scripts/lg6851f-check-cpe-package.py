@@ -104,6 +104,8 @@ required(chain/'usr/bin/lg6851f-modem-restart',executable=True)
 required(feed_root/'usr/bin/lg6851f-archive-ab-report',executable=True)
 required(feed_root/'usr/bin/lg6851f-collect-ab-failure',executable=True)
 required(feed_root/'usr/sbin/lg6851f-slotctl',executable=True)
+required(feed_root/'usr/sbin/lg6851f-confirm-boot',executable=True)
+required(feed_root/'etc/init.d/lg6851f-boot-confirm',executable=True)
 required(feed_root/'etc/init.d/lg6851f-ab-report',executable=True)
 required(feed_root/'usr/bin/lg6851f-setup-apk-library',executable=True)
 required(feed_root/'usr/sbin/lg6851f-boot-observer',executable=True)
@@ -120,6 +122,9 @@ for name in ['usr/bin/lg6851f-radio-control','usr/bin/lg6851f-modem-details',
 for name in ['lib/functions/lg6851f-radio.sh','lib/netifd/proto/ql_datacall.sh']:
     required(chain/name)
 if args.rootfs:
+    procd_binary=root/'sbin/procd'
+    if required(procd_binary,executable=True) and b'/tmp/lg6851f-init-complete' not in procd_binary.read_bytes():
+        errors.append('procd缺少本机初始化完成凭据，拒绝发布无法确认启动的固件')
     # Every normal cloud image must carry its own library identity and ROM key.
     library=root/'usr/share/mt6990-apk'
     for filename in ['build.json','selection.json','repositories.list','public-key.pem']:

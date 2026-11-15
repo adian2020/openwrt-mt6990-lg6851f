@@ -49,14 +49,22 @@
  		LOG("- init -\n");
  		procd_inittab();
  		procd_inittab_run("respawn");
-@@ -170,6 +178,7 @@
+@@ -170,12 +178,15 @@
  		break;
  
  	case STATE_RUNNING:
 +		lg6851f_boot_trace("procd-running", "");
++		lg6851f_boot_ready(1);
  		LOG("- init complete -\n");
  		procd_inittab_run("respawnlate");
  		procd_inittab_run("askconsolelate");
+ 		break;
+ 
+ 	case STATE_SHUTDOWN:
++		lg6851f_boot_ready(0);
+ 		/* Redirect output to the console for the users' benefit */
+ 		set_console();
+ 		LOG("- shutdown -\n");
 --- a/ubus.c
 +++ b/ubus.c
 @@ -18,11 +18,14 @@

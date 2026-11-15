@@ -87,11 +87,14 @@ class ProcdTraceTest(unittest.TestCase):
         self.trace = self.work/'trace.log'
         self.trace.write_text('LG6851F_BOOT_ID=fixture\n')
         self.trace.chmod(0o600)
+        self.ready = self.work/'ready'
+        self.boot_id = self.work/'boot-id'
+        self.boot_id.write_text('12345678-1234-1234-1234-000000000001\n')
     def compile(self, source, enabled=True):
         p=self.source/'harness.c';p.write_text(source)
         exe=self.work/'harness'
         cmd=[os.environ.get('CC','cc'),'-D_GNU_SOURCE','-std=gnu11','-Wall','-Wextra','-Werror','-Wno-unused-parameter','-I',str(self.source),str(p),'-o',str(exe)]
-        if enabled:cmd += ['-DLG6851F_BOOT_TRACE', '-DLG6851F_TRACE_PATH="'+str(self.trace)+'"','-DLG6851F_KMSG_PATH="'+str(self.work/'no-kmsg')+'"']
+        if enabled:cmd += ['-DLG6851F_BOOT_TRACE', '-DLG6851F_TRACE_PATH="'+str(self.trace)+'"','-DLG6851F_KMSG_PATH="'+str(self.work/'no-kmsg')+'"', '-DLG6851F_READY_PATH="'+str(self.ready)+'"', '-DLG6851F_BOOT_ID_PATH="'+str(self.boot_id)+'"']
         subprocess.run(cmd,check=True,capture_output=True,text=True)
         subprocess.run([str(exe)],check=True,capture_output=True,text=True,timeout=5)
     def test_pinned_fixture_identity_and_patch_inputs(self):
@@ -121,7 +124,7 @@ class ProcdTraceTest(unittest.TestCase):
         self.compile(r'''
 #include <assert.h>
 #include "lg6851f-boot-trace.h"
-int main(void) { int n=0; lg6851f_boot_trace("ignored", "%d", ++n); assert(n==0); return 0; }
+int main(void) { int n=0; lg6851f_boot_trace("ignored", "%d", ++n); lg6851f_boot_ready(++n); assert(n==0); return 0; }
 ''',enabled=False)
         self.assertEqual(self.trace.read_bytes(),original)
     def test_header_preserves_errno_and_rejects_symlink_or_writable_file(self):
@@ -138,5 +141,44 @@ int main(void) { errno=E2BIG; lg6851f_boot_trace("native-probe", "value=%d", 2);
         self.compile(program);self.assertEqual(victim.read_text(),'untouched')
         self.trace.unlink();self.trace.write_text('writable');self.trace.chmod(0o666)
         self.compile(program);self.assertEqual(self.trace.read_text(),'writable')
+    def test_pid1_receipt_is_independent_of_trace_and_preserves_errno(self):
+        self.trace.unlink()
+        self.compile(r'''
+#include <assert.h>
+#include <errno.h>
+#include <unistd.h>
+#define getpid() 1
+#include "lg6851f-boot-trace.h"
+int main(void) { errno=E2BIG; lg6851f_boot_ready(1); assert(errno==E2BIG); return 0; }
+''')
+        fields=self.ready.read_text().split()
+        self.assertEqual(fields[0],self.boot_id.read_text().strip())
+        self.assertGreaterEqual(int(fields[1]),0)
+        self.assertEqual(self.ready.stat().st_mode & 0o777,0o600)
+        state=(self.source/'state.c').read_text()
+        self.assertIn('case STATE_RUNNING:\n\t\tlg6851f_boot_trace("procd-running", "");\n\t\tlg6851f_boot_ready(1);',state)
+        self.assertIn('case STATE_SHUTDOWN:\n\t\tlg6851f_boot_ready(0);',state)
+        self.compile(r'''
+#include <assert.h>
+#include <errno.h>
+#include <unistd.h>
+#define getpid() 1
+#include "lg6851f-boot-trace.h"
+int main(void) { errno=E2BIG; lg6851f_boot_ready(0); assert(errno==E2BIG); assert(access(LG6851F_READY_PATH,F_OK)<0); return 0; }
+''')
+    def test_receipt_refuses_non_pid1_bad_uuid_existing_file_or_link(self):
+        program=r'''
+#include <unistd.h>
+#define getpid() 1
+#include "lg6851f-boot-trace.h"
+int main(void) { lg6851f_boot_ready(1); return 0; }
+'''
+        self.compile(program.replace('#define getpid() 1',''))
+        self.assertFalse(self.ready.exists())
+        self.boot_id.write_text('invalid\n');self.compile(program);self.assertFalse(self.ready.exists())
+        self.boot_id.write_text('12345678-1234-1234-1234-000000000001\n')
+        self.ready.write_text('existing');self.compile(program);self.assertEqual(self.ready.read_text(),'existing')
+        self.ready.unlink();self.ready.symlink_to(self.boot_id)
+        self.compile(program);self.assertEqual(self.boot_id.read_text(),'12345678-1234-1234-1234-000000000001\n')
 
 if __name__=='__main__':unittest.main()
