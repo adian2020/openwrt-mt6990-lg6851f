@@ -99,6 +99,7 @@ jobs:
           python3 scripts/tests/test_lg6851f_boot_confirm.py
           python3 scripts/tests/test_lg6851f_slots_ui.py
           python3 scripts/tests/test_lg6851f_slot_guide.py
+          python3 scripts/tests/test_lg6851f_release_notes.py
           python3 scripts/tests/test_lg6851f_wifi_start.py
           python3 scripts/tests/test_lg6851f_procd_trace.py
           python3 scripts/tests/test_lg6851f_boot_measure.py
