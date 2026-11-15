@@ -30,7 +30,7 @@ const css=fs.readFileSync(path.join(root,'package/vendor/luci-theme-aurora/htdoc
    },{files,version});
    for(const [state,label]of [['pending','待确认'],['waiting','确认中'],['confirmed','已完成'],['failed','失败'],['unknown','未获取']]){
     await page.evaluate(state=>vm.paint({...data,boot_confirmation:{state,exit_code:state==='failed'?75:0}}),state);
-    assert.equal(await page.locator('#mud-boot-confirm').textContent(),'启动确认：'+label);
+    assert.equal(await page.locator('#mud-boot-confirm').textContent(),'系统启动就绪确认：'+label);
     assert.equal(await page.locator('#mud-slot').textContent(),'当前槽位：B槽');
     const status=await page.locator('#mud-boot-confirm').boundingBox(),slot=await page.locator('#mud-slot').boundingBox();
     assert(status.x+status.width<=slot.x+1,`status must stay left of slot: v${version}/${width}/${dark}`);
