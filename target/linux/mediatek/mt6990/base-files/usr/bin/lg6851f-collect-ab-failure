@@ -5,7 +5,7 @@ umask 077
 report=/tmp/lg6851f-ab-failure.txt
 [ -d /tmp ] || report=/data/local/tmp/lg6851f-ab-failure.txt
 {
- echo 'collector_version=2'
+ echo 'collector_version=3'
  echo '=== 当前系统与槽位线索（不是失败原因判定） ==='
  uname -a
  cat /etc/mt6990-firmware-id /etc/openwrt_release 2>/dev/null
@@ -23,7 +23,7 @@ report=/tmp/lg6851f-ab-failure.txt
   cat "$f"
  done
  echo '=== 当前启动内核事件 ==='
- dmesg 2>/dev/null | grep -Ei 'Kernel command line|panic|Oops|BUG:|HANGDET|watchdog|ramoops|pstore|boot.*(fail|slot|reason)|reset.*reason|VFS:|Unable to mount|EXT4-fs.*error' || :
+ dmesg 2>/dev/null | grep -Ei 'Kernel command line|panic|Oops|BUG:|HANGDET|watchdog|ramoops|pstore|boot.*(fail|slot|reason)|reset.*reason|VFS:|Unable to mount|EXT4-fs.*error|QL_AB|bootctrl=|current_slot=|updating success' || :
  echo '=== 已挂载的共享P46记录（不主动挂载） ==='
  dev=/sys/class/block/mmcblk0p46
  points=
@@ -52,7 +52,7 @@ report=/tmp/lg6851f-ab-failure.txt
   for f in "$mountpoint"/MT6990_RUNTIME_LOGS/runtime.log*; do
    [ -r "$f" ] || continue
    echo "--- $f ---"
-   grep -Ei '===== MT6990 BOOT|^boot_id=|^firmware_id=|^cmdline=|LG6851F_BOOT_STAGE|Linux version|Kernel panic|Oops|BUG:|HANGDET|watchdog|Call trace|VFS:|Unable to mount|EXT4-fs.*error' "$f" | tail -160
+   grep -Ei '===== MT6990 BOOT|^boot_id=|^firmware_id=|^cmdline=|LG6851F_BOOT_STAGE|Linux version|Kernel panic|Oops|BUG:|HANGDET|watchdog|Call trace|VFS:|Unable to mount|EXT4-fs.*error|QL_AB|bootctrl=|current_slot=|updating success' "$f" | tail -160
   done
   if [ -r "$mountpoint/openwrt-sysupgrade/upgrade-trace.log" ]; then
    echo '=== 最近升级轨迹 ==='

@@ -93,7 +93,8 @@ class CollectorTest(SharedFixture):
   super().setUp()
   self.run=self.root/'reader';self.run.write_text(self.fixture_script(COLLECTOR.read_text()))
   runtime=self.root/'p46/MT6990_RUNTIME_LOGS';runtime.mkdir()
-  (runtime/'runtime.log').write_text('firmware_id=real-historical-source\nLG6851F_BOOT_STAGE fixture-stage\n')
+  (runtime/'runtime.log').write_text('firmware_id=real-historical-source\nLG6851F_BOOT_STAGE fixture-stage\n[QL_AB] restore _b\n')
+  self.binary('dmesg',"printf '[QL_AB] retry_a:01,retry_b:04\\ncurrent_slot=_a\\nFLASH_TYPE=emmc, bootctrl=fixture\\nupdating success a 01\\n'")
   (self.root/'p46/lg6851f-ab-reports').mkdir()
   (self.root/'p46/lg6851f-ab-reports/boot-fixture.txt.gz').write_bytes(b'fixture')
   upgrade=self.root/'p46/openwrt-sysupgrade';upgrade.mkdir()
@@ -104,7 +105,7 @@ class CollectorTest(SharedFixture):
   before={str(p):p.read_bytes() for p in (self.root/'p46').rglob('*') if p.is_file()}
   result=self.run_script(self.run);self.assertEqual(result.returncode,0,result.stderr)
   report=(self.root/'tmp/lg6851f-ab-failure.txt').read_text()
-  for text in ['collector_version=2','real-historical-source','fixture-stage','boot-fixture.txt.gz','COMPLETE fixture upgrade','history-not-current-slot']:
+  for text in ['collector_version=3','real-historical-source','fixture-stage','boot-fixture.txt.gz','COMPLETE fixture upgrade','history-not-current-slot','[QL_AB] restore _b','retry_a:01,retry_b:04','current_slot=_a','bootctrl=fixture','updating success a 01']:
    self.assertIn(text,report)
   self.assertEqual(before,{str(p):p.read_bytes() for p in (self.root/'p46').rglob('*') if p.is_file()})
  def test_unmounted_or_wrong_partition_does_not_scan_other_storage(self):
