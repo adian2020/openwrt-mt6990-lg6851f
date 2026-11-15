@@ -1,9 +1,9 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mihomo-openclash-core
-PKG_VERSION:=20261114~alpha.smart.c4df732
+PKG_VERSION:=20261114_alpha0
 PKG_UPSTREAM_VERSION:=alpha-smart-c4df732
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 PKG_SOURCE:=mihomo-linux-arm64-$(PKG_UPSTREAM_VERSION).gz
 PKG_SOURCE_URL:=https://github.com/vernesong/mihomo/releases/download/Prerelease-Alpha/
 PKG_HASH:=73c38ba2da94823f818be836c51fd1f65bf9718dc7745b05d608bc3ccc73c70a

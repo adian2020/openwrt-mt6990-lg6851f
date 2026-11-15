@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Resolve latest upstream plugins once per build, preserving local adaptations."""
+import datetime
 import gzip
 import hashlib
 import json
@@ -145,10 +146,14 @@ def smart_asset(release):
     if len(assets)!=1:raise RuntimeError('Expected exactly one ARM64 Smart alpha asset')
     asset=assets[0]
     if not re.fullmatch(r'sha256:[0-9a-f]{64}',asset.get('digest','')):raise RuntimeError('Smart alpha asset has no official SHA256 digest')
-    date=asset.get('updated_at','')[:10].replace('-','')
-    if not re.fullmatch(r'[0-9]{8}',date):raise RuntimeError('Smart alpha asset timestamp is missing')
+    try:
+        stamp=datetime.datetime.strptime(asset.get('updated_at',''),'%Y-%m-%dT%H:%M:%SZ')
+    except ValueError as error:
+        raise RuntimeError('Smart alpha asset timestamp is invalid') from error
     upstream=asset['name'].removeprefix('mihomo-linux-arm64-').removesuffix('.gz')
-    return asset, date+'~'+upstream.replace('-','.'),upstream
+    # APK uses numeric release components and _alpha suffixes, not arbitrary
+    # ~alpha.smart.HASH strings. Keep the exact hash in PKG_UPSTREAM_VERSION.
+    return asset, stamp.strftime('%Y%m%d.%H%M%S')+'_alpha0',upstream
 
 
 def main():

@@ -49,6 +49,8 @@ def verify_selection(root,config):
     if wrong:raise ValueError('Extra APK selections changed or disappeared after defconfig: '+', '.join(wrong))
     if any(actual.get(k)!='y' for k in ['SIGNED_PACKAGES','SIGN_EACH_PACKAGE','SIGNATURE_CHECK','USE_APK']):raise ValueError('APK package and index signing must remain enabled')
     if any(actual.get(k)!='y' for k in ['TARGET_mediatek_mt6990','TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f']):raise ValueError('Only the LG6851F MT6990 target can publish this library')
+    if actual.get('PACKAGE_python3-ctypes') in ('y','m') and actual.get('PACKAGE_libffi') not in ('y','m'):
+        raise ValueError('python3-ctypes requires the target libffi provider; check recipe/index generation')
     if actual.get('TARGET_ARCH_PACKAGES')!='"'+ARCH+'"':raise ValueError('Wrong target package architecture')
     return expected
 

@@ -12,8 +12,8 @@ class PluginUpdateTest(unittest.TestCase):
         asset={'name':'mihomo-linux-arm64-alpha-smart-abcdef0.gz','digest':'sha256:'+'a'*64,'updated_at':'2026-11-14T12:00:00Z'}
         release={'tag_name':'Prerelease-Alpha','assets':[asset,dict(asset,name='mihomo-linux-amd64-alpha-smart-abcdef0.gz')]}
         chosen,version,upstream=u.smart_asset(release)
-        self.assertEqual(chosen,asset);self.assertEqual(version,'20261114~alpha.smart.abcdef0');self.assertEqual(upstream,'alpha-smart-abcdef0')
-        for bad in [dict(release,tag_name='v1.19.34'),dict(release,assets=[dict(asset,digest='')]),dict(release,assets=[asset,asset])]:
+        self.assertEqual(chosen,asset);self.assertEqual(version,'20261114.120000_alpha0');self.assertEqual(upstream,'alpha-smart-abcdef0')
+        for bad in [dict(release,tag_name='v1.19.34'),dict(release,assets=[dict(asset,digest='')]),dict(release,assets=[asset,asset]),dict(release,assets=[dict(asset,updated_at='2026-99-14T12:00:00Z')])]:
             with self.assertRaises(RuntimeError):u.smart_asset(bad)
 
     def test_independent_local_and_upstream_changes_merge(self):

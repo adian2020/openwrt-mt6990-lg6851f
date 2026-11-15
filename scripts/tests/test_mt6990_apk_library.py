@@ -34,6 +34,14 @@ class SelectionTest(unittest.TestCase):
   for bad in [original.replace('CONFIG_PACKAGE_jq=m','CONFIG_PACKAGE_jq=y'),original.replace('CONFIG_PACKAGE_jq=m',''),original.replace('CONFIG_SIGNATURE_CHECK=y','CONFIG_SIGNATURE_CHECK=n')]:
    self.config.write_text(bad)
    with self.assertRaises(ValueError):lib.verify_selection(self.root,self.config)
+ def test_ctypes_requires_a_selected_libffi_provider(self):
+  lib.select(self.root,self.config,self.profile)
+  original=self.config.read_text()+'CONFIG_PACKAGE_python3-ctypes=m\n'
+  self.config.write_text(original)
+  with self.assertRaisesRegex(ValueError,'libffi'):lib.verify_selection(self.root,self.config)
+  for mode in ['m','y']:
+   self.config.write_text(original+'CONFIG_PACKAGE_libffi='+mode+'\n')
+   lib.verify_selection(self.root,self.config)
  def test_snapshot_preparation_checks_source_and_rerun_identity(self):
   with self.assertRaises(ValueError):lib.prepare(self.root,'adian2020/example','123-1','f'*40)
   lib.prepare(self.root,'adian2020/example','123-2',self.source)
