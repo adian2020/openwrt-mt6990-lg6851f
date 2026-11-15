@@ -224,6 +224,18 @@ cat bin/mt6990-apk-repository/repository.manifest.json
 
 公钥可公开；私钥不进入软件库、固件或上传产物。A/B 下载包附带 `APK_LIBRARY.json` 便于核对本次软件库，原固件镜像签名和刷写流程保持不变。
 
+## A/B回退后的共享取证
+
+最新源码将取证工具和最近8份报告明确保存在核实过的共享P46中，不依赖当前系统是否挂载`/overlay`。原固件将P46挂在`/data`时，对应：
+
+```sh
+ls -lt /data/lg6851f-ab-reports/
+sh /data/lg6851f-ab-tools/collect-ab-failure.sh
+cat /tmp/lg6851f-ab-failure.txt
+```
+
+须先运行包含此修改的固件到后台归档服务，工具才会保存到共享区；旧版v1.0.17没有此能力。原固件不会自动执行共享脚本，早期失败也不保证生成报告。操作不切槽、不写启动标记、不清除崩溃证据。详见[跨槽共享取证说明](docs/2026-11-15跨槽共享取证工具与报告.md)。
+
 ## 2026-08-21 维修固化说明
 
 - OpenClash 使用 Mihomo 时，核心包装器必须以 `/tmp/clash` 为运行文件名。OpenClash 的服务与防火墙脚本通过 `pidof clash` 检测核心；使用其他文件名会导致核心已经监听端口却被误判为启动失败。修复包含在 `mihomo-openclash-core 1.19.29-r2`。

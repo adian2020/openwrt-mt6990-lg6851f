@@ -1,23 +1,40 @@
 #!/bin/sh
-# Preserve a bounded report on the current overlay; never change boot control.
+# Preserve tools and bounded reports on verified shared P46, not a slot overlay.
 set -eu
 umask 077
 case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in fiberhome,lg6851f|fiberhome_lg6851f) ;; *) exit 95 ;; esac
-root=/overlay/lg6851f-ab-reports
-awk '$2=="/overlay" && $4 ~ /(^|,)rw(,|$)/ {found=1} END{exit !found}' /proc/mounts || exit 75
-mkdir -p "$root"
-chmod 700 "$root"
+dev=/sys/class/block/mmcblk0p46
+[ "$(cat "$dev/partition" 2>/dev/null)" = 46 ] &&
+[ "$(cat "$dev/size" 2>/dev/null)" = 5187456 ] &&
+grep -qx 'PARTNAME=user_data' "$dev/uevent" || exit 95
+devno=$(cat "$dev/dev")
+shared=$(awk -v dev="$devno" '$3==dev && $4=="/" && $6 ~ /(^|,)rw(,|$)/ {
+ for (i=7;i<=NF;i++) if ($i=="-" && $(i+1)=="ext4") {print $5; exit}
+}' /proc/self/mountinfo)
+[ -n "$shared" ] || exit 75
+shared=$(printf '%b' "$shared")
+root="$shared/lg6851f-ab-reports"
+tools="$shared/lg6851f-ab-tools"
+[ ! -L "$root" ] && [ ! -L "$tools" ] || exit 22
+mkdir -p "$root" "$tools"
+chmod 700 "$root" "$tools"
 boot_id=$(cat /proc/sys/kernel/random/boot_id)
 case "$boot_id" in ''|*[!0-9a-f-]*) exit 22 ;; esac
+# Keep at least 16MiB free. The existing P46 crash archive remains independent.
+available=$(df -Pk "$shared" | awk 'NR==2 {print $4}')
+[ "${available:-0}" -ge 16384 ] || { logger -t lg6851f-ab-report 'Shared P46 space low; skipping report archive'; exit 28; }
+# Keep a standalone reader for manual use from stock after fallback. Never
+# install an init hook in stock or execute an unverified shared script at boot.
+tool_tmp="$tools/.collector-$boot_id.tmp"
+tmp="$root/.report-$boot_id.tmp"
+trap 'rm -f "$tmp" "$tool_tmp"' EXIT INT TERM
+cp /usr/bin/lg6851f-collect-ab-failure "$tool_tmp"
+chmod 700 "$tool_tmp"
+mv -f "$tool_tmp" "$tools/collect-ab-failure.sh"
 report="$root/boot-$boot_id.txt.gz"
 [ ! -f "$report" ] || exit 0
-# Keep at least 16MiB free. The existing P46 crash archive remains independent.
-available=$(df -Pk /overlay | awk 'NR==2 {print $4}')
-[ "${available:-0}" -ge 16384 ] || { logger -t lg6851f-ab-report 'Overlay space low; report remains in /tmp'; exit 28; }
 /usr/bin/timeout 30 /usr/bin/lg6851f-collect-ab-failure >/dev/null
 [ -s /tmp/lg6851f-ab-failure.txt ] || exit 5
-tmp="$root/.report-$boot_id.tmp"
-trap 'rm -f "$tmp"' EXIT INT TERM
 gzip -c /tmp/lg6851f-ab-failure.txt > "$tmp"
 chmod 600 "$tmp"
 [ "$(wc -c < "$tmp")" -le 4194304 ] || { logger -t lg6851f-ab-report 'Report exceeds archive budget; original remains in /tmp'; exit 27; }
