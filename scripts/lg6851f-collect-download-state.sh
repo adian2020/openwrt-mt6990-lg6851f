@@ -33,6 +33,20 @@ config_fields()
   }' "$1"
 }
 
+irq_affinity()
+{
+ for linux_irq in $1; do
+  irq_proc="/proc/irq/$linux_irq"
+  irq_sys="/sys/kernel/irq/$linux_irq"
+  printf '\nIRQ %s\n' "$linux_irq"
+  for path in "$irq_sys"/actions "$irq_sys"/chip_name "$irq_sys"/hwirq \
+      "$irq_sys"/per_cpu_count "$irq_proc"/smp_affinity "$irq_proc"/effective_affinity; do
+   printf '%s=' "${path##*/}"
+   if [ -r "$path" ]; then cat "$path"; else echo '未提供'; fi
+  done
+ done
+}
+
 sample()
 {
  printf '\n=== 流量/CPU采样 %s ===\n' "$1"
@@ -54,18 +68,26 @@ sample()
    bounded iw dev "$interface" station dump
   done
  fi
+ echo '--- 本次采样的中断和 DSCP 计数 ---'
+ awk '/DPMAIF_AP|MED_RX_IRQ|CCIF_AP_DATA|mt7996e|GICv3[[:space:]]+(310|320)[[:space:]]/' /proc/interrupts
+ for linux_irq in $pcie_parent_irqs; do
+  path="/sys/kernel/irq/$linux_irq/per_cpu_count"
+  [ -r "$path" ] || continue
+  printf 'PCIe parent IRQ %s per_cpu_count=' "$linux_irq"; cat "$path"
+ done
+ bounded nft list table inet lg6851f_dscp_test
 }
 
 echo "请保持当前 QoS/DSCP 状态，在原来的互联网测速或下载过程中运行。采集仅写 /tmp，间隔 ${seconds} 秒；不进行局域网测速。报告：$report"
 {
- echo 'collector_version=1'
+ echo 'collector_version=2'
  echo '=== 固件身份（源码HEAD不能代替实际固件身份） ==='
  date -u
  uname -a
  cat /etc/mt6990-firmware-id /rom/etc/mt6990-firmware-id /proc/sys/kernel/random/boot_id /proc/uptime 2>/dev/null
  echo '=== 已安装主要网络包版本 ==='
  bounded apk list --installed |
-  awk '/^(kernel|kmod-(mt76|mt79|mac80211|cfg80211|ifb|sched|mt6990-hwnat)|netifd|firewall4|nftables|hostapd|wpad|wifi-scripts|lg6851f-modem-chain-only|ucode|libubus)[ -]/ {print}'
+  awk '/^(kernel|kmod-(mt76[^ ]*|mt79[^ ]*|mac80211|cfg80211|ifb|sched|mt6990-hwnat)|netifd|firewall4|nftables|hostapd|wpad|wifi-scripts|lg6851f-modem-chain-only|ucode|libubus)[ -]/ {print}'
  echo '=== 当前网络配置白名单（不含口令） ==='
  for config in network wireless firewall lg6851f_fair_qos; do
   config_fields "/etc/config/$config"
@@ -80,7 +102,7 @@ echo "请保持当前 QoS/DSCP 状态，在原来的互联网测速或下载过�
  for interface in ccmni0 ccmni1 ccmni2 ifb-cellular; do
   [ -d "/sys/class/net/$interface" ] || continue
   printf '\n--- %s ---\n' "$interface"
-  bounded ip -s link show dev "$interface"
+  bounded ip link show dev "$interface"
   bounded tc -s qdisc show dev "$interface"
   bounded tc filter show dev "$interface" ingress
  done
@@ -102,16 +124,24 @@ echo "请保持当前 QoS/DSCP 状态，在原来的互联网测速或下载过�
   bounded ethtool -k "$interface"
  done
  cat /proc/interrupts
- for path in /proc/irq/*/actions; do
-  [ -r "$path" ] || continue
-  grep -Eqi 'DPMAIF|CCIF|mt799|ethernet|ethif' "$path" || continue
-  irq=${path%/actions}
-  printf '\n%s ' "$irq"; cat "$path"
-  for key in smp_affinity effective_affinity; do
-   [ -r "$irq/$key" ] || continue
-   printf '%s=' "$key"; cat "$irq/$key"
+ pcie_parent_irqs=$(
+  # A chained PCIe parent may not appear in /proc/interrupts. These GIC
+  # hardware IRQs come from the LG6851F device tree (SPI number + 32).
+  for path in /sys/kernel/irq/*/hwirq; do
+   [ -r "$path" ] || continue
+   case "$(cat "$path")" in 310|320) ;; *) continue ;; esac
+   irq_dir=${path%/hwirq}
+   [ "$(cat "$irq_dir/chip_name" 2>/dev/null)" = GICv3 ] || continue
+   printf '%s\n' "${irq_dir##*/}"
   done
- done
+ )
+ irq_ids=$(
+  awk '/DPMAIF_AP|MED_RX_IRQ|CCIF_AP_DATA|mt7996e|15100000\.ethernet/ {
+   if ($1 ~ /^[0-9]+:$/) {sub(/:$/, "", $1); print $1}
+  }' /proc/interrupts
+  printf '%s\n' "$pcie_parent_irqs"
+ )
+ irq_affinity "$(printf '%s\n' "$irq_ids" | sort -un)"
  echo '=== 网络脚本与ROM指纹（只计算，不执行脚本） ==='
  for path in /usr/sbin/lg6851f-net-affinity /usr/libexec/platform/packet-steering.sh /etc/init.d/packet_steering /usr/sbin/lg6851f-fair-qos /etc/init.d/lg6851f_fair_qos /etc/hotplug.d/iface/95-lg6851f-fair-qos /usr/bin/lg6851f-cellular-refresh /usr/bin/lg6851f-modem-status /usr/libexec/lg6851f-sms-pool.uc; do
   [ ! -f "$path" ] || sha256sum "$path"
