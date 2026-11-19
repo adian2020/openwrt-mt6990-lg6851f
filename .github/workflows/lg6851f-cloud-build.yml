@@ -106,6 +106,7 @@ jobs:
           python3 scripts/tests/test_lg6851f_boot_recovery.py
           python3 scripts/tests/test_lg6851f_autoreboot.py
           python3 scripts/tests/test_lg6851f_fair_qos.py
+          python3 scripts/tests/test_lg6851f_qos_legacy_test.py
           python3 scripts/tests/test_mt6990_apk_library.py
           python3 scripts/tests/test_mt6990_build_cache.py CacheConfigTest
           python3 scripts/lg6851f-check-cpe-package.py
