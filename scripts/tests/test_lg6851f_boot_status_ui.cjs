@@ -28,12 +28,11 @@ const css=fs.readFileSync(path.join(root,'package/vendor/luci-theme-aurora/htdoc
     window.data={current_slot:'B',modem:{},network:{},temperatures:[],memory:{},boot_confirmation:{state:'pending'}};
     document.querySelector('main').append(vm.render({data,current:null,rate:null,cpu:null,cached:false,fan:null}));
    },{files,version});
-   for(const [state,label]of [['pending','待确认'],['waiting','确认中'],['confirmed','已完成'],['failed','失败'],['unknown','未获取']]){
+   for(const state of ['pending','waiting','confirmed','failed','unknown']){
     await page.evaluate(state=>vm.paint({...data,boot_confirmation:{state,exit_code:state==='failed'?75:0}}),state);
-    assert.equal(await page.locator('#mud-boot-confirm').textContent(),'系统启动就绪确认：'+label);
+    assert.equal(await page.locator('#mud-boot-confirm').count(),0);
     assert.equal(await page.locator('#mud-slot').textContent(),'当前槽位：B槽');
-    const status=await page.locator('#mud-boot-confirm').boundingBox(),slot=await page.locator('#mud-slot').boundingBox();
-    assert(status.x+status.width<=slot.x+1,`status must stay left of slot: v${version}/${width}/${dark}`);
+    const slot=await page.locator('#mud-slot').boundingBox();
     assert(slot.x+slot.width<=width,`slot exceeds viewport: v${version}/${width}/${dark}`);
    }
    assert.equal(await page.locator('#mud-slot').evaluate(el=>getComputedStyle(el).fontSize),'14px');
@@ -41,6 +40,6 @@ const css=fs.readFileSync(path.join(root,'package/vendor/luci-theme-aurora/htdoc
    assert.equal(await page.locator('#mud-slot').textContent(),'当前槽位：A槽');
    assert.deepEqual(errors,[]);await page.close();
   }
-  console.log('PASS dashboards v4/v5: live boot status, A/B slots, 360/390/1280px, light/dark');
+  console.log('PASS dashboards v4/v5: boot status hidden, A/B slots, 360/390/1280px, light/dark');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

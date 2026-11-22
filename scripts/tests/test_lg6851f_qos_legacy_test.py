@@ -15,7 +15,6 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-BASE = ROOT/'target/linux/mediatek/mt6990/base-files'
 LEGACY = ROOT/'scripts/tests/fixtures/lg6851f-fair-qos-legacy.sh'
 PAYLOAD_HASH = '3f8c535dbc2a28909955181232c3c06041959b5b7e69718660856e937a8c5496'
 
@@ -30,14 +29,24 @@ class LegacyTest(unittest.TestCase):
         self.program = self.root/'usr/sbin/lg6851f-fair-qos'
         self.service = self.root/'etc/init.d/lg6851f_fair_qos'
         self.hook = self.root/'etc/hotplug.d/iface/95-lg6851f-fair-qos'
-        for path in [self.program, self.service, self.hook]:
-            path.write_bytes((BASE/path.relative_to(self.root)).read_bytes())
+        # The diagnostic helper remains pinned to the v1.0.20 layout. Use
+        # independent files to exercise the fingerprint guards on this branch.
+        fingerprints = {
+            self.program: 'ddc2efc299fc921e486f187b2c7c10eb210c705361e14d92a26f26842db480ef',
+            self.service: '4af6d476a18410cf734b519375e3ce38fac388d77835d096bba7901fc68f9468',
+            self.hook: 'a3495ba77489f2b527caf8414503d17811d3e6778bb5f4b1a711970baae64763',
+        }
+        for path in fingerprints:
+            path.write_text(f'#!/bin/sh\n# v1.0.20 {path.name} fixture\n')
         self.config = self.root/'etc/config/lg6851f_fair_qos'
         self.config.write_text(json.dumps(dict(enabled='0',network_interface='modem5g',ifb_device='ifb-cellular')))
         (self.root/'tmp/sysinfo/board_name').write_text('fiberhome,lg6851f\n')
         (self.root/'proc/sys/kernel/random/boot_id').write_text('boot-fixture\n')
         self.net = self.root/'net.json'; self.net.write_text(json.dumps(dict(ifb=False,root='fq_codel',foreign=False)))
         source = (ROOT/'scripts/lg6851f-qos-legacy-test.sh').read_text()
+        for path, digest in fingerprints.items():
+            self.assertIn(digest, source)
+            source = source.replace(digest, hashlib.sha256(path.read_bytes()).hexdigest())
         # Rewrite only absolute execution paths, not the pinned GitHub URL.
         source = re.sub(r'(?<![\w:])/(tmp|var|etc|usr|sys|root|proc)/',
                         lambda m:str(self.root/m[1])+'/',source)

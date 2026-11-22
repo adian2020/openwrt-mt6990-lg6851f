@@ -183,12 +183,6 @@
 			}
 		}
 	},
-	"admin/system/boot_slot_guide": {
-		"title": "原厂固件切换到自编译固件说明",
-		"order": 66,
-		"action": { "type": "view", "path": "system/lg6851f-slot-guide" },
-		"depends": { "acl": [ "luci-app-lg6851f-slots" ] }
-	},
 	"admin/system/boot_slots": {
 		"title": "启动槽位",
 		"order": 65,

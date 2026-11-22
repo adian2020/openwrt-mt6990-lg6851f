@@ -4,7 +4,6 @@ const {chromium}=require('playwright');
 const root=path.resolve(__dirname,'../..'),assets=root+'/package/vendor/luci-app-5gmodem/htdocs/luci-static/resources';
 const guide=fs.readFileSync(assets+'/modem5g/slot_guide_v1.js','utf8');
 const view=fs.readFileSync(assets+'/view/system/lg6851f-slots.js','utf8');
-const guideView=fs.readFileSync(assets+'/view/system/lg6851f-slot-guide.js','utf8');
 const luci=fs.readFileSync(root+'/feeds/luci/modules/luci-base/htdocs/luci-static/resources/luci.js','utf8');
 const uiSource=fs.readFileSync(root+'/feeds/luci/modules/luci-base/htdocs/luci-static/resources/ui.js','utf8');
 function method(source,name,indent){const match=source.match(new RegExp('^'+indent+name+'\\([^)]*\\) \\{[\\s\\S]*?^'+indent+'\\},','m'));assert(match,name);return match[0].trim().replace(/,$/,'');}
@@ -60,11 +59,9 @@ const css=fs.readFileSync(root+'/package/vendor/luci-theme-aurora/htdocs/luci-st
    await page.evaluate(()=>mount());await page.waitForFunction(()=>document.body.classList.contains('modal-overlay-active'));
    await overlay.getByRole('button',{name:'我已了解，关闭'}).click();await page.getByRole('button',{name:'刷新状态',exact:true}).click();
    await page.waitForTimeout(80);assert.equal(await page.evaluate(()=>document.body.classList.contains('modal-overlay-active')),false,'Refresh must not repeat the entry warning');
-   await page.evaluate(source=>{const page=new Function('view','G',source)({extend:x=>x},G);document.querySelector('main').replaceChildren(page.render());},guideView);
-   assert.equal(await page.locator('main pre code').count(),2);assert(await page.getByRole('heading',{name:'原厂固件切换到自编译固件说明'}).isVisible());
    assert.deepEqual(await page.evaluate(()=>calls.filter(name=>name!=='get_boot_slots')),[]);
    assert.deepEqual(errors,[]);await page.close();
-   console.log(`PASS slot guide ${width}px ${dark?'dark':'light'}: entry modal, red title, HTTP/API copy, stored preference, manual reopening and passive guide page`);
+   console.log(`PASS slot guide ${width}px ${dark?'dark':'light'}: entry modal, red title, HTTP/API copy, stored preference and manual reopening`);
   }
  }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exit(1);});

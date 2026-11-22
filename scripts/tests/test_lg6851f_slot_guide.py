@@ -55,11 +55,13 @@ print(json.load(sys.stdin)[sys.argv[2].removeprefix('@.')])
  def test_wrong_current_or_bad_download_never_calls_select(self):
   result,selected=self.execute('a',actual='b');self.assertEqual(result.returncode,95,result.stderr);self.assertIsNone(selected)
   result,selected=self.execute('b',corrupt=True);self.assertEqual(result.returncode,5,result.stderr);self.assertIsNone(selected)
- def test_explanation_menu_is_adjacent_and_uses_existing_read_permission(self):
+ def test_guide_is_available_from_the_slot_page_only(self):
   menu=json.loads((PACKAGE/'root/usr/share/luci/menu.d/luci-app-5gmodem.json').read_text())
-  guide=menu['admin/system/boot_slot_guide'];slots=menu['admin/system/boot_slots']
-  self.assertEqual(guide['order'],slots['order']+1);self.assertEqual(guide['depends'],slots['depends'])
-  self.assertTrue((PACKAGE/('htdocs/luci-static/resources/view/'+guide['action']['path']+'.js')).is_file())
+  self.assertNotIn('admin/system/boot_slot_guide',menu)
+  slots=menu['admin/system/boot_slots']
+  self.assertEqual(slots['depends'],{'acl':['luci-app-lg6851f-slots']})
+  view=PACKAGE/('htdocs/luci-static/resources/view/'+slots['action']['path']+'.js')
+  self.assertIn("'require modem5g.slot_guide_v1 as G'",view.read_text())
   self.assertNotIn('rpc.declare',SOURCE.read_text())
 
 

@@ -23,7 +23,6 @@
 					"get_forward_status",
 					"apn_get",
 					"traffic_get",
-					"get_fair_qos",
 					"sms_pool_list",
 					"sms_pool_job"
 				]
@@ -54,7 +53,6 @@
 					"traffic_clear",
 					"dashboard_action",
 					"request_radio_details",
-					"set_fair_qos",
 					"set_network_mode",
 					"set_data_roaming",
 					"sms_pool_show",
