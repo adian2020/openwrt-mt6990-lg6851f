@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "artifact_tag": "apk-lib-44977188796-1",
+  "board": "fiberhome,lg6851f",
+  "target": "mediatek/mt6990",
+  "source_sha": "8632af1356a47e90a65a0a459da58198c861a447",
+  "snapshot": "44977188796-1",
+  "repository": "adian2020/openwrt-mt6990-lg6851f",
+  "architecture": "aarch64_cortex-a55_neon-vfpv4",
+  "repository_url": "https://raw.githubusercontent.com/adian2020/openwrt-mt6990-lg6851f/apk-lib-44977188796-1/44977188796-1/packages.adb"
+}
