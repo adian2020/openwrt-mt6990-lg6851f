@@ -1,0 +1,338 @@
+Subject: net: mediatek: add opt-in MT6990 WED TX support
+
+Register the two WED instances independently of the upstream PPE.
+Use the MT6990 PCIe host resources and INTx routing, and restore the
+saved routing bit on detach. Keep RX and WO bring-up out of this path.
+
+The WED layout and routing are based on LG6851F-Pro 0e1518ed
+and the MT6990 vendor WARP source.
+
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+index c90243a..25656d0 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -5796,7 +5796,7 @@ static int mtk_setup_legacy_sram(struct mtk_eth *eth, struct resource *res)
+
+ static int mtk_probe(struct platform_device *pdev)
+ {
+-	struct resource *res = NULL;
++	struct resource *res;
+ 	struct device_node *mac_np;
+ 	struct mtk_eth *eth;
+ 	int err, i;
+@@ -5809,7 +5809,7 @@ static int mtk_probe(struct platform_device *pdev)
+
+ 	eth->dev = &pdev->dev;
+ 	eth->dma_dev = &pdev->dev;
+-	eth->base = devm_platform_ioremap_resource(pdev, 0);
++	eth->base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+ 	if (IS_ERR(eth->base))
+ 		return PTR_ERR(eth->base);
+
+@@ -5886,32 +5886,24 @@ static int mtk_probe(struct platform_device *pdev)
+ 		}
+ 	}
+
+-	if (mtk_is_netsys_v2_or_greater(eth)) {
+-		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+-		if (!res) {
+-			err = -EINVAL;
+-			goto err_destroy_sgmii;
+-		}
+-
+-		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SRAM)) {
+-			eth->sram_pool = of_gen_pool_get(pdev->dev.of_node,
+-							 "sram", 0);
+-			if (!eth->sram_pool) {
+-				if (!mtk_is_netsys_v3_or_greater(eth)) {
+-					err = mtk_setup_legacy_sram(eth, res);
+-					if (err)
+-						goto err_destroy_sgmii;
+-				} else {
+-					dev_err(&pdev->dev,
+-						"Could not get SRAM pool\n");
+-					err = -EINVAL;
++	if (mtk_is_netsys_v2_or_greater(eth) &&
++	    MTK_HAS_CAPS(eth->soc->caps, MTK_SRAM)) {
++		eth->sram_pool = of_gen_pool_get(pdev->dev.of_node, "sram", 0);
++		if (!eth->sram_pool) {
++			if (!mtk_is_netsys_v3_or_greater(eth)) {
++				err = mtk_setup_legacy_sram(eth, res);
++				if (err)
+ 					goto err_destroy_sgmii;
+-				}
++			} else {
++				dev_err(&pdev->dev, "Could not get SRAM pool\n");
++				err = -EINVAL;
++				goto err_destroy_sgmii;
+ 			}
+ 		}
+ 	}
+
+-	if (eth->soc->offload_version) {
++	if (eth->soc->offload_version ||
++	    MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT6990)) {
+ 		for (i = 0;; i++) {
+ 			struct device_node *np;
+ 			phys_addr_t wdma_phy;
+@@ -5926,7 +5918,7 @@ static int mtk_probe(struct platform_device *pdev)
+ 				break;
+
+ 			wdma_base = eth->soc->reg_map->wdma_base[i];
+-			wdma_phy = res ? res->start + wdma_base : 0;
++			wdma_phy = res->start + wdma_base;
+ 			mtk_wed_add_hw(np, eth, eth->base + wdma_base,
+ 				       wdma_phy, i);
+ 		}
+diff --git a/drivers/net/ethernet/mediatek/mtk_wed.c b/drivers/net/ethernet/mediatek/mtk_wed.c
+index 4b0ecef..393adf4 100644
+--- a/drivers/net/ethernet/mediatek/mtk_wed.c
++++ b/drivers/net/ethernet/mediatek/mtk_wed.c
+@@ -506,7 +506,7 @@ mtk_wed_assign(struct mtk_wed_device *dev)
+ 		if (!hw->wed_dev)
+ 			goto out;
+
+-		if (mtk_wed_is_v1(hw))
++		if (mtk_wed_is_v1(hw) || hw->pcie_route)
+ 			return NULL;
+
+ 		/* MT7986 WED devices do not have any pcie slot restrictions */
+@@ -1133,6 +1133,12 @@ __mtk_wed_detach(struct mtk_wed_device *dev)
+
+ 	mtk_wdma_rx_reset(dev);
+ 	mtk_wed_reset(dev, MTK_WED_RESET_WED);
++	if (hw->pcie_route_active) {
++		if (regmap_update_bits(hw->pcie_route, hw->pcie_route_reg,
++				       hw->pcie_route_mask, hw->pcie_route_saved))
++			dev_warn(hw->dev, "failed to restore PCIe interrupt route\n");
++		hw->pcie_route_active = false;
++	}
+ 	mtk_wed_amsdu_free_buffer(dev);
+ 	mtk_wed_free_tx_buffer(dev);
+ 	mtk_wed_free_tx_rings(dev);
+@@ -1172,6 +1178,32 @@ mtk_wed_detach(struct mtk_wed_device *dev)
+ 	mutex_unlock(&hw_lock);
+ }
+
++static int mtk_wed_mt6990_pcie_init(struct mtk_wed_device *dev)
++{
++	struct mtk_wed_hw *hw = dev->hw;
++	int ret;
++
++	ret = regmap_read(hw->pcie_route, hw->pcie_route_reg,
++			  &hw->pcie_route_saved);
++	if (ret)
++		return ret;
++
++	wed_w32(dev, MTK_WED_PCIE_CFG_INTM, hw->pcie_base + 0x180);
++	wed_w32(dev, MTK_WED_PCIE_CFG_BASE, hw->pcie_base + 0x184);
++	wed_w32(dev, MTK_WED_PCIE_INT_TRIGGER, BIT(24));
++	wed_w32(dev, MTK_WED_PCIE_INT_CTRL,
++		FIELD_PREP(MTK_WED_PCIE_INT_CTRL_POLL_EN, 2) |
++		MTK_WED_PCIE_INT_CTRL_MSK_EN_POLA |
++		FIELD_PREP(MTK_WED_PCIE_INT_CTRL_SRC_SEL, hw->index));
++
++	ret = regmap_update_bits(hw->pcie_route, hw->pcie_route_reg,
++				 hw->pcie_route_mask, hw->pcie_route_mask);
++	if (!ret)
++		hw->pcie_route_active = true;
++
++	return ret;
++}
++
+ static void
+ mtk_wed_bus_init(struct mtk_wed_device *dev)
+ {
+@@ -1179,6 +1211,9 @@ mtk_wed_bus_init(struct mtk_wed_device *dev)
+ 	case MTK_WED_BUS_PCIE: {
+ 		struct device_node *np = dev->hw->eth->dev->of_node;
+
++		if (dev->hw->pcie_route)
++			break;
++
+ 		if (mtk_wed_is_v2(dev->hw)) {
+ 			struct regmap *regs;
+
+@@ -1262,14 +1297,20 @@ mtk_wed_set_wpdma(struct mtk_wed_device *dev)
+ 			dev->wlan.wpdma_rx_pg + i * 0x10);
+ }
+
+-static void
++static int
+ mtk_wed_hw_init_early(struct mtk_wed_device *dev)
+ {
+ 	u32 set = FIELD_PREP(MTK_WED_WDMA_GLO_CFG_BT_SIZE, 2);
+ 	u32 mask = MTK_WED_WDMA_GLO_CFG_BT_SIZE;
++	int ret;
+
+ 	mtk_wed_deinit(dev);
+ 	mtk_wed_reset(dev, MTK_WED_RESET_WED);
++	if (dev->hw->pcie_route) {
++		ret = mtk_wed_mt6990_pcie_init(dev);
++		if (ret)
++			return ret;
++	}
+ 	mtk_wed_set_wpdma(dev);
+
+ 	if (!mtk_wed_is_v3_or_greater(dev->hw)) {
+@@ -1307,6 +1348,8 @@ mtk_wed_hw_init_early(struct mtk_wed_device *dev)
+ 			FIELD_PREP(MTK_WED_WDMA_OFST1_RX_CTRL,
+ 				   MTK_WDMA_RING_RX(0)));
+ 	}
++
++	return 0;
+ }
+
+ static int
+@@ -1979,7 +2022,7 @@ mtk_wed_ppe_check(struct mtk_wed_device *dev, struct sk_buff *skb,
+ 	struct mtk_eth *eth = dev->hw->eth;
+ 	struct ethhdr *eh;
+
+-	if (!skb)
++	if (!skb || !eth->soc->ppe_num)
+ 		return;
+
+ 	if (reason != MTK_PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED)
+@@ -2400,6 +2443,30 @@ mtk_wed_start(struct mtk_wed_device *dev, u32 irq_mask)
+ 	dev->running = true;
+ }
+
++static int
++mtk_wed_mt6990_pcie_base(struct mtk_wed_device *dev, u32 *base)
++{
++	struct pci_host_bridge *bridge;
++	struct device_node *np;
++	struct resource res;
++
++	if (dev->wlan.bus_type != MTK_WED_BUS_PCIE || dev->wlan.msi)
++		return -EOPNOTSUPP;
++
++	bridge = pci_find_host_bridge(dev->wlan.pci_dev->bus);
++	if (!bridge || !bridge->dev.parent)
++		return -ENODEV;
++
++	np = bridge->dev.parent->of_node;
++	if (!np || !of_device_is_compatible(np, "mediatek,mt6990-pcie") ||
++	    of_address_to_resource(np, 0, &res) ||
++	    resource_size(&res) < 0x188 || res.start > U32_MAX - 0x184)
++		return -EINVAL;
++
++	*base = res.start;
++	return 0;
++}
++
+ static int
+ mtk_wed_attach(struct mtk_wed_device *dev)
+ 	__releases(RCU)
+@@ -2433,6 +2500,17 @@ mtk_wed_attach(struct mtk_wed_device *dev)
+ 	device = dev->wlan.bus_type == MTK_WED_BUS_PCIE
+ 		? &dev->wlan.pci_dev->dev
+ 		: &dev->wlan.platform_dev->dev;
++	if (hw->pcie_route) {
++		ret = mtk_wed_mt6990_pcie_base(dev, &hw->pcie_base);
++		if (ret) {
++			dev_warn(device, "WED%d PCIe resources unavailable: %d\n",
++				 hw->index, ret);
++			hw->wed_dev = NULL;
++			module_put(THIS_MODULE);
++			goto unlock;
++		}
++		dev->wlan.tx_only = true;
++	}
+ 	dev_info(device, "attaching wed device %d version %d\n",
+ 		 hw->index, hw->version);
+
+@@ -2441,7 +2519,8 @@ mtk_wed_attach(struct mtk_wed_device *dev)
+ 	dev->irq = hw->irq;
+ 	dev->wdma_idx = hw->index;
+ 	dev->version = hw->version;
+-	dev->hw->pcie_base = mtk_wed_get_pcie_base(dev);
++	if (!hw->pcie_route)
++		hw->pcie_base = mtk_wed_get_pcie_base(dev);
+
+ 	ret = dma_set_mask_and_coherent(hw->dev, DMA_BIT_MASK(32));
+ 	if (ret)
+@@ -2465,7 +2544,9 @@ mtk_wed_attach(struct mtk_wed_device *dev)
+ 			goto out;
+ 	}
+
+-	mtk_wed_hw_init_early(dev);
++	ret = mtk_wed_hw_init_early(dev);
++	if (ret)
++		goto out;
+ 	if (mtk_wed_is_v1(hw))
+ 		regmap_update_bits(hw->hifsys, HIFSYS_DMA_AG_MAP,
+ 				   BIT(hw->index), 0);
+@@ -2474,6 +2555,8 @@ mtk_wed_attach(struct mtk_wed_device *dev)
+
+ 	if (mtk_wed_get_rx_capa(dev))
+ 		ret = mtk_wed_wo_init(hw);
++	else if (hw->pcie_route)
++		dev_info(device, "attached MT6990 WED%d TX path\n", hw->index);
+ out:
+ 	if (ret) {
+ 		dev_err(dev->hw->dev, "failed to attach wed device\n");
+@@ -2851,10 +2934,24 @@ void mtk_wed_add_hw(struct device_node *np, struct mtk_eth *eth,
+ 	hw->wdma = wdma;
+ 	hw->index = index;
+ 	hw->irq = irq;
+-	hw->version = eth->soc->version;
++	/* WED uses v2 rings independently of the Ethernet descriptors. */
++	hw->version = MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT6990) ?
++		      2 : eth->soc->version;
+
+ 	switch (hw->version) {
+ 	case 2:
++		if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT6990)) {
++			u32 route[2];
++
++			hw->pcie_route = syscon_regmap_lookup_by_phandle_args(np,
++				"mediatek,pcie-route", ARRAY_SIZE(route), route);
++			if (IS_ERR(hw->pcie_route) || !route[1] || (route[0] & 3)) {
++				kfree(hw);
++				goto unlock;
++			}
++			hw->pcie_route_reg = route[0];
++			hw->pcie_route_mask = route[1];
++		}
+ 		hw->soc = &mt7986_data;
+ 		break;
+ 	case 3:
+diff --git a/drivers/net/ethernet/mediatek/mtk_wed.h b/drivers/net/ethernet/mediatek/mtk_wed.h
+index b49aee9..1fe001f 100644
+--- a/drivers/net/ethernet/mediatek/mtk_wed.h
++++ b/drivers/net/ethernet/mediatek/mtk_wed.h
+@@ -36,6 +36,11 @@ struct mtk_wed_hw {
+ 	struct mtk_eth *eth;
+ 	struct regmap *regs;
+ 	struct regmap *hifsys;
++	struct regmap *pcie_route;
++	u32 pcie_route_reg;
++	u32 pcie_route_mask;
++	u32 pcie_route_saved;
++	bool pcie_route_active;
+ 	struct device *dev;
+ 	void __iomem *wdma;
+ 	phys_addr_t wdma_phy;
+diff --git a/include/linux/soc/mediatek/mtk_wed.h b/include/linux/soc/mediatek/mtk_wed.h
+index 3fa93bd..bac5849 100644
+--- a/include/linux/soc/mediatek/mtk_wed.h
++++ b/include/linux/soc/mediatek/mtk_wed.h
+@@ -153,6 +153,7 @@ struct mtk_wed_device {
+
+ 		bool wcid_512;
+ 		bool hw_rro;
++		bool tx_only;
+ 		bool msi;
+ 		bool hif2;
+
+@@ -252,6 +253,9 @@ mtk_wed_device_attach(struct mtk_wed_device *dev)
+ static inline bool mtk_wed_get_rx_capa(struct mtk_wed_device *dev)
+ {
+ #ifdef CONFIG_NET_MEDIATEK_SOC_WED
++	if (dev->wlan.tx_only)
++		return false;
++
+ 	if (dev->version == 3)
+ 		return dev->wlan.hw_rro;
+

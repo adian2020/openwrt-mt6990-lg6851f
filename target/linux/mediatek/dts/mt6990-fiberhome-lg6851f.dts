@@ -623,6 +623,25 @@
 		};
 	};
 
+	/* WED instances use spare phandles to preserve the stock-derived nodes. */
+	wed0: wed@15010000 {
+		compatible = "mediatek,mt6990-wed", "syscon";
+		reg = <0x00 0x15010000 0x00 0x1000>;
+		interrupt-parent = <0x01>;
+		interrupts = <0x00 0x1a0 0x04>;
+		mediatek,pcie-route = <&vlpcfg 0x118 0x800>;
+		phandle = <0x300>;
+	};
+
+	wed1: wed@15011000 {
+		compatible = "mediatek,mt6990-wed", "syscon";
+		reg = <0x00 0x15011000 0x00 0x1000>;
+		interrupt-parent = <0x01>;
+		interrupts = <0x00 0x1a1 0x04>;
+		mediatek,pcie-route = <&pericfg_ao 0xb04 0x8>;
+		phandle = <0x301>;
+	};
+
 	/* stock boot DTB lines 552-556: cache_parity */
 	cache_parity {
 		compatible = "mediatek,mt6890-cache-parity";
@@ -899,7 +918,7 @@
 	};
 
 	/* stock boot DTB lines 819-824: syscon@1200C000 */
-	syscon@1200C000 {
+	vlpcfg: syscon@1200C000 {
 		compatible = "mediatek,mt6990-vlpcfg\0syscon";
 		reg = <0x00 0x1200c000 0x00 0x1000>;
 		#clock-cells = <0x01>;
@@ -995,7 +1014,7 @@
 	};
 
 	/* stock boot DTB lines 903-908: syscon@11036000 */
-	syscon@11036000 {
+	pericfg_ao: syscon@11036000 {
 		compatible = "mediatek,mt6990-pericfg_ao\0syscon";
 		reg = <0x00 0x11036000 0x00 0x1000>;
 		#clock-cells = <0x01>;
@@ -4686,6 +4705,7 @@
 		mediatek,ethsys = <0x6a>;
 		mediatek,sgmiisys = <&sgmiisys0>, <&sgmiisys1>;
 		mediatek,sgmii_pll = <&sgmiipll>;
+		mediatek,wed = <&wed0>, <&wed1>;
 		#address-cells = <0x01>;
 		#size-cells = <0x00>;
 		status = "okay";

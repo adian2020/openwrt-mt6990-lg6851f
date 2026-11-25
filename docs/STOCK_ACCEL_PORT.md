@@ -45,3 +45,13 @@
 ## 第一阶段的 CCCI 改动
 
 实验分支采纳了参考仓库的 CCCI 周期等待实现。Linux 6.18.44 的 `msleep()` 与这个实现都把等待毫秒数换算成 jiffies，提前唤醒时继续等待剩余时间。新调用使两次轮询之间的线程处于 `TASK_IDLE`，这段时间不计入系统负载平均值。15 秒轮询间隔、应答超时、故障上报及 200 毫秒恢复等待沿用原逻辑。目标内核编译和实机轮询仍待验证。[参考 CCCI 源码](https://github.com/adian2020/LG6851F-Pro/blob/0e1518ed632388e814032e0831560d22d9488981/target/linux/mediatek/files-6.18/drivers/misc/mediatek/eccci/fsm/ccci_fsm_poller.c)
+
+## 第二阶段的 WED 发送路径
+
+实验分支将 MT6990 的两个 Wi-Fi PCIe 域连接到各自的 WED v2 实例。设备树中的寄存器、GIC 中断号和路由位来自原厂资源与 WARP 的 MT6990 实现。WED 使用对应 PCIe 域的 INTx 路由，在驱动退出时恢复之前的路由位。PPE 表仍由厂商 HNAT 管理，WED 从自己的设备树节点注册。[参考 WARP 源码](https://github.com/adian2020/LG6851F-Pro/blob/0e1518ed632388e814032e0831560d22d9488981/vendor-source/wifi/warp_driver/warp/regs/reg_v2/warp_mt6990.c)
+
+`mt7996e` 的 `wed_enable` 默认关闭，只在 PCI 探测时读取。启用时，MT6990 使用 WED v2.3 的 TX 描述符和两路 HIF，接收数据仍由常规 PCIe 队列处理。当前发送路径跳过 WED RX、硬件 RRO 和 WO 微控制器初始化，因此这一阶段无需增加厂商 WO 固件。后续 RX 和 PPE 流卸载分别验收。
+
+离线编译使用本仓库固定的 Linux 6.18.44、无线 backports 6.18.26 和 mt76 `59676919`，编译了 ARM64 Ethernet/WED 驱动对象和 mt7996e 合成对象。DTB 回读与基线相比只新增两个 WED 节点及 Ethernet 的引用，原有 phandle 保持一致。整机启动、WED 中断、硬件环及链路吞吐仍待实机验证。
+
+实机验收先用默认关闭的配置按[测速基线](STOCK_ACCEL_BASELINE.md)采样，再用启用配置复测。按两个 PCIe 域确认各自的 WED 绑定，记录正常联网、重关联和重拨，以及同次测速的 WED 中断、TX 环和吞吐增量。之后再把 PPE 的流表命中和各转发方向纳入对照。
