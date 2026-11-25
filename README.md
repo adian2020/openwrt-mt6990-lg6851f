@@ -161,6 +161,7 @@ make package/<package-name>/compile V=s
 
 - 9 个可选 LuCI 插件及中文包：DDNS、网络唤醒、ttyd 终端、Watchcat、nlbwmon、vnStat2、PBR、adblock-fast、Aria2。
 - 27 项工具/运行库：Bash、常用 coreutils/findutils、diffutils、gawk/grep/sed、压缩工具、jq、OpenSSL 命令、Python 常用组件、Lua 及 LuCI 兼容库等。
+- 硬件加速实验分支追加 `iperf3` 和 `libiperf3`，用于[采集各转发路径的基线](docs/STOCK_ACCEL_BASELINE.md)。
 - 原来内置的软件保持内置；新增项选择为 `<M>`，编译为可安装 APK，不默认安装或启动。依赖由配置生成过程递归选入构建。Nikki 继续只构建、不预装，并合并到同批软件库。
 
 软件库包含本次目标包和所有 feeds 的 APK，而非只收录上述清单。最终包数与依赖集合以实际构建后的 `repository.manifest.json` 为准，不预先承诺数量，也不保证任意外站插件的所有依赖都已收录。后续添加软件时扩充此清单，重新构建匹配固件及软件库；基础库与内核模块尤其不能混用另一批产物。

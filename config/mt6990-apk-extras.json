@@ -9,6 +9,7 @@
     "diffutils", "findutils-find", "findutils-xargs", "gawk", "grep", "sed",
     "bzip2", "xz-utils", "zstd", "unzip", "jq", "openssl-util",
     "python3-light", "python3-logging", "python3-urllib", "python3-openssl", "python3-requests",
-    "lua", "luci-compat", "luci-lib-ipkg", "luasocket", "luasec"
+    "lua", "luci-compat", "luci-lib-ipkg", "luasocket", "luasec",
+    "iperf3", "libiperf3"
   ]
 }
