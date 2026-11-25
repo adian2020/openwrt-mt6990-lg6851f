@@ -155,6 +155,13 @@
 			default-state = "off";
 		};
 
+		panel_power {
+			label = "lg6851f:power";
+			gpios = <&pio 80 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "default-on";
+			default-state = "on";
+		};
+
 		panel_4g_good {
 			label = "lg6851f:4g-good";
 			gpios = <&pio 194 GPIO_ACTIVE_HIGH>;
@@ -4035,6 +4042,12 @@
 		proc1-supply = <0x5a>;
 		proc2-supply = <0x5a>;
 		phandle = <0x134>;
+	};
+
+	cpu-frequency@100102f4 {
+		compatible = "fiberhome,lg6851f-cpu-frequency";
+		reg = <0x00 0x100102f4 0x00 0x04>,
+		      <0x00 0x0c53a2a0 0x00 0x04>;
 	};
 
 	/* stock boot DTB lines 3785-3793: ccifdriver@10209000 */

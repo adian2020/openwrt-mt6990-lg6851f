@@ -16,7 +16,7 @@
 		"order": 5,
 		"action": {
 			"type": "view",
-			"path": "modem5g/overview_v10"
+			"path": "modem5g/status_cells_v1"
 		},
 		"depends": {
 			"acl": [

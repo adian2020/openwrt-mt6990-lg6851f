@@ -8,6 +8,7 @@
 				],
 				"luci.modem5g": [
 					"get_status",
+					"get_cell_status",
 					"get_cells",
 					"list_sms",
 					"get_smsc",

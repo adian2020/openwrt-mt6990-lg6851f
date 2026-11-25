@@ -7,6 +7,7 @@ STATE=/tmp/lg6851f-network-led.state
 LEDROOT=/sys/class/leds
 PANEL_LEDS='lg6851f:4g-good lg6851f:4g-fair lg6851f:4g-bad lg6851f:5g-bad lg6851f:5g-fair lg6851f:5g-good'
 MODEM_STATE=/tmp/lg6851f-modem-status.state
+OVERRIDES=/tmp/lg6851f-led-overrides
 
 config_load lg6851f_network_led
 config_get start_delay main start_delay 30
@@ -17,8 +18,22 @@ config_get orange_max_ms main orange_max_ms 500
 config_get good_rsrp main good_rsrp -95
 config_get fair_rsrp main fair_rsrp -110
 
-set_led() {
-	[ -w "$LEDROOT/$1/brightness" ] && echo "$2" >"$LEDROOT/$1/brightness"
+set_led() (
+	[ -w "$LEDROOT/$1/brightness" ] || exit 0
+	exec 8>/var/lock/lg6851f-panel-leds.lock
+	/usr/bin/flock -n 8 || exit 0
+	grep -Fqx "$1=manual" "$OVERRIDES" 2>/dev/null && exit 0
+	printf '%s\n' "$2" >"$LEDROOT/$1/brightness"
+)
+
+wired_state() {
+	local carrier up
+	for carrier in /sys/class/net/eth*/carrier; do
+		[ -r "$carrier" ] || continue
+		IFS= read -r up <"$carrier" 2>/dev/null || continue
+		[ "$up" = 1 ] && return 0
+	done
+	return 1
 }
 
 panel_off() {
@@ -74,7 +89,7 @@ update_signal_quality() {
 	fi
 }
 
-trap 'panel_off; set_led "lg6851f:wifi" 0' EXIT
+trap 'panel_off; set_led "lg6851f:wifi" 0; set_led "5g_evb_voice" 0' EXIT
 trap 'exit 0' TERM INT
 sleep "$start_delay"
 
@@ -93,6 +108,7 @@ RAT_RAW=
 
 while :; do
 	if wifi_state; then WIFI=ON; set_led lg6851f:wifi 1; else WIFI=OFF; set_led lg6851f:wifi 0; fi
+	if wired_state; then set_led 5g_evb_voice 1; else set_led 5g_evb_voice 0; fi
 
 	NET_JSON="$(ubus call network.interface.modem5g status 2>/dev/null)"
 	UP="$(echo "$NET_JSON" | jsonfilter -e '@.up')"

@@ -1,0 +1,174 @@
+#!/usr/bin/env ucode
+
+'use strict';
+
+import { open, readfile, rename, unlink, writefile } from 'fs';
+import { cursor } from 'uci';
+
+const CONFIG = 'lg6851f_led';
+const OVERRIDES = '/tmp/lg6851f-led-overrides';
+const ROOT = '/sys/class/leds/';
+const MODES = ['auto', 'on', 'off', 'blink'];
+const INTERVALS = [250, 500, 1000];
+const GROUPS = [
+	{ key: 'network', label: '网络', channels: { green: '5g_evb_voice' } },
+	{ key: 'cell5g', label: '5G', channels: { green: 'lg6851f:5g-good', blue: 'lg6851f:5g-bad', red: 'lg6851f:5g-fair' } },
+	{ key: 'cell4g', label: '4G', channels: { green: 'lg6851f:4g-good', blue: 'lg6851f:4g-fair', red: 'lg6851f:4g-bad' } },
+	{ key: 'wifi', label: 'Wi-Fi', channels: { green: 'lg6851f:wifi' } },
+	{ key: 'power', label: '电源', channels: { green: 'lg6851f:power' } },
+];
+
+function supported() {
+	return index(['fiberhome,lg6851f', 'fiberhome_lg6851f'],
+		trim(readfile('/tmp/sysinfo/board_name') || '')) >= 0;
+}
+
+function settings(c, group) {
+	let entry = c.get_all(CONFIG, group.key) || {};
+	let interval = +entry.interval;
+	return {
+		mode: index(MODES, entry.mode) < 0 ? 'auto' : entry.mode,
+		color: group.channels[entry.color] ? entry.color : 'green',
+		interval: index(INTERVALS, interval) < 0 ? 500 : interval
+	};
+}
+
+function capable(group, mode) {
+	for (let color, led in group.channels) {
+		if (readfile(ROOT + led + '/max_brightness') == null)
+			return false;
+		if (mode == 'blink' && !match(readfile(ROOT + led + '/trigger') || '', /(^|\s)\[?timer\]?(\s|$)/))
+			return false;
+	}
+	return true;
+}
+
+function apply_channel(led, mode, interval) {
+	let dir = ROOT + led;
+	if (mode == 'blink')
+		return !!writefile(dir + '/trigger', 'timer\n') &&
+			!!writefile(dir + '/delay_on', interval + '\n') &&
+			!!writefile(dir + '/delay_off', interval + '\n');
+	if (!writefile(dir + '/trigger', mode == 'power-auto' ? 'default-on\n' : 'none\n'))
+		return false;
+	if (mode == 'auto' || mode == 'power-auto')
+		return true;
+	return !!writefile(dir + '/brightness',
+		(mode == 'off' ? '0' : trim(readfile(dir + '/max_brightness') || '')) + '\n');
+}
+
+function apply_group(group, setting) {
+	let mode = setting.mode;
+	if (mode == 'on' || mode == 'blink') {
+		for (let color, led in group.channels)
+			if (color != setting.color && !apply_channel(led, 'off', setting.interval))
+				return false;
+		return apply_channel(group.channels[setting.color], mode, setting.interval);
+	}
+	if (mode == 'auto' && group.key == 'power')
+		mode = 'power-auto';
+	for (let color, led in group.channels)
+		if (!apply_channel(led, mode, setting.interval))
+			return false;
+	return true;
+}
+
+function publish(c) {
+	let lines = [];
+	for (let group in GROUPS)
+		if (settings(c, group).mode != 'auto')
+			for (let color, led in group.channels)
+				push(lines, led + '=manual');
+	let temp = OVERRIDES + '.new';
+	if (!writefile(temp, join('\n', lines) + '\n'))
+		return false;
+	if (rename(temp, OVERRIDES))
+		return true;
+	unlink(temp);
+	return false;
+}
+
+function status() {
+	if (!supported())
+		return { supported: false, leds: [] };
+	let c = cursor(), leds = [];
+	for (let group in GROUPS) {
+		let active = [], blinking = false;
+		for (let color, led in group.channels) {
+			let timer = index(readfile(ROOT + led + '/trigger') || '', '[timer]') >= 0;
+			if (timer || +(readfile(ROOT + led + '/brightness') || 0) > 0)
+				push(active, color);
+			blinking ||= timer;
+		}
+		push(leds, { key: group.key, label: group.label, colors: keys(group.channels),
+			...settings(c, group), available: capable(group, 'auto'), blink_available: capable(group, 'blink'),
+			active_colors: active, blinking });
+	}
+	return { supported: true, leds };
+}
+
+function locked(action) {
+	let lock = open('/var/lock/lg6851f-panel-leds.lock', 'a', 0o600);
+	if (!lock || !lock.lock('xn')) {
+		lock?.close();
+		return { success: false, error: '指示灯正在更新，请稍后重试' };
+	}
+	let result;
+	try { result = action(); }
+	catch (e) { result = { success: false, error: '无法更新指示灯状态' }; }
+	lock.close();
+	return result;
+}
+
+function set_mode(args) {
+	let group = filter(GROUPS, entry => entry.key == args.key)[0];
+	if (!supported() || !group || index(MODES, args.mode) < 0 ||
+	    !group.channels[args.color] || index(INTERVALS, args.interval) < 0)
+		return { success: false, error: '灯光参数无效' };
+	if (!capable(group, args.mode))
+		return { success: false, error: '所需指示灯接口未就绪' };
+	return locked(() => {
+		let c = cursor(), previous = settings(c, group);
+		let desired = { mode: args.mode, color: args.color, interval: args.interval };
+		let changed = previous.mode != desired.mode || previous.color != desired.color ||
+			previous.interval != desired.interval;
+		if (changed) {
+			c.set(CONFIG, group.key, 'led');
+			for (let key, value in desired)
+				c.set(CONFIG, group.key, key, '' + value);
+		}
+		if (!apply_group(group, desired) || !publish(c) || (changed && !c.commit(CONFIG))) {
+			publish(cursor());
+			apply_group(group, previous);
+			return { success: false, error: '灯光设置未能保存并应用', status: status() };
+		}
+		return { success: true, status: status() };
+	});
+}
+
+let command = null;
+try { command = ARGV[0]; } catch (e) {}
+if (command == 'apply') {
+	if (!supported())
+		return null;
+	let result = locked(() => {
+		let c = cursor();
+		if (!publish(c))
+			return { success: false, error: '灯光状态写入失败' };
+		for (let group in GROUPS) {
+			let saved = settings(c, group);
+			if (capable(group, saved.mode))
+				apply_group(group, saved);
+		}
+		return { success: true };
+	});
+	if (!result.success)
+		die(result.error);
+	return null;
+}
+
+return { 'luci.lg6851f-led': {
+	get_status: { call: status },
+	set_mode: { args: { key: '', mode: '', color: '', interval: 0 },
+		call: req => set_mode(req.args) }
+} };

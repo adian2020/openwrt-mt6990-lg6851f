@@ -105,7 +105,9 @@ class DashboardTest(unittest.TestCase):
         self.write('/proc/meminfo', 'MemTotal: 1000 kB\nMemAvailable: 789 kB\n')
         self.write('/sys/class/thermal/thermal_zone0/type', 'cpu_little0')
         self.write('/sys/class/thermal/thermal_zone0/temp', '56415')
-        self.write('/tmp/lg6851f-modem-status.state', 'RSRP=-101\nRSRQ=-10.5\nSINR=18.5\nRAT=5G\nIMEI=123456789000111\n')
+        self.write('/tmp/lg6851f-modem-status.state',
+                   f'SIGNAL_TS={int(time.time())}\nUP=true\nREGISTERED=YES\n'
+                   'RSRP=-101\nRSRQ=-10.5\nSINR=18.5\nRAT=5G\nIMEI=123456789000111\n')
         value = self.run_ucode("import * as d from 'lg6851f.dashboard'; printf('%J', d.snapshot());")
         self.assertAlmostEqual(value['memory']['percent'], 21.1)
         self.assertAlmostEqual(value['temperatures'][0]['celsius'], 56.415)
@@ -114,6 +116,43 @@ class DashboardTest(unittest.TestCase):
         self.assertIsNone(value['modem']['updated'])
         self.assertEqual(value['frequencies'], [])
         self.assertTrue(all(v is None for v in value['advanced'].values()))
+
+    def test_read_only_pll_precedes_cpufreq(self):
+        self.write('/sys/devices/system/cpu/cpufreq/policy0/scaling_cur_freq', '1200000\n')
+        self.write('/sys/bus/platform/devices/100102f4.cpu-frequency/cpu_pll_cur_freq', '1799999\n')
+        frequencies = self.run_ucode("import * as d from 'lg6851f.dashboard'; printf('%J', d.snapshot().frequencies);")
+        self.assertEqual(len(frequencies), 1)
+        self.assertEqual(frequencies[0]['source'], 'pll')
+        self.assertAlmostEqual(frequencies[0]['current_mhz'], 1799.999)
+
+    def test_signal_cache_rejects_old_clock_and_unregistered_samples(self):
+        values = [
+            {'SIGNAL_TS': int(time.time()), 'UP': 'true', 'REGISTERED': 'YES', 'RSRP': '-96', 'SINR': '0'},
+            {'SIGNAL_TS': int(time.time()) - 185, 'UP': 'true', 'REGISTERED': 'YES', 'RSRP': '-96'},
+            {'SIGNAL_TS': int(time.time()) + 30, 'UP': 'true', 'REGISTERED': 'YES', 'RSRP': '-96'},
+            {'SIGNAL_TS': int(time.time()), 'UP': 'true', 'REGISTERED': 'NO', 'RSRP': '-96'},
+        ]
+        results = self.run_ucode("import * as d from 'lg6851f.dashboard'; printf('%J', map(samples, d.signal_cache));",
+                                 samples=values)
+        self.assertEqual(results[0]['sinr'], 0)
+        self.assertEqual(results[1:], [None, None, None])
+
+    def test_cell_status_queues_refresh_on_bearer_change_and_ignores_old_lock(self):
+        self.write('/proc/sys/kernel/random/boot_id', 'test-boot\n')
+        self.write('/tmp/lg6851f-modem-cells.json', json.dumps(dict(
+            boot_id='test-boot', updated=int(time.time()), scope='ccmni2:1:old',
+            serving={'output': '+ECELL: 0\nOK'}
+        )))
+        network = dict(up=True, uptime=60, l3_device='ccmni2', data=dict(cid=2, apn='new'))
+        result = self.rpc('get_cell_status', {'refresh': True},
+                          TEST_RESPONSES={'network.interface.modem5g': json.dumps(network)},
+                          TEST_FILES={'/etc/modem5g-lock.state':
+                                      'MODE=cell\nSTATUS=verified\nBOOT_ID=old-boot\nVERIFIED_SERVING_PCI=321\n'})
+        self.assertIsNone(result['result']['cells'])
+        self.assertIsNone(result['result']['lock_record'])
+        self.assertTrue(result['result']['queued'])
+        self.assertEqual(sum('/usr/bin/lg6851f-radio-collect --cells' in c for c in result['commands']), 1)
+        self.assertTrue(all('AT+ECELL' not in c for c in result['commands']))
 
     def test_mdns_requires_real_address_and_unambiguous_host_name(self):
         # The host ucode build provides fs, but not the router's uci module.

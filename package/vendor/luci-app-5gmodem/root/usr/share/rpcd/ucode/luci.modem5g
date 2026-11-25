@@ -183,16 +183,16 @@ function modem_settled(network) {
 	return true;
 }
 
-function status() {
+function status(network_json) {
 	if (!board_ok())
 		return { available: false, error: 'Unsupported board' };
 
-	let network_json = network_state();
+	network_json ??= network_state();
 	if (!modem_settled(network_json))
 		return { available: true, initializing: true, network: network_json, error: 'Modem is still completing the official startup sequence' };
 	let cached = cached_modem_state();
 	let age = time() - +(cached.UPDATED || 0);
-	if (!cached.UPDATED || age > 180)
+	if (!cached.UPDATED || age < 0 || age > 180)
 		return { available: true, initializing: true, network: network_json, error: 'Waiting for the shared modem status collector' };
 	return {
 		available: true,
@@ -217,6 +217,37 @@ function status() {
 	};
 }
 
+function native_lock_readback() {
+	let raw = readfile(LOCKSTATE) || '', boot = trim(readfile('/proc/sys/kernel/random/boot_id') || '');
+	let record = {};
+	for (let line in split(raw, '\n')) {
+		let pos = index(line, '=');
+		if (pos > 0) record[substr(line, 0, pos)] = substr(line, pos + 1);
+	}
+	let verified = boot && record.BOOT_ID == boot && record.STATUS == 'verified';
+	let bands = dashboard.reading('bands');
+	if (verified && +record.UPDATED <= time() && +record.UPDATED > +(bands?.updated || 0) &&
+	    match(raw, /lte band info\s*=/) && match(raw, /nr band info\s*=/))
+		bands = {code:0, output:'SAVED_LOCK_STATE\n'+raw, boot_id:boot,
+			updated:+record.UPDATED, age:time()-record.UPDATED, stale:time()-record.UPDATED>180};
+	return { bands, lock_record: verified ? {mode:record.MODE, rat:record.RAT,
+		arfcn:record.VERIFIED_SERVING_ARFCN, pci:record.VERIFIED_SERVING_PCI} : null };
+}
+
+function cell_status(refresh) {
+	if (!board_ok()) return {available:false};
+	let network = network_state(), scope = dashboard.cellular_scope(network);
+	let cells = dashboard.reading('cells');
+	if (!scope || cells?.scope != scope) cells = null;
+	let queued = false;
+	if (refresh && scope && +network.uptime >= 30 &&
+	    (!cells || cells.stale || cells.age >= 20)) {
+		let worker = popen('/usr/bin/lg6851f-radio-collect --cells >/dev/null 2>&1 </dev/null &', 'r');
+		queued = worker != null && worker.close() == 0;
+	}
+	return { ...status(network), ...native_lock_readback(), cells, queued,
+		signal_sample: scope ? dashboard.signal_cache(cached_modem_state()) : null };
+}
 
 function read_json_command(argv, seconds) {
 	let result = capture(argv, seconds || 5);
@@ -395,12 +426,15 @@ const methods = {
 			phone: req.args?.reveal ? state.PHONE : dashboard.mask(state.PHONE) };
 	} },
 	get_status: { call: function() { return status(); } },
+	get_cell_status: { args: {refresh: false}, call: function(req) { return cell_status(req.args.refresh === true); } },
 	get_cells: { call: function() {
-		if (!modem_settled(network_state()))
+		let network = network_state();
+		if (!modem_settled(network))
 			return { initializing: true, serving: { output: 'Waiting for modem startup to settle' }, engineering: { output: '' } };
 		let result = {
 			serving: at('AT+ECELL'),
 			engineering: at('AT+EINFO?'),
+			scope: dashboard.cellular_scope(network),
 			note: 'Channel information is derived from the same read-only AT+ECELL response shown below.'
 		};
 		if (result.serving.code == 0 && match(result.serving.output, /\+ECELL:/) && match(result.serving.output, /\bOK\b/))
@@ -474,12 +508,7 @@ const methods = {
 			let child=popen('/usr/bin/lg6851f-lock-status-collect >/dev/null 2>&1 </dev/null &','r');
 			child?.close?.();state={status:'pending'};
 		}
-		let bands=dashboard.reading('bands'),saved=readfile(LOCKSTATE)||'',stamp=match('\n'+saved,/\nUPDATED=([0-9]+)/);
-		if(stamp&&+stamp[1]<=time()&&(!bands||+stamp[1]>bands.updated)&&
-		   index('\n'+saved,'\nBOOT_ID='+boot+'\n')>=0&&index('\n'+saved,'\nSTATUS=verified\n')>=0&&
-		   match(saved,/lte band info\s*=/)&&match(saved,/nr band info\s*=/))
-			bands={code:0,output:'SAVED_LOCK_STATE\n'+saved,boot_id:boot,updated:+stamp[1],age:time()-stamp[1],stale:time()-stamp[1]>180};
-		return {bands,cells:dashboard.reading('cells'),refresh:state};
+		return {...native_lock_readback(),cells:dashboard.reading('cells'),refresh:state};
 	} },
 	get_locks: { call: function() {
 		if (!modem_settled(network_state()))

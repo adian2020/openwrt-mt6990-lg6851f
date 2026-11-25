@@ -1,0 +1,85 @@
+#!/bin/sh
+set -eu
+umask 077
+
+directory=/overlay/swap
+file="$directory/swapfile"
+dev=/sys/class/block/mmcblk0p46
+
+active() {
+	awk -v path="$file" '$1 == path { found=1 } END { exit !found }' /proc/swaps
+}
+
+on_p46() {
+	[ "$(cat "$dev/partition" 2>/dev/null)" = 46 ] &&
+	[ "$(cat "$dev/size" 2>/dev/null)" = 5187456 ] &&
+	grep -qx 'PARTNAME=user_data' "$dev/uevent" &&
+	awk -v dev="$(cat "$dev/dev")" '
+		$3 == dev && $4 == "/" && $5 == "/overlay" && $6 ~ /(^|,)rw(,|$)/ {
+			for (i=7; i<=NF; i++) if ($i=="-" && $(i+1)=="ext4") mounted=1
+		}
+		END { exit !mounted }' /proc/self/mountinfo
+}
+
+case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in
+	fiberhome,lg6851f|fiberhome_lg6851f) ;;
+	*) exit 95 ;;
+esac
+
+exec 9>/var/lock/lg6851f-swap.lock
+case "${1:-}" in
+	stop)
+		/usr/bin/flock -n 9 || exit 75
+		active && swapoff "$file"
+		exit 0
+		;;
+	start) /usr/bin/flock -n 9 || exit 0 ;;
+	*) exit 22 ;;
+esac
+
+active && exit 0
+n=0
+until on_p46; do
+	[ "$n" -lt 60 ] || exit 75
+	sleep 2
+	n=$((n + 1))
+done
+
+[ ! -L "$directory" ] && [ ! -L "$file" ] || exit 22
+for partial in "$directory"/.lg6851f-swap.??????; do
+	[ -f "$partial" ] && [ ! -L "$partial" ] && rm -f "$partial"
+done
+if [ ! -e "$file" ]; then
+	# Defer first allocation until an AP is serving, or a wired-only
+	# boot has had time to complete network initialization.
+	n=0
+	while [ "$n" -lt 30 ]; do
+		status=$(ubus -t 1 call hostapd status '{}' 2>/dev/null) || status=
+		jsonfilter -s "$status" -e '@.interfaces.*.running' 2>/dev/null | grep -qx true && break
+		sleep 5
+		n=$((n + 1))
+	done
+	on_p46 || exit 75
+	available=$(df -Pk /overlay | awk 'NR==2 {print $4}')
+	[ "${available:-0}" -ge 655360 ] || {
+		logger -t lg6851f-swap 'Not enough free space for 512 MiB swap'
+		exit 28
+	}
+	[ ! -L "$directory" ] || exit 22
+	mkdir -p "$directory"
+	chmod 700 "$directory"
+	tmp=$(mktemp "$directory/.lg6851f-swap.XXXXXX")
+	trap 'rm -f "$tmp"' EXIT
+	trap 'exit 1' TERM INT
+	nice -n 19 dd if=/dev/zero of="$tmp" bs=1M count=512 2>/dev/null
+	mkswap "$tmp" >/dev/null
+	on_p46 || exit 75
+	mv -n "$tmp" "$file"
+fi
+
+[ -f "$file" ] && [ ! -L "$file" ] || exit 22
+size=$(LC_ALL=C ls -ln "$file" | awk 'NR==1 {print $5}')
+[ "$size" = 536870912 ] || exit 22
+chmod 600 "$file"
+swapon -p 10 "$file"
+logger -t lg6851f-swap 'Enabled persistent 512 MiB swap on P46'

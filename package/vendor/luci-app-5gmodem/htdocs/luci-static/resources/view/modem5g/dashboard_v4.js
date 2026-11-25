@@ -125,6 +125,7 @@ return view.extend({
     <div>
       <div class="mud-rows">
         <div class="mud-r"><span class="mud-k">设备型号</span><span class="mud-v" id="mud-model">--</span></div>
+        <div class="mud-r"><span class="mud-k">CPU 频率</span><span class="mud-v" id="mud-cpu-freq">--</span></div>
         <div class="mud-r"><span class="mud-k">调制解调器</span><span class="mud-v" id="mud-modem">--</span></div>
         <div class="mud-r"><span class="mud-k">运营商</span><span class="mud-v" id="mud-carr">--</span></div>
         <div class="mud-r"><span class="mud-k">PLMN</span><span class="mud-v" id="mud-plmn">--</span></div>
@@ -245,6 +246,8 @@ return view.extend({
   this.set('wenc',preferred?.encryption);this.set('whid',preferred?(preferred.hidden?'是':'否'):null);this.set('wcountry',preferred?.country?.toLowerCase());
   this.set('whostapd',wireless.length?wireless.some(w=>w.up)?'运行中':'未运行':null);
   this.set('conntrack',this.pair(data.conntrack?.count,data.conntrack?.maximum));this.set('lanip',address(data.lan?.['ipv4-address']));
+  const frequencies=(data.frequencies||[]).filter(f=>Number.isFinite(f.current_mhz)&&f.current_mhz>0);
+  this.set('cpu-freq',frequencies.length?frequencies.map(f=>f.current_mhz.toFixed(0)+' MHz').join(' · '):'未获取');
   this.set('fwos',data.release?.match(/DISTRIB_DESCRIPTION=['"]([^'"]+)/)?.[1]||data.release);this.set('model',data.model);this.set('modem',m.updated?'在线':'未取得状态');this.set('carr',m.operator);this.set('plmn',m.plmn);
   this.paintIdentity();
   const leases=data.leases||[],clients=data.clients||[];this.set('wcl',clients.length+' 台');this.set('wleases',leases.length+' 条');

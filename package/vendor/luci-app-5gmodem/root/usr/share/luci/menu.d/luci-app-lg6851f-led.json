@@ -1,0 +1,8 @@
+{
+	"admin/system/lg6851f-led": {
+		"title": "灯光控制",
+		"order": 65,
+		"action": { "type": "view", "path": "system/lg6851f-led" },
+		"depends": { "acl": ["luci-app-lg6851f-led"] }
+	}
+}

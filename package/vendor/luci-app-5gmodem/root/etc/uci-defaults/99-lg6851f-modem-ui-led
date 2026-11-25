@@ -8,7 +8,7 @@ fi
 # Refresh menus after an upgrade that retains old LuCI caches/configuration.
 rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*
 rm -rf /tmp/luci-modulecache
-for service in lg6851f-network-led lg6851f-modem-status; do
+for service in lg6851f-network-led lg6851f-modem-status lg6851f-led-preferences; do
 	[ ! -x "/etc/init.d/$service" ] || "/etc/init.d/$service" enable
 done
 # Aurora is the firmware default after removing Vantage.

@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as radio from 'lg6851f.radio';
+import { cellular_scope, reading } from 'lg6851f.dashboard';
 const boot_id=trim(fs.readfile('/proc/sys/kernel/random/boot_id') || '');
 function publish(path,data){
  let dir=fs.mkdtemp('/tmp/lg6851f-radio.XXXXXX');if(!dir)return false;
@@ -15,11 +16,18 @@ let netraw=capture("/bin/ubus -t 2 call network.interface.modem5g status"),net;
 try{net=json(netraw.output);}catch(e){}
 if(!net?.up || (net.uptime ?? 0)<5)exit(0);
 if(fs.stat('/tmp/lg6851f-modem-control.active') || fs.stat('/var/lock/lg6851f-modem-recovery.lock'))exit(75);
-let scope=(net.l3_device||'')+':'+(net.data?.cid||'')+':'+(net.data?.apn||'');
+let scope=cellular_scope(net), cells_only=ARGV[0]=='--cells';
+if(!scope)exit(2);
+if(cells_only && (net.uptime ?? 0)<30)exit(0);
+let old_cells=reading('cells');
+if(cells_only && old_cells?.scope==scope && old_cells.age>=0 && old_cells.age<20)exit(0);
 let old=null;try{old=json(fs.readfile('/tmp/lg6851f-modem-radio-details.json')||'null');}catch(e){}
 if(old?.scope && old.scope!=scope){for(let name in ['cells','radio-details','qos'])fs.unlink('/tmp/lg6851f-modem-'+name+'.json');old=null;}
 let cells=capture("/usr/bin/timeout 12 /usr/bin/modem5g-at 'AT+ECELL'");
-if(cells.code==0 && match(cells.output,/\+ECELL:/))publish('/tmp/lg6851f-modem-cells.json',{serving:cells,updated:time(),boot_id,scope});
+if(cells.code==0 && match(cells.output,/(^|\n)\+ECELL:/) &&
+   match(cells.output,/(^|\n)OK\s*($|\n)/))
+	publish('/tmp/lg6851f-modem-cells.json',{serving:cells,updated:time(),boot_id,scope});
+if(cells_only)exit(0);
 // 直接读取当前上网CID，禁止用IMS承载或常量8填充。
 let cid=int(net.data?.cid),qos=null;
 if(cid>0 && cid<=32 && net.data?.apn!='ims'){

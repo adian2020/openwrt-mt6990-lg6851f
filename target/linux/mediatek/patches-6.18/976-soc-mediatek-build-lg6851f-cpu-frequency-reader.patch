@@ -1,0 +1,25 @@
+Subject: soc: mediatek: build the LG6851F CPU frequency reader
+
+--- a/drivers/soc/mediatek/Kconfig
++++ b/drivers/soc/mediatek/Kconfig
+@@ -5,6 +5,12 @@
+ menu "MediaTek SoC drivers"
+ 	depends on ARCH_MEDIATEK || COMPILE_TEST
+
++config MTK_LG6851F_CPU_FREQ_READ
++	bool "LG6851F read-only CPU frequency"
++	depends on ARCH_MEDIATEK && ARM64
++	help
++	  Expose the LG6851F shared CPU PLL frequency via a read-only attribute.
++
+ config MTK_IPI
+ 	tristate "MediaTek vendor TinySys IPI support"
+ 	depends on RPMSG_MTK
+--- a/drivers/soc/mediatek/Makefile
++++ b/drivers/soc/mediatek/Makefile
+@@ -1,4 +1,5 @@
+ # SPDX-License-Identifier: GPL-2.0-only
++obj-$(CONFIG_MTK_LG6851F_CPU_FREQ_READ) += lg6851f-cpu-frequency.o
+ obj-$(CONFIG_MTK_CMDQ) += mtk-cmdq-helper.o
+ obj-$(CONFIG_MTK_DEVAPC) += mtk-devapc.o
+ obj-$(CONFIG_MTK_DVFSRC) += mtk-dvfsrc.o

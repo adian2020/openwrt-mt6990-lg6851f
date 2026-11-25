@@ -16,6 +16,17 @@ export function cached() {
 	}
 	return row;
 }
+export function cellular_scope(network) {
+	if (!network?.up || !match(network.l3_device || '', /^[A-Za-z0-9_.:-]{1,15}$/))
+		return null;
+	return (network.l3_device || '') + ':' + (network.data?.cid || '') + ':' + (network.data?.apn || '');
+}
+export function signal_cache(row) {
+	let updated = num(row.SIGNAL_TS), age = updated == null ? null : time() - updated;
+	if (age == null || age < 0 || age > 180 || row.REGISTERED != 'YES' || row.UP != 'true')
+		return null;
+	return { updated, age, rssi: num(row.RSSI), rsrp: num(row.RSRP), rsrq: num(row.RSRQ), sinr: num(row.SINR) };
+}
 export function reading(name) {
 	if (index(['cells', 'bands', 'radio-details'], name) < 0) return null;
 	let data;
@@ -24,7 +35,7 @@ export function reading(name) {
 	if (!boot || type(data) != 'object' || data.boot_id != boot || num(data.updated) == null) return null;
 	data.age = time() - data.updated;
 	data.stale = data.age < 0 || data.age > 180;
-	if(name=='cells' && data.serving){let r=reading('radio-details');if(r)data.serving.carriers=r.parsed?.carriers;}
+	if(name=='cells' && data.serving){let r=reading('radio-details');if(r && !r.stale && r.scope==data.scope)data.serving.carriers=r.parsed?.carriers;}
 	return data;
 }
 export function mask(value) {
@@ -111,18 +122,22 @@ export function snapshot() {
 			if (value != null) push(temperatures, { source: path, name: text(dir + '/name'), label: text(replace(path, /_input$/, '_label')), celsius: value / 1000.0, kind: 'hwmon' });
 		}
 	}
-	// 仅使用标准policy接口；本机实测读取debugfs clk_summary会卡死重启，
-	// 不得用全量时钟摘要或调试节点作为缺失频率的回退。
+	let pll = number('/sys/bus/platform/devices/100102f4.cpu-frequency/cpu_pll_cur_freq');
+	if (pll > 0)
+		push(frequencies, { policy: '共享 CPU', current_mhz: pll / 1000.0, source: 'pll' });
 	for (let dir in paths('/sys/devices/system/cpu/cpufreq/policy*')) {
+		if (pll > 0) break;
 		let current = number(dir + '/scaling_cur_freq'), max = number(dir + '/cpuinfo_max_freq');
-		push(frequencies, { policy: basename(dir), current_mhz: current == null ? null : current / 1000.0,
-			maximum_mhz: max == null ? null : max / 1000.0 });
+		if (current > 0)
+			push(frequencies, { policy: basename(dir), current_mhz: current / 1000.0,
+				maximum_mhz: max > 0 ? max / 1000.0 : null, source: 'cpufreq' });
 	}
 	let power_supplies = [];
 	for (let dir in paths('/sys/class/power_supply/*'))
 		push(power_supplies, { name: basename(dir), type: text(dir + '/type'), status: text(dir + '/status'), capacity: number(dir + '/capacity'),
 			online: number(dir + '/online'), voltage_uv: number(dir + '/voltage_now'), current_ua: number(dir + '/current_now') });
 	let identity = cached();
+	let signal = signal_cache(identity);
 	let ims=ims_registration(identity.IMS_CIREG);
 	if(ims){ims.updated=num(identity.IMS_UPDATED);ims.age=ims.updated==null ? null : time()-ims.updated;ims.stale=ims.age==null || ims.age<0 || ims.age>600;}
 	let radio_details = reading('radio-details'), details = radio_details?.parsed;
@@ -144,7 +159,8 @@ export function snapshot() {
 		modem: { rat: identity.RAT || null, rat_raw: identity.RAT_RAW || null, ims,
 			operator: operators[identity.OPERATOR] || identity.OPERATOR || null,
 			plmn: identity.OPERATOR || null, sim: identity.SIM || null, registered: identity.REGISTERED == 'YES',
-			radio: identity.RADIO || null, rsrp: num(identity.RSRP), rsrq: num(identity.RSRQ), sinr: num(identity.SINR),
+			radio: identity.RADIO || null, rsrp: signal?.rsrp, rsrq: signal?.rsrq, sinr: signal?.sinr,
+			signal_updated: signal?.updated,
 			updated: num(identity.UPDATED), imei: mask(identity.IMEI), imsi: mask(identity.IMSI), iccid: mask(identity.ICCID),
 			model: identity.MODEM_MODEL || null, firmware: identity.MODEM_FIRMWARE || null, phone: mask(identity.PHONE),
 			roaming: identity.ROAMING == '1' ? '是' : identity.ROAMING == '0' ? '否' : null },
