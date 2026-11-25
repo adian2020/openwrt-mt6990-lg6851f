@@ -1,0 +1,102 @@
+Subject: mt76: mt7996: pass verified ingress metadata to the MT6990 PPE
+
+diff --git a/mt7996/mac.c b/mt7996/mac.c
+index 2a4a445..10558c5 100644
+--- a/mt7996/mac.c
++++ b/mt7996/mac.c
+@@ -7,6 +7,7 @@
+ #include <linux/timekeeping.h>
+ #include "coredump.h"
+ #include "mt7996.h"
++#include <linux/soc/mediatek/mtk_hnat.h>
+ #include "../dma.h"
+ #include "mac.h"
+ #include "mcu.h"
+@@ -1055,6 +1056,24 @@ int mt7996_tx_prepare_skb(struct mt76_dev *mdev, void *txwi_ptr,
+ 		}
+ 	}
+
++#ifdef CONFIG_NET_MEDIATEK_SOC_WED
++	if (dev->wed_hnat && is_8023 && sta && vif && !sta->mlo &&
++	    wcid->link_id < IEEE80211_MLD_MAX_NUM_LINKS) {
++		struct mtk_wed_device *wed = &mdev->mmio.wed;
++		struct mt76_vif_link *link;
++
++		if (dev->hif2 && ((is_mt7996(mdev) && wcid->phy_idx == MT_BAND2) ||
++				 (is_mt7992(mdev) && wcid->phy_idx == MT_BAND1)))
++			wed = &mdev->mmio.wed_hif2;
++		link = rcu_dereference(mvif->mt76.link[wcid->link_id]);
++		if (link && mtk_wed_device_active(wed) && wed->wlan.tx_only &&
++		    READ_ONCE(wed->running) &&
++		    mtk_hnat_wifi_tx(tx_info->skb, wed->wdma_idx, link->idx,
++				    wcid->idx, 0))
++			return -ECANCELED;
++	}
++#endif
++
+ 	t = (struct mt76_txwi_cache *)(txwi + mdev->drv->txwi_size);
+ 	t->skb = tx_info->skb;
+
+diff --git a/mt7996/main.c b/mt7996/main.c
+index f145409..5983203 100644
+--- a/mt7996/main.c
++++ b/mt7996/main.c
+@@ -4,6 +4,7 @@
+  */
+
+ #include "mt7996.h"
++#include <linux/soc/mediatek/mtk_hnat.h>
+ #include "mcu.h"
+ #include "mac.h"
+
+@@ -1446,6 +1447,8 @@ mt7996_mac_sta_remove(struct mt7996_dev *dev, struct ieee80211_vif *vif,
+ 	int i;
+
+ 	mutex_lock(&dev->mt76.mutex);
++	if (dev->wed_hnat)
++		mtk_hnat_wifi_flush(sta->addr);
+ 	for (i = 0; i < ARRAY_SIZE(msta->link); i++)
+ 		mt7996_mac_sta_remove_link(dev, sta, i, true);
+ 	mutex_unlock(&dev->mt76.mutex);
+diff --git a/mt7996/mmio.c b/mt7996/mmio.c
+index a4c11c9..f098dbf 100644
+--- a/mt7996/mmio.c
++++ b/mt7996/mmio.c
+@@ -18,6 +18,9 @@
+ static bool wed_enable;
+ module_param(wed_enable, bool, 0644);
+ MODULE_PARM_DESC(wed_enable, "Enable WED at PCI probe (default: disabled)");
++static bool wed_hnat;
++module_param(wed_hnat, bool, 0444);
++MODULE_PARM_DESC(wed_hnat, "Enable MT6990 vendor PPE learning on WED TX");
+
+ static const struct __base mt7996_reg_base[] = {
+ 	[WF_AGG_BASE]		= { { 0x820e2000, 0x820f2000, 0x830e2000 } },
+@@ -638,6 +641,15 @@ int mt7996_mmio_wed_init(struct mt7996_dev *dev, void *pdev_ptr,
+ 		return 0;
+ 	}
+
++	if (wed->wlan.tx_only && !hif2 && wed_hnat) {
++		if (mt76_wed_offload_enable(wed)) {
++			wed->wlan.offload_disable(wed);
++			mtk_wed_device_detach(wed);
++			return 0;
++		}
++		dev->wed_hnat = true;
++	}
++
+ 	*irq = wed->irq;
+ 	dev->mt76.dma_dev = wed->dev;
+
+diff --git a/mt7996/mt7996.h b/mt7996/mt7996.h
+index fab89e2..3937bd4 100644
+--- a/mt7996/mt7996.h
++++ b/mt7996/mt7996.h
+@@ -465,6 +465,7 @@ struct mt7996_dev {
+ 	struct wiphy_radio_freq_range radio_freqs[MT7996_MAX_RADIOS];
+
+ 	struct mt7996_hif *hif2;
++	bool wed_hnat;
+ 	struct mt7996_reg_desc reg;
+ 	u8 q_id[MT7996_MAX_QUEUE];
+ 	u32 q_int_mask[MT7996_MAX_QUEUE];

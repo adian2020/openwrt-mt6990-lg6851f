@@ -10,6 +10,9 @@
 #include <linux/types.h>
 #include <linux/skbuff.h>
 #include <linux/dma-map-ops.h>
+#include <linux/mutex.h>
+#include <linux/rcupdate.h>
+#include <linux/soc/mediatek/mtk_hnat.h>
 #include <net/ra_nat.h>
 
 struct net_device	*dst_port[MAX_IF_NUM];
@@ -178,3 +181,59 @@ void hwnat_setup_dma_ops(struct device *dev, bool coherent)
 	arch_setup_dma_ops(dev, coherent);
 }
 EXPORT_SYMBOL(hwnat_setup_dma_ops);
+
+/* MT76 bridge: the provider may unload independently of the Wi-Fi module. */
+static const struct mtk_hnat_wifi_ops __rcu *mtk_hnat_wifi_ops;
+static DEFINE_MUTEX(mtk_hnat_wifi_lock);
+
+int mtk_hnat_wifi_register(const struct mtk_hnat_wifi_ops *ops)
+{
+ int ret = 0;
+
+ if (!ops || !ops->tx || !ops->flush)
+  return -EINVAL;
+
+ mutex_lock(&mtk_hnat_wifi_lock);
+ if (rcu_access_pointer(mtk_hnat_wifi_ops))
+  ret = -EBUSY;
+ else
+  rcu_assign_pointer(mtk_hnat_wifi_ops, ops);
+ mutex_unlock(&mtk_hnat_wifi_lock);
+ return ret;
+}
+EXPORT_SYMBOL_GPL(mtk_hnat_wifi_register);
+
+void mtk_hnat_wifi_unregister(const struct mtk_hnat_wifi_ops *ops)
+{
+ mutex_lock(&mtk_hnat_wifi_lock);
+ if (rcu_access_pointer(mtk_hnat_wifi_ops) == ops) {
+  RCU_INIT_POINTER(mtk_hnat_wifi_ops, NULL);
+  synchronize_rcu();
+ }
+ mutex_unlock(&mtk_hnat_wifi_lock);
+}
+EXPORT_SYMBOL_GPL(mtk_hnat_wifi_unregister);
+
+bool mtk_hnat_wifi_tx(struct sk_buff *skb, u8 wdma, u8 bss, u16 wcid, u8 ring)
+{
+ const struct mtk_hnat_wifi_ops *ops;
+ bool drop = false;
+ rcu_read_lock();
+ ops = rcu_dereference(mtk_hnat_wifi_ops);
+ if (ops && ops->tx)
+  drop = ops->tx(skb, wdma, bss, wcid, ring);
+ rcu_read_unlock();
+ return drop;
+}
+EXPORT_SYMBOL_GPL(mtk_hnat_wifi_tx);
+
+void mtk_hnat_wifi_flush(const u8 *mac)
+{
+ const struct mtk_hnat_wifi_ops *ops;
+ rcu_read_lock();
+ ops = rcu_dereference(mtk_hnat_wifi_ops);
+ if (ops && ops->flush)
+  ops->flush(mac);
+ rcu_read_unlock();
+}
+EXPORT_SYMBOL_GPL(mtk_hnat_wifi_flush);

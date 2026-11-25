@@ -739,6 +739,9 @@ void ppe_stop(void) {
 	ppe_fe_dma_deinit();
 }
 
+void mt76_hnat_init(void);
+void mt76_hnat_exit(void);
+
 static int32_t ppe_init_mod(void){
 
 	hwnat_config_setting();
@@ -805,6 +808,8 @@ static int32_t ppe_init_mod(void){
 	hnat_driver_register();
 #endif /* CONFIG_HNAT_V2 */
 
+	mt76_hnat_init();
+
 	return 0;
 }
 
@@ -812,11 +817,14 @@ static void ppe_cleanup_mod(void)
 {
 	NAT_PRINT("Ralink HW NAT Module Disabled\n");
 
+	mt76_hnat_exit();
+
 	/* Set GMAC fowrards packet to CPU */
 	set_gdma_fwd(0);
 
 	/* Unregister RX/TX hook point */
 	ppe_init_hook(false);
+	synchronize_net();
 
 	/* release wakelock during hwnat */
 	hnat_wakelock_unregister();

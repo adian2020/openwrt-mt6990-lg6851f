@@ -26,6 +26,7 @@ ccflags-y += -DCONFIG_MTK_TINYSYS_MEDMCU_SUPPORT=1
 obj-$(CONFIG_MT6990_HWNAT) += hwnat.o
 
 hwnat-y := hw_nat/ra_nat.o
+hwnat-y += hw_nat/mt76_hnat.o
 hwnat-y += hw_nat/hwnat_ioctl.o
 hwnat-y += hw_nat/hnat_dbg_proc.o
 hwnat-y += hw_nat/hnat_common.o

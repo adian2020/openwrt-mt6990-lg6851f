@@ -1,0 +1,87 @@
+Subject: net: mediatek: connect MT6990 Ethernet to the vendor PPE
+
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+index 25656d0..4be471c 100644
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -38,6 +38,58 @@
+ #include "mtk_eth_soc.h"
+ #include "mtk_wed.h"
+
++#if IS_ENABLED(CONFIG_HW_NAT)
++#include <net/ra_nat.h>
++
++extern int (*ppe_hook_rx_eth)(struct sk_buff *skb);
++extern int (*ppe_hook_tx_eth)(struct sk_buff *skb, int gmac_no);
++
++static bool wired_hnat;
++module_param(wired_hnat, bool, 0444);
++MODULE_PARM_DESC(wired_hnat, "Enable MT6990 vendor PPE learning on Ethernet");
++
++static void mtk_mt6990_hnat_rx(struct mtk_eth *eth, struct sk_buff *skb, u32 rx)
++{
++	int (*hook)(struct sk_buff *);
++	u32 source = FIELD_GET(GENMASK(22, 19), rx);
++
++	if (!wired_hnat || !MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT6990) ||
++	    (source != 1 && source != 2) || skb_headroom(skb) < FOE_INFO_LEN ||
++	    FIELD_GET(MTK_RXD4_PPE_CPU_REASON, rx) != HIT_UNBIND_RATE_REACH)
++		return;
++
++	rcu_read_lock();
++	hook = READ_ONCE(ppe_hook_rx_eth);
++	if (hook) {
++		/* Preserve the observed unbound entry and ingress metadata. */
++		memset(skb->head, 0, FOE_INFO_LEN);
++		memcpy(skb->head, &rx, sizeof(rx));
++		FOE_MAGIC_TAG_HEAD(skb) = FOE_MAGIC_GE;
++		FOE_TAG_PROTECT_HEAD(skb) = TAG_PROTECT;
++		hook(skb);
++	}
++	rcu_read_unlock();
++}
++
++static bool mtk_mt6990_hnat_tx(struct mtk_mac *mac, struct sk_buff *skb)
++{
++	int (*hook)(struct sk_buff *, int);
++	bool drop = false;
++
++	if (!wired_hnat || !MTK_HAS_CAPS(mac->hw->soc->caps, MTK_SOC_MT6990) ||
++	    skb_cloned(skb) || skb_headroom(skb) < FOE_INFO_LEN ||
++	    !IS_MAGIC_TAG_PROTECT_VALID_HEAD(skb))
++		return false;
++
++	rcu_read_lock();
++	hook = READ_ONCE(ppe_hook_tx_eth);
++	if (hook)
++		drop = hook(skb, mac->id + 1) != 1;
++	rcu_read_unlock();
++	return drop;
++}
++#endif
++
+ static int mtk_msg_level = -1;
+ module_param_named(msg_level, mtk_msg_level, int, 0);
+ MODULE_PARM_DESC(msg_level, "Message level (-1=defaults,0=none,...,16=all)");
+@@ -2139,6 +2191,11 @@ static netdev_tx_t mtk_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	if (unlikely(test_bit(MTK_RESETTING, &eth->state)))
+ 		goto drop;
+
++#if IS_ENABLED(CONFIG_HW_NAT)
++	if (mtk_mt6990_hnat_tx(mac, skb))
++		goto drop;
++#endif
++
+ 	tx_num = mtk_cal_txd_req(eth, skb);
+ 	if (unlikely(atomic_read(&ring->free_count) <= tx_num)) {
+ 		netif_tx_stop_all_queues(dev);
+@@ -2741,6 +2798,9 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
+ 				skb_dst_set_noref(skb, &eth->dsa_meta[port]->dst);
+ 		}
+
++#if IS_ENABLED(CONFIG_HW_NAT)
++		mtk_mt6990_hnat_rx(eth, skb, trxd.rxd4);
++#endif
+ 		if (reason == MTK_PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED)
+ 			mtk_ppe_check_skb(eth->ppe[ppe_idx], skb, hash);
+
