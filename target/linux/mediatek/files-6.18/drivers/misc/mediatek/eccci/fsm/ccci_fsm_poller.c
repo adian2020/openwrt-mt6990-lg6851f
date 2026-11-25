@@ -4,6 +4,8 @@
  */
 
 #include "ccci_fsm_internal.h"
+#include <linux/sched.h>
+#include <linux/jiffies.h>
 #include <linux/sched/clock.h> /* LG6851F Stage5I: local_clock declaration */
 
 #define POLLING_INTERVAL_TIME 15000
@@ -71,6 +73,18 @@ static int fsm_get_no_response_assert_type(struct ccci_fsm_poller *poller_ctl)
 	CCCI_ERROR_LOG(md_id, FSM,
 	"AP polling isr & rx queue & kthread normally after polling start, MD may not response\n");
 	return MD_FORCE_ASSERT_BY_MD_NO_RESPONSE;
+}
+
+/* A periodic health monitor is idle between polls, not blocked on I/O.
+ * Keep msleep's remaining-time loop, with TASK_IDLE load accounting only.
+ * Real modem-response and recovery waits below retain their original states.
+ */
+static void fsm_poll_idle_sleep(unsigned int msecs)
+{
+	unsigned long timeout = msecs_to_jiffies(msecs);
+
+	while (timeout)
+		timeout = schedule_timeout_idle(timeout);
 }
 
 static int fsm_poll_main(void *data)
@@ -147,7 +161,7 @@ static int fsm_poll_main(void *data)
 			}
 		}
 next:
-		msleep(POLLING_INTERVAL_TIME);
+		fsm_poll_idle_sleep(POLLING_INTERVAL_TIME);
 	}
 	return 0;
 }
