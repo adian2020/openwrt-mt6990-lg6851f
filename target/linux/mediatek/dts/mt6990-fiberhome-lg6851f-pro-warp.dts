@@ -1,0 +1,77 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+// Board variant for the Pro WARP build. Keep boot and non-Wi-Fi resources
+// in the base board DTS. The two WED implementations use the same MMIO/IRQs.
+#include "mt6990-fiberhome-lg6851f.dts"
+
+&{/ethernet@15100000} {
+	/delete-property/ mediatek,wed;
+};
+
+/delete-node/ &wed0;
+/delete-node/ &wed1;
+
+#define WARP_REGS <0x0 0x15010000 0x0 0x1000>, \
+		  <0x0 0x15011000 0x0 0x1000>, \
+		  <0x0 0x15012000 0x0 0x1000>
+#define WARP_IRQS <0x0 0x1a0 0x4>, <0x0 0x1a1 0x4>, <0x0 0x1c0 0x4>
+
+/ {
+	wed@15010000 {
+		compatible = "mediatek,wed";
+		wed_num = <3>;
+		pci_slot_map = <0 1 2>;
+		reg = WARP_REGS;
+		interrupt-parent = <&{/interrupt-controller}>;
+		interrupts = WARP_IRQS;
+	};
+
+	wed2@15011000 {
+		compatible = "mediatek,wed2";
+		wed_num = <3>;
+		reg = WARP_REGS;
+		interrupt-parent = <&{/interrupt-controller}>;
+		interrupts = WARP_IRQS;
+	};
+
+	wed3@15012000 {
+		compatible = "mediatek,wed3";
+		wed_num = <3>;
+		reg = WARP_REGS;
+		interrupt-parent = <&{/interrupt-controller}>;
+		interrupts = WARP_IRQS;
+	};
+
+	wdma@15104800 {
+		compatible = "mediatek,wed-wdma";
+		reg = <0x0 0x15104800 0x0 0x400>, <0x0 0x15104c00 0x0 0x400>,
+		      <0x0 0x15105000 0x0 0x400>;
+	};
+
+	ap2woccif@151a5000 {
+		compatible = "mediatek,ap2woccif";
+		reg = <0x0 0x151a5000 0x0 0x1000>, <0x0 0x152a5000 0x0 0x1000>,
+		      <0x0 0x153a5000 0x0 0x1000>;
+		interrupt-parent = <&{/interrupt-controller}>;
+		interrupts = <0x0 0x1a6 0x4>, <0x0 0x1a7 0x4>, <0x0 0x1c2 0x4>;
+	};
+
+	wocpu_ilm@151e0000 {
+		compatible = "mediatek,wocpu_ilm";
+		reg = <0x0 0x151e0000 0x0 0x8000>, <0x0 0x152e0000 0x0 0x8000>,
+		      <0x0 0x153e0000 0x0 0x8000>;
+	};
+
+	wocpu_dlm@151e8000 {
+		compatible = "mediatek,wocpu_dlm";
+		reg = <0x0 0x151e8000 0x0 0x2000>, <0x0 0x152e8000 0x0 0x2000>,
+		      <0x0 0x153e8000 0x0 0x2000>;
+		resets = <&{/ethsys@15000000/reset-controller} 0>;
+		reset-names = "wocpu_rst";
+	};
+
+	wocpu_boot@15194000 {
+		compatible = "mediatek,wocpu_boot";
+		reg = <0x0 0x15194000 0x0 0x1000>, <0x0 0x15294000 0x0 0x1000>,
+		      <0x0 0x15394000 0x0 0x1000>;
+	};
+};

@@ -69,6 +69,25 @@
 
 参考仓库的 WO 文件编号与装载地址不同。`6990_wo_0.bin` 内地址属于第三路，`6990_wo_2.bin` 的地址才匹配 PCIe 域 0，域 1 对应 `6990_wo_1.bin`。现有上游驱动对两路 WO 使用同一复位寄存器的不同位，MT6990 的厂商 WARP 使用各自的复位寄存器。两路 WO 的内存映射、CCIF 以及复位需要一起验证。当前实验源码的 WED 仍使用 TX 路径，同 BSSID 的硬件转发和厂商 WED SER 周期任务仍待接入。[WO 与复位参考](https://github.com/adian2020/LG6851F-Pro/blob/0e1518ed632388e814032e0831560d22d9488981/vendor-source/wifi/warp_driver/warp/regs/reg_v2/warp_mt6990.c)
 
+## 厂商无线栈的独立构建
+
+`scripts/lg6851f-build-pro-wireless.py` 固定使用 Pro 源码 `0e1518ed632388e814032e0831560d22d9488981`，按顺序构建 `wifi_md_coex`、`mt_wifi_cmn`、`mtk_warp`、`mt_wifi`、`mtk_hwifi`。`hwifi_main.c` 在读取调试声明前先包含提供厂商类型的 `rt_config.h`，解决原顺序在目标头文件下报 `unknown type name 'UINT32'` 的问题。模块构建使用本次目标内核、mac80211 和 HNAT 的符号表。`--objects` 可在内核和头文件已准备、尚未生成符号表时编译并链接 ARM64 对象。每部分的命令和输出单独留在工作目录。入口只产出独立 DTB 和构建结果，现有设备镜像仍选用 `mt76`。[Pro 构建参数](https://github.com/adian2020/LG6851F-Pro/blob/0e1518ed632388e814032e0831560d22d9488981/scripts/vendor-build-part.py)
+
+```sh
+python3 scripts/lg6851f-build-pro-wireless.py \
+  --vendor-repo "$PRO_REPO" --kernel "$KERNEL_DIR" \
+  --staging "$TARGET_STAGING_DIR" --cross-compile "$CROSS_COMPILE" \
+  --work-dir "$OUTPUT_DIR" --objects
+```
+
+`CROSS_COMPILE` 使用目标 ARM64 工具链的前缀并带末尾 `-`。`OUTPUT_DIR` 使用新建或空目录。完成目标内核、mac80211 和 HNAT 构建后，在另一个工作目录去掉 `--objects` 执行模块符号校验和生成 `.ko`。
+
+候选 DTS 从本分支的板级设备树继承启动和其他外设资源，移除以太网对上游 WED 的引用和两个上游 WED 节点，加入 Pro 的三路 WED、WDMA、AP↔WO CCIF 及 WO 的 ILM、DLM、启动寄存器。编译后的 DTB 回读核对了这八个节点与 Pro 一致，其余基线属性和 phandle 一致。从 ARM64 `mtk_warp.o` 提取的三个内置固件，各自的 ILM/EMI 载荷为 22048/87264 字节，分别落在候选 DTB 的三对地址范围内。该方案使用 WARP 的嵌入固件和复位流程，避免把仓库里的外置 WO 文件按尾号当作 PCI 域编号。[Pro 板级设备树](https://github.com/adian2020/LG6851F-Pro/blob/0e1518ed632388e814032e0831560d22d9488981/target/linux/mediatek/dts/mt6990-fiberhome-lg6851f.dts)
+
+五个部件已使用目标 Linux 6.18.44 和无线 backports 6.18.26 编译并链接为 ARM64 对象。当前验证目录缺少完整目标内核和外部依赖的符号表，完整模块 ABI 校验尚未完成。
+
+整机接入仍需把当前构建生成的模块与原生 hostapd、`vendor618` 运行层、校准入口及固件成套装配，并确认两个 Wi-Fi PCIe 功能只由厂商驱动绑定。WED RX 需要观察 WO 启动、接收环和每站点 RX 计数。Pro 的同 BSSID 软件直转根据站点隔离与 VLAN 检查选取目标 WCID，进入 `RTMPSendPackets()`。同 BSSID 硬件验收需要同时观察两个客户端的实际流和对应硬件命中，并复测隔离、VLAN 以及重连后的流项失效。[Pro AP 转发](https://github.com/adian2020/LG6851F-Pro/blob/0e1518ed632388e814032e0831560d22d9488981/vendor-source/wifi/mt_wifi/ap/ap_data.c#L4365)
+
 ## Pro 蜂窝、状态看板和主题
 
 - 移植固定到 `adian2020/LG6851F-Pro` 的 `main` 提交 `0e1518ed632388e814032e0831560d22d9488981`。`package/vendor` 的 494 个 Git 文件、可执行位和符号链接逐项一致。包管理准备阶段从已跟踪的文件补入原配方引用的五项安装材料，生成文件不计入源码快照。

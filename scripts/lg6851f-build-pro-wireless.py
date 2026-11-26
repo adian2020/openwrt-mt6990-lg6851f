@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""Build the pinned LG6851F-Pro wireless stack against this target's kernel."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tarfile
+
+
+PRO_REVISION = "0e1518ed632388e814032e0831560d22d9488981"
+PARTS = {
+    "coex": ("wifi_md_coex", "wifi_md_coex"),
+    "cmn": ("mt_wifi_cmn", "mt_wifi_cmn"),
+    "warp": ("wifi/warp_driver/warp", "mtk_warp"),
+    "wifi": ("wifi/mt_wifi_ap", "mt_wifi"),
+    "hwifi": ("wifi/wlan_hwifi", "mtk_hwifi"),
+}
+BACKPORT_HEADERS = (
+    "mac80211-backport", "mac80211-backport/uapi", "mac80211", "mac80211/uapi",
+)
+DTS = Path(__file__).resolve().parents[1] / "target/linux/mediatek/dts/mt6990-fiberhome-lg6851f-pro-warp.dts"
+
+
+def require_file(path):
+    if not path.is_file() or not path.stat().st_size:
+        raise ValueError(f"缺少有效构建输入 {path}")
+
+
+def extract_source(repository, work):
+    with subprocess.Popen(
+        ["git", "-C", str(repository), "archive", PRO_REVISION,
+         "vendor-source", "vendor-include", "vendor-config.json"],
+        stdout=subprocess.PIPE,
+    ) as archive:
+        with tarfile.open(fileobj=archive.stdout, mode="r|") as source:
+            source.extractall(work, filter="data")
+        if archive.wait():
+            raise ValueError(f"无法导出 Pro 源提交 {PRO_REVISION}")
+
+
+def prepare_wifi_source(work):
+    path = work / "vendor-source/wifi/mt_wifi/hw_ctrl/hwifi_main.c"
+    source = path.read_bytes()
+    before = b'#include "debug.h"\n#include "rt_config.h"'
+    after = b'#include "rt_config.h"\n#include "debug.h"'
+    if source.count(before) != 1:
+        raise ValueError(f"厂商 Wi-Fi 头文件顺序与固定源码不符 {path}")
+    # debug.h uses vendor typedefs declared through rt_config.h.
+    path.write_bytes(source.replace(before, after))
+
+
+def build_dtb(args, environment):
+    preprocessed = args.work_dir / "pro-warp.pp.dts"
+    dtb = args.work_dir / "pro-warp.dtb"
+    log_path = args.work_dir / "dtb.log"
+    with log_path.open("w", encoding="utf-8") as log:
+        subprocess.run(
+            [args.cross_compile + "gcc", "-E", "-nostdinc", "-undef", "-D__DTS__",
+             "-x", "assembler-with-cpp", "-I", args.kernel / "include", DTS, "-o", preprocessed],
+            env=environment, stderr=log, check=True,
+        )
+        subprocess.run(
+            [args.kernel / "scripts/dtc/dtc", "-q", "-I", "dts", "-O", "dtb", "-o", dtb, preprocessed],
+            env=environment, stderr=log, check=True,
+        )
+    require_file(dtb)
+    print(dtb, flush=True)
+
+
+def build_part(args, part, sources, includes, config, environment):
+    path = sources[part]
+    module = PARTS[part][1]
+    flags = [f"-I{args.staging / 'usr/include' / header}" for header in BACKPORT_HEADERS]
+    flags += ["-DBACKPORT_NOSTDINC", "-include", "backport/backport.h"]
+    settings = {}
+    symvers = args.kernel.parent / "symvers"
+    symbols = [symvers / "mac80211.symvers"]
+
+    if part == "coex":
+        flags = [f"-I{args.kernel / 'drivers/misc/mediatek/include'}",
+                 "-DCOEX_DIRECT_PATH", "-DCONFIG_WIFI_MD_COEX_SUPPORT=1"]
+        symbols = []
+        settings = {"CONFIG_SUPPORT_OPENWRT": "y", "CONFIG_COEXISTENCE_SUPPORT": "m"}
+    elif part == "cmn":
+        flags += ["-DMT_WIFI_COMMON_SUPPORT", "-DRT_CFG80211_SUPPORT", f"-I{path}"]
+    elif part == "warp":
+        flags = []
+        symbols = []
+        settings = {
+            "CONFIG_WARP_VERSION": "2", "CONFIG_WARP_CHIPSET": "mt6990",
+            "CONFIG_WARP_WO_EMBEDDED_LOAD": "y", "CONFIG_WED_HW_RRO_SUPPORT": "y",
+            "CONFIG_WARP_DBG_SUPPORT": "y", "CONFIG_ARCH_MEDIATEK": "y",
+            "PKG_BUILD_DIR": f"{path}/",
+        }
+    elif part == "wifi":
+        flags += ["-DMT_WIFI_COMMON_SUPPORT", f"-I{path.parent}", f"-I{path.parent / 'include'}",
+                  f"-I{includes / 'mtk_nl80211_inc'}", "-include", str(includes / "vendor618_wext.h")]
+        settings = {f"CONFIG_{key}": value for key, value in config.items()}
+        settings.update(CFG_CFG80211_VERSION="6.18.0", LINUX_DIR=str(args.kernel.parent))
+        symbols += [sources[name] / "Module.symvers" for name in ("cmn", "coex")]
+        symbols.append(symvers / "mt6990-hwnat.symvers")
+    else:  # hwifi
+        flags.append("-DMT_WIFI_COMMON_SUPPORT")
+        settings = {
+            "CONFIG_SUPPORT_OPENWRT": "y", "CONFIG_HWIFI_HIF_WED": "m",
+            "CONFIG_HWIFI_HIF_NPU": "n", "CONFIG_HWIFI_MD_COEX_SUPPORT": "y",
+        }
+        for chip in ("MT7915", "MT7916", "BELLWETHER", "MT7992", "MT799A", "MT7993", "MT799B"):
+            settings[f"CONFIG_HWIFI_CHIP_{chip}"] = "n"
+            settings[f"CONFIG_HWIFI_CHIP_{chip}_DBG"] = "n"
+        symbols += [sources[name] / "Module.symvers" for name in ("cmn", "wifi", "warp", "coex")]
+
+    if not args.objects:
+        for table in symbols:
+            require_file(table)
+    target = f"{module}.o" if args.objects else "modules"
+    command = ["make", "-C", str(args.kernel), f"-j{args.jobs}", "ARCH=arm64",
+               f"CROSS_COMPILE={args.cross_compile}", f"M={path}", "CONFIG_WERROR=n"]
+    command += [f"{key}={value}" for key, value in settings.items()]
+    command += [f"KCFLAGS=-Wno-error -include {includes / 'vendor618_compat.h'}",
+                "NOSTDINC_FLAGS=" + " ".join(flags), target]
+    if not args.objects:
+        command.insert(-1, "KBUILD_EXTRA_SYMBOLS=" + " ".join(map(str, symbols)))
+
+    log_path = args.work_dir / f"{part}.log"
+    print(f"{part} → {log_path}", flush=True)
+    with log_path.open("w", encoding="utf-8") as log:
+        log.write(json.dumps(command, ensure_ascii=False) + "\n")
+        log.flush()
+        result = subprocess.run(command, env=environment, stdout=log, stderr=subprocess.STDOUT)
+    if result.returncode:
+        raise ValueError(f"{part} 构建失败，退出码 {result.returncode}，日志 {log_path}")
+    suffix = "o" if args.objects else "ko"
+    output = path / f"{module}.{suffix}"
+    require_file(output)
+    header = subprocess.check_output(["readelf", "-h", output], env=environment, text=True)
+    if "AArch64" not in header:
+        raise ValueError(f"产物架构不匹配 {output}")
+    print(output, flush=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--vendor-repo", required=True, type=Path, help="local LG6851F-Pro Git repository")
+    parser.add_argument("--kernel", required=True, type=Path, help="prepared target Linux 6.18.44 directory")
+    parser.add_argument("--staging", required=True, type=Path, help="matching OpenWrt target staging directory")
+    parser.add_argument("--cross-compile", required=True, help="ARM64 cross-compiler prefix, including trailing -")
+    parser.add_argument("--work-dir", required=True, type=Path, help="new or empty output directory")
+    parser.add_argument("--objects", action="store_true", help="compile linked objects without module ABI checks")
+    parser.add_argument("-j", "--jobs", type=int, default=4)
+    args = parser.parse_args()
+    args.kernel = args.kernel.resolve()
+    args.staging = args.staging.resolve()
+    args.work_dir = args.work_dir.resolve()
+
+    try:
+        if args.jobs < 1:
+            raise ValueError("编译并行数须为正整数")
+        if not shutil.which(args.cross_compile + "gcc") or not shutil.which("readelf"):
+            raise ValueError("缺少 ARM64 GCC 或 readelf")
+        require_file(args.kernel / "include/config/kernel.release")
+        release = (args.kernel / "include/config/kernel.release").read_text().strip()
+        if release.split("-", 1)[0] != "6.18.44":
+            raise ValueError(f"内核版本应为 6.18.44，实际为 {release}")
+        require_file(args.staging / "usr/include/mac80211-backport/backport/backport.h")
+        if not args.objects:
+            for table in (args.kernel / "Module.symvers", args.kernel.parent / "symvers/mac80211.symvers",
+                          args.kernel.parent / "symvers/mt6990-hwnat.symvers"):
+                require_file(table)
+        args.work_dir.mkdir(parents=True, exist_ok=True)
+        if next(args.work_dir.iterdir(), None) is not None:
+            raise ValueError(f"输出目录须为空 {args.work_dir}")
+        environment = dict(os.environ, STAGING_DIR=str(args.staging), LC_ALL="C")
+        build_dtb(args, environment)
+        extract_source(args.vendor_repo, args.work_dir)
+        prepare_wifi_source(args.work_dir)
+        config = json.loads((args.work_dir / "vendor-config.json").read_text())
+        sources = {part: args.work_dir / "vendor-source" / path for part, (path, _) in PARTS.items()}
+        includes = args.work_dir / "vendor-include"
+        for part in PARTS:
+            build_part(args, part, sources, includes, config, environment)
+    except (OSError, ValueError, tarfile.TarError, subprocess.CalledProcessError) as error:
+        parser.exit(1, f"{error}\n")
+
+
+if __name__ == "__main__":
+    main()
