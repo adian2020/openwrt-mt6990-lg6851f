@@ -1,7 +1,0 @@
-config forward 'main'
-	option enabled '0'
-	option interval '60'
-	option webhook '0'
-	option smtp '0'
-	option sms '0'
-	option revision 'initial'

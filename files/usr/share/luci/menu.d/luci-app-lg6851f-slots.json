@@ -1,0 +1,15 @@
+{
+  "admin/system/boot_slots": {
+    "title": "启动槽位",
+    "order": 65,
+    "action": {
+      "type": "view",
+      "path": "system/lg6851f-slots"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-lg6851f-slots"
+      ]
+    }
+  }
+}

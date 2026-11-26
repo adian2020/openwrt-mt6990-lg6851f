@@ -1,12 +1,11 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mihomo-openclash-core
-PKG_VERSION:=20261114_alpha0
-PKG_UPSTREAM_VERSION:=alpha-smart-c4df732
-PKG_RELEASE:=4
-PKG_SOURCE:=mihomo-linux-arm64-$(PKG_UPSTREAM_VERSION).gz
-PKG_SOURCE_URL:=https://github.com/vernesong/mihomo/releases/download/Prerelease-Alpha/
-PKG_HASH:=73c38ba2da94823f818be836c51fd1f65bf9718dc7745b05d608bc3ccc73c70a
+PKG_VERSION:=1.19.29
+PKG_RELEASE:=2
+PKG_SOURCE:=mihomo-linux-arm64-v$(PKG_VERSION).gz
+PKG_SOURCE_URL:=https://github.com/MetaCubeX/mihomo/releases/download/v$(PKG_VERSION)/
+PKG_HASH:=9a868b5e4e0ad91d9d71e1b41b0cfce78aaba44360c30df74a723f8e3926a86c
 PKG_UNPACK:=true
 
 PKG_MAINTAINER:=MT6990 LG6851F maintainers
@@ -18,8 +17,8 @@ define Package/mihomo-openclash-core
   SECTION:=net
   CATEGORY:=Network
   SUBMENU:=Web Servers/Proxies
-  TITLE:=Pinned Smart alpha core for MT6990 OpenClash
-  URL:=https://github.com/vernesong/mihomo
+  TITLE:=Pinned Mihomo core for MT6990 OpenClash
+  URL:=https://github.com/MetaCubeX/mihomo
   DEPENDS:=+libc +mt6990-userdata-storage
 endef
 
@@ -37,8 +36,7 @@ define Build/Compile
 endef
 
 define Package/mihomo-openclash-core/install
-	$(INSTALL_DIR) $(1)/usr/lib/mihomo-openclash $(1)/etc/openclash/core $(1)/etc/uci-defaults
-	$(INSTALL_BIN) ./files/etc/uci-defaults/99-lg6851f-smart-core $(1)/etc/uci-defaults/
+	$(INSTALL_DIR) $(1)/usr/lib/mihomo-openclash $(1)/etc/openclash/core
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/mihomo.gz $(1)/usr/lib/mihomo-openclash/mihomo.gz
 	$(INSTALL_BIN) ./files/clash_meta $(1)/etc/openclash/core/clash_meta
 endef

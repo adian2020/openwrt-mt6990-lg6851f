@@ -1,0 +1,130 @@
+#!/bin/sh
+
+# 首次管理 Wi-Fi 只等待真实 PHY，不等待蜂窝注册或拨号。
+# 正常重启由 netifd 启动，已完成首次配置后尊重用户的开关。
+
+TAG="lg6851f-wifi"
+WIFI_DETECT_TIMEOUT=90
+PROVISIONED=/etc/lg6851f-wifi-provisioned
+lg6851f_bootmark() { :; }
+[ ! -r /lib/functions/lg6851f-boot-trace.sh ] || . /lib/functions/lg6851f-boot-trace.sh
+
+log() {
+	local stamp rest
+	read -r stamp rest < /proc/uptime
+	lg6851f_bootmark wifi "$*"
+	logger -t "$TAG" "[uptime ${stamp}s] $*"
+	echo "$TAG: [uptime ${stamp}s] $*"
+}
+
+wireless_sections() {
+	uci -q show wireless 2>/dev/null |
+		sed -n "s/^wireless\.\([^.=]*\)=wifi-device$/\1/p"
+}
+
+wireless_interfaces() {
+	uci -q show wireless 2>/dev/null |
+		sed -n "s/^wireless\.\([^.=]*\)=wifi-iface$/\1/p"
+}
+
+persistent_wifi_is_enabled() {
+	local section radio
+
+	# On an established installation netifd already owns normal wireless
+	# startup.  Do not tear down and recreate preserved APs merely to impose
+	# the first-boot modem ordering; that duplicate reload races hostapd and
+	# has produced transient -EMFILE/control-socket errors.
+	for section in $(wireless_interfaces); do
+		[ "$(uci -q get "wireless.$section.mode")" = "ap" ] || continue
+		[ "$(uci -q get "wireless.$section.disabled")" = "1" ] && continue
+		radio="$(uci -q get "wireless.$section.device")"
+		[ -n "$radio" ] || continue
+		[ "$(uci -q get "wireless.$radio.disabled")" = "1" ] && continue
+		return 0
+	done
+
+	return 1
+}
+
+ensure_wireless_config() {
+	local elapsed=0 config_rc
+	lg6851f_bootmark wifi-phy-wait-begin
+
+	while [ "$elapsed" -lt "$WIFI_DETECT_TIMEOUT" ]; do
+		[ -d /sys/class/ieee80211/phy0 ] && break
+		sleep 1
+		elapsed=$((elapsed + 1))
+	done
+
+	[ -d /sys/class/ieee80211/phy0 ] || {
+		log "wireless PHY did not appear within ${WIFI_DETECT_TIMEOUT}s"
+		return 1
+	}
+	lg6851f_bootmark wifi-phy-ready
+
+	if [ -z "$(wireless_sections)" ]; then
+		log "generating first-boot OpenWrt wireless configuration"
+		lg6851f_bootmark wifi-config-begin
+		wifi config
+		config_rc=$?
+		lg6851f_bootmark wifi-config-end "rc=$config_rc"
+	fi
+
+	[ -n "$(wireless_sections)" ]
+}
+
+enable_management_wifi() {
+	local section radio_count=0 ap_count=0 changed=0
+
+	for section in $(wireless_sections); do
+		uci -q set "wireless.$section.disabled=0" || return 1
+		uci -q set "wireless.$section.country=CN" || return 1
+		changed=1
+		radio_count=$((radio_count + 1))
+	done
+
+	for section in $(wireless_interfaces); do
+		[ "$(uci -q get "wireless.$section.mode")" = "ap" ] || continue
+		uci -q set "wireless.$section.disabled=0" || return 1
+		changed=1
+		ap_count=$((ap_count + 1))
+	done
+
+	[ "$changed" = 1 ] && [ "$ap_count" -gt 0 ] || return 1
+	uci -q commit wireless || return 1
+
+	# One `wifi up` performs the required network reload and brings all enabled
+	# radios up.  Calling it once per radio is not selective: every invocation
+	# reloads the entire network and tears down/recreates the first AP again.
+	lg6851f_bootmark wifi-up-request-begin
+	wifi up || { lg6851f_bootmark wifi-up-request-end rc=1; return 1; }
+	lg6851f_bootmark wifi-up-request-end rc=0
+	log "Wi-Fi enabled automatically on $radio_count radio(s), $ap_count AP(s)"
+}
+
+main() {
+ log "management Wi-Fi helper started"
+ ensure_wireless_config || return 1
+ # Older firmware has no provisioning marker. A staged, explicitly kept
+ # wireless configuration must retain even an all-disabled user choice.
+ if [ ! -e "$PROVISIONED" ] && [ -s /tmp/lg6851f-sysupgrade.tgz ] &&
+    tar -tzf /tmp/lg6851f-sysupgrade.tgz 2>/dev/null | grep -Eq '^(\./)?etc/config/wireless$'; then
+  : > "$PROVISIONED"
+  log "wireless configuration restored from sysupgrade; preserving saved Wi-Fi switches"
+  return 0
+ fi
+ if [ -e "$PROVISIONED" ]; then
+  log "Wi-Fi already provisioned; preserving user configuration and netifd startup"
+  return 0
+ fi
+ if persistent_wifi_is_enabled; then
+  : > "$PROVISIONED"
+  log "preserved Wi-Fi enabled; leaving startup to netifd"
+  return 0
+ fi
+ log "wireless PHY ready; enabling first-boot management Wi-Fi without waiting for cellular data"
+ enable_management_wifi || return 1
+ : > "$PROVISIONED"
+}
+
+main "$@"

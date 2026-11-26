@@ -66,11 +66,8 @@ if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_di
 	export UCODE UCODE_LIBRARY
 	python3 "$repo_dir/scripts/tests/test_lg6851f_host_digest.py"
 	"$repo_dir/scripts/lg6851f-build-host-digest.sh"
-	python3 "$repo_dir/scripts/tests/test_lg6851f_dashboard.py"
 	python3 "$repo_dir/scripts/tests/test_lg6851f_qos_probe.py"
-	python3 "$repo_dir/scripts/tests/test_lg6851f_sms_forward.py"
-	python3 "$repo_dir/scripts/tests/test_lg6851f_sms_pool.py"
-	python3 "$repo_dir/scripts/tests/test_lg6851f_traffic.py"
+	python3 "$repo_dir/scripts/lg6851f-check-cpe-package.py"
 fi
 
 make -C "$repo_dir" ${cache_option:+"$cache_option"} "$@"
@@ -87,7 +84,7 @@ if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_di
 		printf 'ERROR: LG6851F image is missing /usr/sbin/fsck.f2fs; refusing to sign.\n' >&2
 		exit 1
 	}
-	for program in usr/share/luci/menu.d/luci-app-5gmodem.json usr/share/rpcd/acl.d/luci-app-5gmodem.json usr/share/rpcd/ucode/luci.modem5g usr/bin/lg6851f-network-led etc/init.d/lg6851f-network-led usr/libexec/sftp-server etc/openclash/core/clash_meta lib/functions/lg6851f-radio.sh lib/preinit/79_lg6851f_restore_sysupgrade etc/mt6990-firmware-id www/luci-static/aurora/main.css usr/share/luci/menu.d/luci-app-aurora.json; do
+	for program in usr/share/luci/menu.d/luci-app-5gmodem.json usr/share/rpcd/acl.d/luci-app-5gmodem.json usr/share/rpcd/ucode/luci.modem5g usr/bin/lg6851f-network-led etc/init.d/lg6851f-network-led usr/libexec/sftp-server etc/openclash/core/clash_meta lib/netifd/proto/ql_datacall.sh lib/preinit/79_lg6851f_restore_sysupgrade etc/mt6990-firmware-id www/luci-static/aurora/main.css usr/share/luci/menu.d/luci-app-fiberhome.json; do
 		[ -s "$rootfs_dir/$program" ] || {
 			printf 'ERROR: required modem/LED/SFTP/proxy file missing: %s\n' "$program" >&2
 			exit 1

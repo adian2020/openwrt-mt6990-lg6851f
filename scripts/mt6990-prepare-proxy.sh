@@ -3,14 +3,14 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-# Keep Nikki available as APKs without preinstalling its service. Meta is
-# its installable provider; OpenClash uses the separate bundled Meta core.
-test -f feeds/nikki/mihomo-meta/Makefile
-test -f feeds/nikki/nikki/Makefile
+# The Pro tree contains the four optional Nikki recipes. Do not install feed
+# variants with the same package names over the imported copies.
+for package in nikki luci-app-nikki luci-i18n-nikki-zh-cn mihomo-meta; do
+    test -f "package/vendor/$package/Makefile"
+    rm -f "package/feeds/nikki/$package"
+done
 rm -rf feeds/nikki/mihomo-alpha
 rm -f package/feeds/nikki/mihomo-alpha
-sed -i 's/+mihomo\([[:space:]]\|$\)/+mihomo-meta\1/g; s/+mihomo-alpha\([[:space:]]\|$\)/+mihomo-meta\1/g' feeds/nikki/nikki/Makefile
-grep -q '+mihomo-meta' feeds/nikki/nikki/Makefile
 
 # These unselected feed recipes have package-local Kconfig option cycles
 # with this older buildroot. Refuse to silently drop an explicitly enabled app.

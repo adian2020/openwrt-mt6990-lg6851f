@@ -118,10 +118,5 @@ o.write = function()
 	HTTP.redirect(DISP.build_url("admin", "services", "openclash", "config"))
 end
 
-local render_children = rule_form.render_children
-rule_form.render_children = function(self, ...)
-	fs.render_page_head()
-	render_children(self, ...)
-end
-
+rule_form:append(Template("openclash/toolbar_show"))
 return rule_form

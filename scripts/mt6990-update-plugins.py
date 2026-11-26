@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Resolve latest upstream plugins once per build, preserving local adaptations."""
 import datetime
-import gzip
 import hashlib
 import json
 import pathlib
@@ -79,7 +78,9 @@ def prepare_package(row, latest, folder):
     upstream, digest = archive(repo, latest, folder,scopes)
     base /= row.get('path', '')
     upstream /= row.get('path', '')
-    local = ROOT / 'package/vendor' / row['package']
+    local = ROOT / 'package/lg6851f' / row['package']
+    if not local.is_dir():
+        local = ROOT / 'package/vendor' / row['package']
     # All merges are checked before writing any package files.
     changes = []
     for component in row['components']:
@@ -171,27 +172,15 @@ def main():
                 latest = api(f'repos/{row["repo"]}/commits/{release["tag_name"]}')['sha']
             records.append(prepare_package(row, latest, folder))
             REGISTRY.write_text(json.dumps(rows, indent=2) + "\n")
-        release = api('repos/vernesong/mihomo/releases/tags/Prerelease-Alpha')
-        asset,version,upstream=smart_asset(release)
-        name=asset['name']
-        expected=asset['digest']
-        payload = folder / name
-        with payload.open('wb') as stream:
-            subprocess.run(['gh', 'api', f'repos/vernesong/mihomo/releases/assets/{asset["id"]}', '-H', 'Accept: application/octet-stream'], stdout=stream, check=True)
-        digest = hashlib.sha256(payload.read_bytes()).hexdigest()
-        if expected != 'sha256:' + digest:
-            raise RuntimeError('Mihomo asset SHA256 mismatch')
-        binary=gzip.decompress(payload.read_bytes())
-        if binary[:6]!=b'\x7fELF\x02\x01' or int.from_bytes(binary[18:20],'little')!=183 or upstream.encode() not in binary:
-            raise RuntimeError('Smart core is not the expected ARM64 ELF/version')
-        path = ROOT / 'package/vendor/mihomo-openclash-core/Makefile'
-        text = re.sub(r'^PKG_VERSION:=.*$', 'PKG_VERSION:=' + version, path.read_text(), flags=re.M)
-        text = re.sub(r'^PKG_UPSTREAM_VERSION:=.*$', 'PKG_UPSTREAM_VERSION:=' + upstream, text, flags=re.M)
-        text = re.sub(r'^PKG_HASH:=.*$', 'PKG_HASH:=' + digest, text, flags=re.M)
-        path.write_text(text)
-        (ROOT / 'dl').mkdir(exist_ok=True)
-        shutil.copyfile(payload, ROOT / 'dl' / name)
-        records.append({'package': 'mihomo-openclash-core', 'repo':'vernesong/mihomo','channel':'Prerelease-Alpha/Smart','version': version, 'asset':name,'sha256': digest})
+    # The Pro port keeps these vendor package recipes at the imported revision.
+    for package in ('luci-app-openclash', 'mihomo-openclash-core'):
+        recipe = (ROOT/'package/vendor'/package/'Makefile').read_text()
+        version = re.search(r'^PKG_VERSION:=(.+)$', recipe, re.M)
+        if not version:
+            raise RuntimeError(f'{package}: missing pinned version')
+        records.append({'package': package, 'repo': 'adian2020/LG6851F-Pro',
+                        'commit': '0e1518ed632388e814032e0831560d22d9488981',
+                        'version': version[1]})
     configured=set(re.findall(r'^src-(?:git|link)\s+(\S+)',(ROOT/'feeds.conf.default').read_text(),re.M))
     for feed in sorted((ROOT / 'feeds').iterdir()):
         if feed.name in configured and (feed / '.git').exists():

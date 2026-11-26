@@ -12,9 +12,8 @@ repo = pathlib.Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--rootfs', type=pathlib.Path, help='核验已经组装的固件根目录；省略则检查源码')
 args = parser.parse_args()
-package = repo/'package/vendor/luci-app-5gmodem'
-root = args.rootfs or package/'root'
-assets = root/'www/luci-static/resources' if args.rootfs else package/'htdocs/luci-static/resources'
+root = args.rootfs or repo/'files'
+assets = root/'www/luci-static/resources'
 chain = args.rootfs or repo/'package/vendor/lg6851f-modem-chain-only/files'
 errors = []
 
@@ -40,67 +39,102 @@ def required(path, executable=False):
     return True
 
 
-menu_path = root/'usr/share/luci/menu.d/luci-app-5gmodem.json'
-acl_path = root/'usr/share/rpcd/acl.d/luci-app-5gmodem.json'
-rpc_path = root/'usr/share/rpcd/ucode/luci.modem5g'
-for path in [menu_path, acl_path, rpc_path]:
-    required(path)
-if errors:
-    raise SystemExit('\n'.join(errors))
-menu = json.loads(menu_path.read_text())
-acl = json.loads(acl_path.read_text())['luci-app-5gmodem']
-fan_assets = assets if args.rootfs else repo/'package/vendor/luci-app-pwmfan/htdocs/luci-static/resources'
-required(fan_assets/'pwmfan/visual_v1.js')
-fan_read = acl['read']['ubus'].get('luci.pwmfan', [])
-if fan_read != ['get_status'] or 'luci.pwmfan' in acl['write']['ubus']:
-    errors.append('看板风扇权限必须只允许get_status读取')
-rpc_source = rpc_path.read_text()
-methods = set(re.findall(r'^\s+(\w+):\s*\{\s*(?:call|args):', rpc_source, re.M))
-permitted = set(acl['read']['ubus']['luci.modem5g'] + acl['write']['ubus']['luci.modem5g'])
-slot_acl_path=root/'usr/share/rpcd/acl.d/luci-app-lg6851f-slots.json'
-if required(slot_acl_path):
-    slot_acl=json.loads(slot_acl_path.read_text())['luci-app-lg6851f-slots']
-    if slot_acl['read']!={'ubus':{'luci.modem5g':['get_boot_slots']}} or slot_acl['write']!={'ubus':{'luci.modem5g':['select_boot_slot'],'system':['reboot']}}:
-        errors.append('启动槽位读写权限范围不符')
-    permitted.update(slot_acl['read']['ubus'].get('luci.modem5g',[])+slot_acl['write']['ubus'].get('luci.modem5g',[]))
-for method in permitted:
-    if method not in methods: errors.append('ACL引用了缺失RPC方法：'+method)
-for removed in ['admin/modem5g/cpu','admin/modem5g/sim']:
-    if removed in menu: errors.append('已移除的页面重新出现在菜单：'+removed)
-for name, entry in menu.items():
-    action = entry.get('action', {})
-    if action.get('type') == 'view':
-        required(assets/'view'/(action['path']+'.js'))
-for path in assets.glob('**/*.js'):
+menu_files = [
+    'luci-app-5gmodem.json',
+    'luci-app-fiberhome.json',
+    'luci-app-lg6851f-slots.json',
+]
+menus = {}
+for name in menu_files:
+    path = root/'usr/share/luci/menu.d'/name
+    if required(path):
+        menus.update(json.loads(path.read_text()))
+expected_views = {
+    'admin/modem5g/overview': 'modem5g/status_cells_ca_v20261021_27',
+    'admin/modem5g/sms': 'modem5g/sms_v20261015_3',
+    'admin/modem5g/traffic': 'modem5g/traffic_v20261016_1',
+    'admin/modem5g/network': 'modem5g/network_v20261026_71',
+    'admin/modem5g/terminal': 'modem5g/terminal_v20261016_1',
+    'admin/home': 'fiberhome/home_stable_v20261026_71',
+    'admin/system/boot_slots': 'system/lg6851f-slots',
+}
+acl_files = [
+    'luci-app-5gmodem.json', 'luci-app-fiberhome.json',
+    'luci-app-lg6851f-cellular.json', 'luci-lg6851f-wireless-shared.json',
+    'luci-app-lg6851f-slots.json',
+]
+acls = {}
+for name in acl_files:
+    path = root/'usr/share/rpcd/acl.d'/name
+    if required(path):
+        acls.update(json.loads(path.read_text()))
+
+slot_acl = acls.get('luci-app-lg6851f-slots', {})
+if slot_acl.get('read') != {'ubus': {'luci.lg6851fslots': ['get_boot_slots']}} or slot_acl.get('write') != {
+        'ubus': {'luci.lg6851fslots': ['select_boot_slot'], 'system': ['reboot']}}:
+    errors.append('启动槽位读写权限范围不符')
+objects = {}
+for acl in acls.values():
+    for rule in ('read', 'write'):
+        for name, methods in acl.get(rule, {}).get('ubus', {}).items():
+            if name not in {'uci', 'system', 'network.interface', 'iwinfo'}:
+                objects.setdefault(name, set()).update(methods)
+for name, methods in objects.items():
+    path = root/'usr/share/rpcd/ucode'/name
+    if required(path):
+        program = path.read_text()
+        for method in methods - {'*'}:
+            if not re.search(r'\b' + re.escape(method) + r'\s*:', program):
+                errors.append(f'ACL 引用了缺失的 RPC：{name}.{method}')
+
+checked = set()
+def check_js(asset):
+    if asset in checked:
+        return
+    checked.add(asset)
+    path = assets/asset
+    if not required(path):
+        return
     source = path.read_text()
-    for module in re.findall(r"['\"]require (modem5g\.[\w]+)(?: as \w+)?['\"]", source):
-        required(assets/(module.replace('.', '/')+'.js'))
-    for method in re.findall(r"rpc\.declare\(\{[^}]*object:\s*['\"]luci\.modem5g['\"][^}]*method:\s*['\"](\w+)['\"]", source):
-        if method not in methods or method not in permitted:
-            errors.append(f'RPC 或权限未接入：{path.name} → {method}')
-for module in re.findall(r"from '(lg6851f\.[\w-]+)'", rpc_source):
-    required(root/('usr/share/ucode/'+module.replace('.', '/')+'.uc'))
-required(assets/'view/modem5g/sms_v1.css')
-required(root/'etc/init.d/lg6851f-sms-pool',executable=True)
-required(root/'usr/libexec/lg6851f-sms-pool.uc',executable=True)
-for name in ['usr/share/ucode/lg6851f/sms.uc','usr/share/ucode/lg6851f/sms-store.uc','lib/upgrade/keep.d/lg6851f-sms', 'usr/share/ucode/lg6851f/forward.uc','etc/config/lg6851f_sms_forward',
-             'lib/upgrade/keep.d/lg6851f-sms-forward','usr/libexec/lg6851f-sms-forward.uc']:
+    namespaces = ('lg6851f.', 'modem5g.', 'fiberhome.', 'pwmfan.')
+    for module in re.findall(r"['\"]require ([\w.-]+)(?: as \w+)?['\"]", source):
+        if module.startswith(namespaces):
+            check_js(module.replace('.', '/')+'.js')
+    for name in re.findall(r"['\"](lg6851f/[^'\"]+\.css)(?:\?[^'\"]*)?['\"]", source):
+        required(assets/name)
+
+for route, view in expected_views.items():
+    entry = menus.get(route, {})
+    if entry.get('action') != {'type': 'view', 'path': view}:
+        errors.append(f'页面路由缺失或错误：{route}')
+    for name in entry.get('depends', {}).get('acl', []):
+        if name not in acls:
+            errors.append(f'页面权限缺失：{route} → {name}')
+    check_js('view/'+view+'.js')
+for name in ('network_v20261026_71', 'status_cells_ca_v20261021_27'):
+    required(assets/f'view/modem5g/{name}.js')
+for name in ('menu-aurora.js', 'router-aurora.js', 'translations/zh-cn_v20261026_72.js'):
+    required(assets/name)
+for name in ('header.ut', 'footer.ut', 'sysauth.ut'):
+    required(root/'usr/share/ucode/luci/template/themes/aurora'/name)
+for name in ('main.css', 'login.css', 'images/logo.svg', 'fonts/lato-v24-latin-regular.woff2'):
+    required(root/'www/luci-static/aurora'/name)
+for name in [
+    'usr/libexec/lg6851f-cellular', 'usr/libexec/lg6851f-dashboard.ucb',
+    'usr/share/ucode/lg6851f/cellular-ca.uc', 'usr/share/ucode/lg6851f/cellular-engine.uc',
+    'usr/share/ucode/lg6851f/cellular-core.uc', 'usr/share/ucode/lg6851f/wireless-shared.uc',
+    'usr/sbin/lg6851f-dashboard-sampler', 'usr/bin/lg6851f-ca-read',
+    'etc/init.d/fiberhomedash', 'etc/init.d/lg6851f-cellular-traffic',
+    'etc/init.d/lg6851f-modem-boot-lock', 'usr/bin/lg6851f-modem-lock',
+    'usr/bin/lg6851f-modem-ui-job', 'usr/bin/lg6851f-modem-status',
+    'lib/netifd/proto/ql_datacall.sh', 'lib/netifd/proto/ql_mipc.sh',
+]:
     required(root/name)
-required(root/'etc/init.d/lg6851f-sms-forward',executable=True)
-required(root/'usr/bin/lg6851f-dashboard-collect',executable=True)
-required(root/'usr/bin/lg6851f-lock-status-collect',executable=True)
-required(root/'usr/libexec/lg6851f-lock-status-collect.uc')
-required(root/'usr/libexec/lg6851f-dashboard-collect.uc')
-required(root/'usr/share/ucode/lg6851f/dashboard-collect.uc')
-for name in ['usr/libexec/lg6851f-traffic.uc','usr/libexec/lg6851f-apn-resolve.uc',
-             'usr/share/ucode/lg6851f/traffic-core.uc','usr/share/ucode/lg6851f/apn.uc',
-             'etc/config/lg6851f_apn','lib/upgrade/keep.d/lg6851f-traffic-apn',
-             'usr/libexec/lg6851f-radio-collect.uc','usr/share/licenses/luci-app-5gmodem/MU300-NOTICE']:
-    required(root/name)
-required(root/'etc/init.d/lg6851f-traffic',executable=True)
-required(root/'etc/init.d/lg6851f-cellular-refresh',executable=True)
-required(root/'usr/bin/lg6851f-cellular-refresh',executable=True)
-required(chain/'usr/bin/lg6851f-modem-restart',executable=True)
+for name in ('mipc_wan_cli', 'sample_nw', 'lg6851f-network-led'):
+    required(chain/'usr/bin'/name, executable=True)
+if args.rootfs:
+    for name in ('modem5g-at', 'modem5g-sms-send', 'lg6851f-ipv6-prefix'):
+        required(root/'usr/bin'/name, executable=True)
 required(feed_root/'usr/bin/lg6851f-archive-ab-report',executable=True)
 required(feed_root/'usr/bin/lg6851f-collect-ab-failure',executable=True)
 required(feed_root/'usr/sbin/lg6851f-slotctl',executable=True)
@@ -112,15 +146,6 @@ required(feed_root/'usr/sbin/lg6851f-boot-observer',executable=True)
 required(feed_root/'etc/init.d/lg6851f-boot-observer',executable=True)
 for item in ['lib/functions/lg6851f-boot-trace.sh','lib/preinit/05_lg6851f_boot_trace','lib/preinit/99_lg6851f_boot_trace','etc/hotplug.d/ieee80211/00-lg6851f-boot-trace']:
     required(feed_root/item)
-required(root/'usr/bin/lg6851f-radio-collect',executable=True)
-if not args.rootfs:
-    required(root/'etc/uci-defaults/99-lg6851f-sms-forward',executable=True)
-for name in ['usr/bin/lg6851f-radio-control','usr/bin/lg6851f-modem-details',
-             'usr/bin/lg6851f-modem-lock','usr/bin/lg6851f-modem-status',
-             'usr/sbin/lg6851f-data-watchdog','usr/bin/lg6851f-sms-list']:
-    required(chain/name, executable=True)
-for name in ['lib/functions/lg6851f-radio.sh','lib/netifd/proto/ql_datacall.sh']:
-    required(chain/name)
 if args.rootfs:
     procd_binary=root/'sbin/procd'
     if required(procd_binary,executable=True) and any(marker not in procd_binary.read_bytes() for marker in (b'/tmp/lg6851f-init-complete', b'/tmp/lg6851f-init-complete.shutdown')):
@@ -139,10 +164,10 @@ if args.rootfs:
     required(root/'usr/bin/iwinfo',executable=True)
     required(root/'usr/sbin/miniupnpd',executable=True)
     required(assets/'view/upnp/upnp.js')
-    required(root/'etc/uci-defaults/99-lg6851f-smart-core')
+    required(root/'etc/openclash/core/clash_meta')
     required(root/'usr/bin/curl',executable=True)
     required(root/'usr/bin/sha256sum',executable=True)
-    for module in ['fs','uci','ubus','uloop','digest']:
+    for module in ['fs','uci','ubus','uloop','digest','nl80211']:
         required(root/('usr/lib/ucode/'+module+'.so'))
     # The SDK also ships an old unversioned /usr/lib/libuci.so for its own
     # processes. Native ucode must bind to the modern versioned system ABI.
@@ -158,5 +183,4 @@ if args.rootfs:
                 errors.append('缺少系统 UCI 运行库：'+name)
 if errors:
     raise SystemExit('\n'.join(errors))
-views = sum(entry.get('action', {}).get('type')=='view' for entry in menu.values())
-print(f'通过：{views} 个页面入口、共享资源、RPC/ACL 及射频/拨号脚本均完整（'+('固件根目录' if args.rootfs else '源码')+'）')
+print(f'通过：{len(expected_views)} 个页面入口、{len(checked)} 个页面和模块、RPC/ACL、Aurora 与 A/B 检查')

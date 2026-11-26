@@ -39,7 +39,6 @@ proto_ql_datacall_init_config() {
     proto_config_add_int vlan
     proto_config_add_int mode
     proto_config_add_int auto_conf
-    proto_config_add_int lg6851f_attach
     proto_config_add_int retry
     proto_config_add_int ql_conf
     proto_config_add_int ql_monitor
@@ -66,7 +65,7 @@ check_auto_apn_prov() {
 
     apn_data=`(mipc_wan_cli --apn_provision_by_sim)`
     [ -z "$apn_data" ] && return
-    json_load "$apn_data" || return 1
+    json_load "$apn_data"
     json_get_var db_apn apn
     echo "apn is $db_apn"
     [ -z "$db_apn" ] && return
@@ -89,7 +88,7 @@ check_auto_apn_prov() {
     configured_plmn="${1:-}"
     sim_plmn="${db_plmn:-}"
     case "$configured_plmn" in
-        460[0-9][0-9]) configured_plmn="4600${configured_plmn#460}" ;;
+        4600[0-9]) configured_plmn="4600${configured_plmn#460}" ;;
     esac
     echo "Config:$1 ($configured_plmn) & SIM:$db_plmn ($sim_plmn)"
     [ -n "$configured_plmn" ] && [ "$configured_plmn" = "$sim_plmn" ] && return
@@ -106,23 +105,12 @@ check_auto_apn_prov() {
     uci set network."$2".iaapn="$db_iaapn"
     uci set network."$2".iaiptype="$db_iaprotocol"
     uci set network."$2".plmn="$db_plmn"
+    uci set network."$2".dataroaming="$db_data_roaming"
     uci commit network
 
-    # netifd 的启动参数仍是旧快照。仅提交UCI后退出会带着旧PLMN
-    # 重新进入同一分支，尚未拨号就被APN_CHANGE中断，形成重启循环。
-    # 将已识别的参数同步到本次拨号，继续由同一setup建立数据连接。
-    apn="$db_apn"
-    auth="$db_auth_type"
-    username="$db_user"
-    password="$db_password"
-    roamingtype="${db_roaming_protocol:-$roamingtype}"
-    iaroamingtype="${db_iaroaming_protocol:-$iaroamingtype}"
-    iptype="${db_protocol:-$iptype}"
-    iaapn="${db_iaapn:-$db_apn}"
-    iaiptype="${db_iaprotocol:-$iptype}"
-    plmn="$db_plmn"
-    echo "APN provision done for $2; continue current data call"
-    return 0
+    echo "APN provision done for $2"
+    proto_notify_error "$2" APN_CHANGE
+    exit 1
 }
 
 # get_device_idx_by_name device_name
@@ -499,7 +487,7 @@ wait_modem_stack_ready() {
 # This is a reference design by Mediatek
 proto_ql_datacall_setup() {
     local interface="$1"
-    local sim_state timeout retry imei ia_applied=0 has_apn_selection=0
+    local sim_state timeout retry imei
 
     sensitive_log=`uci get system.@system[0].enable_sensitive_log`
 
@@ -535,7 +523,7 @@ proto_ql_datacall_setup() {
     done
 
     # Read from /etc/config/network
-    json_get_vars apn auth mtu username password roamingtype iptype staticip staticgw staticmask staticdns staticipv6 staticgwv6 staticipv6prefix staticdnsv6 iaapn iaiptype iaroamingtype rattype plmn vlan mode auto_conf retry bearer_bitmask iabearer_bitmask dataroaming ql_conf ql_monitor lg6851f_attach
+    json_get_vars apn auth mtu username password roamingtype iptype staticip staticgw staticmask staticdns staticipv6 staticgwv6 staticipv6prefix staticdnsv6 iaapn iaiptype iaroamingtype rattype plmn vlan mode auto_conf retry bearer_bitmask iabearer_bitmask dataroaming ql_conf ql_monitor
     [ -z "$timeout" ] && timeout="5"
     # Match the vendor SDK default: five data-call attempts, spaced by the
     # existing three-second recovery/check-IA interval below.
@@ -581,17 +569,8 @@ proto_ql_datacall_setup() {
     # owner before waiting for SIM/APN; the vendor ordering queried SIM first
     # while mipc_wan.init attempted radio-on concurrently, creating a deadlock
     # (APN timeout vs. repeated EBUSY) on the OpenWrt procd startup sequence.
-    if [ "$(uci -q get "network.$interface.radio_enabled")" = 0 ]; then
-        proto_notify_error "$interface" RADIO_DISABLED_BY_USER
-        proto_block_restart "$interface"
-        return 1
-    fi
     echo "Enable modem radio before SIM/APN provisioning"
-    . /lib/functions/lg6851f-radio.sh
-    if ! lg6851f_ensure_radio_on; then
-        proto_notify_error "$interface" RADIO_START_PENDING
-        return 1
-    fi
+    mipc_wan_cli --nw_radio_state_set 1
 
     # Check APN provision from SIM
     if [ "$auto_conf" = "1" ] ; then
@@ -611,16 +590,28 @@ proto_ql_datacall_setup() {
         echo 1 > /proc/ccmni/bridge_mode_control
     fi
 
-    # Preserve the proven vendor ordering for existing/global configurations.
-    # Only a per-SIM selection defers IA until the target card is identified.
-    if [ "$interface" = modem5g ] && uci -q show lg6851f_apn | grep -q '=selection$'; then
-        has_apn_selection=1
-    else
-        if [ "$lg6851f_attach" != 0 ]; then
-            mipc_wan_cli --check_ia "${iaapn}" "${rattype}" "${iaiptype}" "${iaroamingtype}" "${username}" "${password}" "${auth}" "${iabearer_bitmask}" "${dataroaming}"
+    # Check CFUN State
+    cfun_retry=5
+    while [ "$cfun_retry" -gt 0 ]
+    do
+        cfun_state=$(mipc_wan_cli --nw_radio_state_get 0)
+
+        if [ "$cfun_state" != "Get SW radio state:MIPC_NW_RADIO_STATE_ON" ] ; then
+            echo "radio state get failed or state is off"
+            let cfun_retry--
+            if [ "$cfun_retry" -eq 0 ] ; then
+                proto_notify_error "$interface" CFUN_IS_OFF
+                proto_block_restart "$interface"
+                return 1
+            fi
+            sleep 3
+        else
+            break
         fi
-        ia_applied=1
-    fi
+    done
+
+    echo "Radio on ia:[${iaapn} ${rattype} ${iaiptype} ${iaroamingtype} ${dataroaming}]"
+    mipc_wan_cli --check_ia ${iaapn} ${rattype} ${iaiptype} ${iaroamingtype} "${username}" "${password}" ${auth} ${iabearer_bitmask} ${dataroaming}
 
     imei=$(cat /tmp/imei) >/dev/null 2>&1
     [ -z "$imei" ] && imei=$(mipc_wan_cli --get_imei)
@@ -670,36 +661,6 @@ proto_ql_datacall_setup() {
         fi
         sim_status=$(mipc_wan_cli --show_sim_status)
     done
-
-    # Only configured per-SIM selections need identity reads. Keep ownership
-    # in the existing atcid client, including its timeout, lock and breaker.
-    if [ "$has_apn_selection" = 1 ]; then
-        local raw_identity apn_identity apn_imsi resolved_apn resolved_source
-        raw_identity="$(timeout 10 /usr/bin/modem5g-at 'AT+ICCID')" || {
-            proto_notify_error "$interface" APN_IDENTITY_PENDING; return 1;
-        }
-        apn_identity="$(printf '%s\n' "$raw_identity" | tr -d '\r' | sed -n 's/^+ICCID:[[:space:]]*\([0-9A-Fa-f]\{18,22\}\).*/\1/p; /^[0-9A-Fa-f]\{18,22\}$/p' | head -n 1)"
-        raw_identity="$(timeout 10 /usr/bin/modem5g-at 'AT+CIMI')" || {
-            proto_notify_error "$interface" APN_IDENTITY_PENDING; return 1;
-        }
-        apn_imsi="$(printf '%s\n' "$raw_identity" | tr -d '\r' | sed -n '/^[0-9]\{14,16\}$/p' | head -n 1)"
-        resolved_apn="$(LG6851F_APN_ICCID="$apn_identity" LG6851F_APN_IMSI="$apn_imsi" /usr/libexec/lg6851f-apn-resolve.uc)" || {
-            proto_notify_error "$interface" APN_SELECTION_FAILED; return 1;
-        }
-        json_load "$resolved_apn"
-        json_get_var resolved_source source
-        if [ "$resolved_source" != network ]; then
-            json_select settings
-            json_get_vars apn iptype roamingtype auth username password
-            json_get_var lg6851f_attach attach
-            iaapn="$apn"; iaiptype="$iptype"; iaroamingtype="$roamingtype"
-        fi
-    fi
-    # Legacy configuration keeps the vendor initial-attach behavior; the new
-    # APN editor explicitly controls it without touching IMS.
-    if [ "$ia_applied" != 1 ] && [ "$lg6851f_attach" != 0 ]; then
-        mipc_wan_cli --check_ia "${iaapn}" "${rattype}" "${iaiptype}" "${iaroamingtype}" "${username}" "${password}" "${auth}" "${iabearer_bitmask}" "${dataroaming}"
-    fi
 
     # Wait network registartion status
     echo "Check Network status"
@@ -792,7 +753,6 @@ proto_ql_datacall_setup() {
 
         proto_add_data
         json_add_string "cid" "$cid"
-        json_add_string "apn" "$apn"
         json_add_string "mode" "$mode"
         json_add_string "clatd" "$clatd"
         json_add_string "vlan" "$vlan"
@@ -820,7 +780,6 @@ proto_ql_datacall_setup() {
 
         proto_add_data
         json_add_string "cid" "$cid"
-        json_add_string "apn" "$apn"
         json_add_string "mode" "$mode"
         json_add_string "clatd" "$clatd"
         json_add_string "vlan" "$vlan"
@@ -911,7 +870,6 @@ proto_ql_datacall_setup() {
 
         proto_add_data
         json_add_string "cid" "$cid"
-        json_add_string "apn" "$apn"
         json_add_string "mode" "$mode"
         json_add_string "clatd" "$clatd"
         json_add_string "vlan" "$vlan"
@@ -1028,14 +986,17 @@ proto_ql_datacall_teardown() {
     proto_init_update "*" 0
     proto_send_update "$interface"
 
-    # Only an explicit user choice may block restart. A transient RF-off
-    # status during boot must be retried through the serialized setup path.
-    if [ "$(uci -q get "network.$interface.radio_enabled")" = 0 ]; then
-        proto_notify_error "$interface" RADIO_DISABLED_BY_USER
+    # Handle AT+EFUN=0 command
+    radio_status=`(mipc_wan_cli --nw_radio_state_get)`
+    case "$radio_status" in
+    *MIPC_NW_RADIO_STATE_OFF*)
+        proto_notify_error "$interface" RADIO_OFF
         proto_block_restart "$interface"
-    else
+        ;;
+    *)
         proto_notify_error "$interface" STOPPED
-    fi
+        ;;
+    esac
 
     if [ ${mode} -eq 2 ] ; then
         ql_datacall_reset_bridge "$vlan"

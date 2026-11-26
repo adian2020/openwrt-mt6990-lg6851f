@@ -1,0 +1,262 @@
+#!/bin/sh
+
+. /lib/functions.sh
+. /usr/share/libubox/jshn.sh
+
+TAG=lg6851f-modem-status
+STATE=/tmp/lg6851f-modem-status.state
+STATE_NEW=/tmp/lg6851f-modem-status.state.new
+LOCK=/var/lock/luci-modem5g-control.lock
+CLI=/usr/bin/mipc_wan_cli
+ATCLI=/usr/bin/modem5g-at
+
+config_load lg6851f_modem_status
+config_get start_delay main start_delay 35
+config_get poll_seconds main poll_seconds 5
+config_get registration_interval main registration_interval 20
+config_get radio_interval main radio_interval 60
+config_get identity_interval main identity_interval 3600
+config_get detail_interval main detail_interval 300
+
+normalize_interval() {
+ local value="$1" fallback="$2" minimum="$3" maximum="$4"
+ case "$value" in ''|*[!0-9]*) value="$fallback";; esac
+ [ "${#value}" -le 6 ] || value="$fallback"
+ # Strip leading zeros before shell arithmetic (which may otherwise use octal).
+ while [ "${value#0}" != "$value" ] && [ "${#value}" -gt 1 ]; do value=${value#0}; done
+ [ "$value" -ge "$minimum" ] || value="$minimum"
+ [ "$value" -le "$maximum" ] || value="$maximum"
+ printf '%s' "$value"
+}
+mono() { read -r seconds rest </proc/uptime; printf '%s' "${seconds%.*}"; }
+start_delay=$(normalize_interval "$start_delay" 35 0 120)
+poll_seconds=$(normalize_interval "$poll_seconds" 5 5 60)
+registration_interval=$(normalize_interval "$registration_interval" 20 20 300)
+radio_interval=$(normalize_interval "$radio_interval" 60 60 600)
+identity_interval=$(normalize_interval "$identity_interval" 3600 300 86400)
+detail_interval=$(normalize_interval "$detail_interval" 300 30 1800)
+
+clean_value() {
+	printf '%s' "$1" | tr '\r\n' '  ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//'
+}
+
+query() {
+	local option="$1" output rc
+	[ ! -d /var/lock/lg6851f-modem-recovery.lock ] || return 75
+	exec 9>"$LOCK"
+	flock -n 9 || return 75
+	output="$(timeout -k 2 6 "$CLI" --"$option" 2>/dev/null)"
+	rc=$?
+	# ttyCMIPC6 closes asynchronously. Keep the shared lock throughout the
+	# cooldown so a LuCI/control request cannot overtake the vendor close.
+	sleep 6
+	flock -u 9
+	printf '%s' "$output"
+	return "$rc"
+}
+
+at_query() {
+	local command="$1"
+	# modem5g-at owns the same lock, has an 8 second hard timeout and a
+	# circuit breaker.  Informational failures retain the last good cache.
+	timeout -k 2 10 "$ATCLI" "$command" 2>/dev/null
+}
+
+reuse_shared_signal() {
+ local text stamp ok registered value age current
+ [ -r /tmp/fiberhomedash.fast.json ] || return 1
+ text="$(cat /tmp/fiberhomedash.fast.json 2>/dev/null)"
+ json_load "$text" 2>/dev/null || return 1
+ json_get_var stamp signal_ts
+ json_get_var ok signal_ok
+ json_get_var registered reg
+ case "$stamp" in ''|*[!0-9]*)return 1;;esac
+ case "$registered" in 1|5|10) ;;*)return 1;;esac
+ [ "$ok" = 1 ] || return 1
+ # MIPC reads may have waited through their close cooldown: validate the
+ # current clock, not the loop-start timestamp before those blocking reads.
+ current="$(date +%s)";case "$current" in ''|*[!0-9]*)return 1;;esac
+ age=$((current-stamp));[ "$age" -ge 0 ] && [ "$age" -le 10 ] || return 1
+ json_select sig 2>/dev/null || return 1
+ json_get_var value rsrp
+ case "$value" in ''|*[!0-9.-]*)return 1;;esac
+ RSRP=${value%.*}
+ SIGNAL_TS=$stamp
+ json_get_var RSRQ rsrq
+ json_get_var SINR sinr
+ SIGNAL="CESQ RSRP=$RSRP RSRQ=$RSRQ SINR=$SINR"
+ return 0
+}
+
+read_network_status() {
+ local records record prefix= address= old_ifs invalid=0 seen='|' key value keep_noglob=0
+ records="$(printf '%s' "$1" | jsonfilter -e 'UP=@.up' -e 'UPTIME=@.uptime' -e 'WAN=@.l3_device' -e 'ADDRESS=@["ipv4-address"][0].address' -e 'PREFIX=@["ipv4-address"][0].mask' 2>/dev/null)" || :
+ UP=false UPTIME= WAN= IPV4=
+ old_ifs=$IFS; IFS=';'; case "$-" in *f*)keep_noglob=1;;esac; set -f
+ for record in $records; do
+  record=${record#"${record%%[! ]*}"};record=${record#export }
+  [ -n "$record" ] || continue
+  key=${record%%=*};value=${record#*=}
+  case "$seen" in *"|$key|"*)invalid=1;;esac;seen="$seen$key|"
+  case "$record" in
+   UP=1) UP=true;;UP=0)UP=false;;
+   UPTIME=*) UPTIME=${record#UPTIME=};;
+   WAN=*) WAN=${record#WAN=};WAN=${WAN#\'};WAN=${WAN%\'};;
+   ADDRESS=*) address=${record#ADDRESS=};address=${address#\'};address=${address%\'};;
+   PREFIX=*) prefix=${record#PREFIX=};;
+   *)invalid=1;;
+  esac
+  case "$key" in WAN|ADDRESS)case "$value" in \'*\') ;;*)invalid=1;;esac;;esac
+  case "$key:$value" in WAN:*\\*|ADDRESS:*\\*)invalid=1;;esac
+ done
+ IFS=$old_ifs; [ "$keep_noglob" = 1 ] || set +f
+ case "$UPTIME" in ''|*[!0-9]*) UPTIME=;;esac
+ case "$WAN" in ''|*[!A-Za-z0-9_.:-]*) [ -z "$WAN" ] || invalid=1;WAN=;;esac
+ [ "${#WAN}" -le 15 ] || WAN=
+ case "$prefix" in ''|*[!0-9]*) prefix=32;;esac
+ [ "${#prefix}" -le 2 ] && [ "$prefix" -le 32 ] || prefix=32
+ case "$address" in ''|*[!0-9.]*|.*|*.) ;;*)IPV4="$address/$prefix";;esac
+ [ "$invalid" = 0 ] || { UP=false UPTIME= WAN= IPV4=; }
+}
+
+write_state() {
+	{
+		printf 'UPDATED=%s\n' "$(date +%s)"
+        printf 'SIGNAL_TS=%s\n' "$SIGNAL_TS"
+        printf 'REGISTRATION_TS=%s\n' "$REGISTRATION_TS"
+        printf 'RADIO_TS=%s\n' "$RADIO_TS"
+		printf 'UP=%s\n' "$UP"
+		printf 'UPTIME=%s\n' "$UPTIME"
+		printf 'WAN=%s\n' "$WAN"
+		printf 'IPV4=%s\n' "$IPV4"
+		printf 'SIM=%s\n' "$SIM"
+		printf 'REGISTRATION=%s\n' "$REGISTRATION"
+		printf 'REGISTERED=%s\n' "$REGISTERED"
+		printf 'RAT=%s\n' "$RAT"
+		printf 'RAT_RAW=%s\n' "$RAT_RAW"
+		printf 'SIGNAL=%s\n' "$SIGNAL"
+		printf 'RSRP=%s\n' "$RSRP"
+		printf 'RADIO=%s\n' "$RADIO"
+		printf 'IMEI=%s\n' "$IMEI"
+		printf 'IMSI=%s\n' "$IMSI"
+		printf 'ICCID=%s\n' "$ICCID"
+		printf 'OPERATOR=%s\n' "$OPERATOR"
+		printf 'CESQ=%s\n' "$CESQ"
+		printf 'RSSI=%s\n' "$RSSI"
+		printf 'RSRQ=%s\n' "$RSRQ"
+		printf 'SINR=%s\n' "$SINR"
+	} >"$STATE_NEW" && mv "$STATE_NEW" "$STATE"
+}
+
+trap 'rm -f "$STATE_NEW"; exit 0' TERM INT EXIT
+sleep "$start_delay"
+
+SIGNAL_TS= REGISTRATION_TS= RADIO_TS=
+last_registration=$(( -registration_interval ))
+last_radio=$(( -radio_interval ))
+last_identity=$(( -identity_interval ))
+last_detail=$(( -detail_interval ))
+SIM=unknown
+REGISTRATION=unknown
+REGISTERED=NO
+RAT=UNKNOWN
+RAT_RAW=
+SIGNAL=
+RSRP=
+RADIO=
+IMEI=
+IMSI=
+ICCID=
+OPERATOR=
+CESQ=
+RSSI=
+RSRQ=
+SINR=
+
+while :; do
+	now="$(date +%s)"
+ mono_now=$(mono)
+	NET_JSON="$(timeout -k 1 4 ubus -S call network.interface.modem5g status 2>/dev/null)"
+ read_network_status "$NET_JSON"
+
+	if [ "$UP" = true ] && [ -n "$IPV4" ]; then
+		REGISTERED=YES
+	else
+		REGISTERED=NO
+	fi
+
+ if [ -e /tmp/lg6851f-modem-control.active ];then
+  write_state
+  sleep "$poll_seconds"
+  continue
+ fi
+	if [ $((mono_now - last_registration)) -ge "$registration_interval" ]; then
+		value="$(query show_sim_status)"
+		[ -n "$value" ] && SIM="$(clean_value "$value")"
+		value="$(query show_register_status)"
+		if [ -n "$value" ]; then
+			REGISTRATION="$(clean_value "$value")"
+            REGISTRATION_TS="$(date +%s)"
+			case "$REGISTRATION" in
+				*NOT*REGISTERED*|*Not*registered*|*not*registered*) REGISTERED=NO ;;
+				*REGISTERED*|*Registered*|*registered*) REGISTERED=YES ;;
+			esac
+		fi
+		last_registration="$(mono)"
+	fi
+
+	if [ $((mono_now - last_radio)) -ge "$radio_interval" ]; then
+		value="$(query nw_show_register_rat)"
+		if [ -n "$value" ]; then
+			RAT_RAW="$(clean_value "$value")"
+			case "$RAT_RAW" in *5G*) RAT=5G ;; *4G*|*LTE*) RAT=4G ;; *) RAT=OTHER ;; esac
+		fi
+  # Avoid the vendor getter's known duplicate free and its extra MIPC wakeup.
+  # CESQ uses the existing bounded atcid transport and is decoded below.
+  last_detail=$(( -detail_interval ))
+		value="$(query nw_radio_state_get)"
+		[ -n "$value" ] && { RADIO="$(clean_value "$value")"; RADIO_TS="$(date +%s)"; }
+		last_radio="$(mono)"
+	fi
+
+	if [ $((mono_now - last_identity)) -ge "$identity_interval" ]; then
+		value="$(query get_imei)"
+		[ -n "$value" ] && IMEI="$(clean_value "$value")"
+		value="$(at_query 'AT+CIMI')"
+		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n '/^[0-9]\{14,16\}$/p' | head -n 1)"
+		[ -n "$parsed" ] && IMSI="$parsed"
+		value="$(at_query 'AT+ICCID')"
+		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+ICCID:[[:space:]]*\([0-9A-Fa-f]\{18,22\}\).*/\1/p; /^[0-9A-Fa-f]\{18,22\}$/p' | head -n 1)"
+		[ -n "$parsed" ] && ICCID="$parsed"
+		value="$(at_query 'AT+COPS?')"
+		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+COPS:[[:space:]]*[^,]*,[^,]*,"\([^"]*\)".*/\1/p' | head -n 1)"
+		[ -n "$parsed" ] && OPERATOR="$parsed"
+		last_identity="$(mono)"
+	fi
+
+	if [ $((mono_now - last_detail)) -ge "$detail_interval" ]; then
+  if reuse_shared_signal;then
+   last_detail="$(mono)"
+  else
+		value="$(at_query 'AT+CESQ')"
+		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+CESQ:[[:space:]]*//p' | head -n 1)"
+		if [ -n "$parsed" ]; then
+			CESQ="$parsed"
+			RSSI="$(printf '%s\n' "$parsed" | awk -F, '{ gsub(/ /, "", $1); if ($1 >= 0 && $1 <= 63) printf "%d", $1 - 110 }')"
+			# This MT6990 firmware appends 5G SS-RSRQ, SS-RSRP and
+			# SS-SINR as fields 7..9.  Their 3GPP ranges are respectively
+			# -43..20 dB, -156..-31 dBm and -23..40 dB.  Fall back to
+			# standard LTE CESQ fields 5..6 only for a six-field response.
+			RSRQ="$(printf '%s\n' "$parsed" | awk -F, '{ if (NF >= 9 && $7 >= 0 && $7 <= 127) printf "%.1f", ($7 / 2) - 43; else if (NF == 6 && $5 >= 0 && $5 <= 34) printf "%.1f", ($5 / 2) - 19.5 }')"
+			cesq_rsrp="$(printf '%s\n' "$parsed" | awk -F, '{ if (NF >= 9 && $8 >= 0 && $8 <= 127) printf "%d", $8 - 156; else if (NF == 6 && $6 >= 0 && $6 <= 97) printf "%d", $6 - 140 }')"
+			SINR="$(printf '%s\n' "$parsed" | awk -F, '{ if (NF >= 9 && $9 >= 0 && $9 <= 127) printf "%.1f", ($9 / 2) - 23 }')"
+			[ -n "$cesq_rsrp" ] && { RSRP="$cesq_rsrp"; SIGNAL_TS="$(date +%s)"; }
+			SIGNAL="CESQ RSRP=$RSRP RSRQ=$RSRQ SINR=$SINR"
+		fi
+		last_detail="$(mono)"
+  fi
+	fi
+
+	write_state
+	sleep "$poll_seconds"
+done

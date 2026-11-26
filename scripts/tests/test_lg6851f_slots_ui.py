@@ -2,7 +2,7 @@
 """Exercise the actual LuCI view with DOM/RPC fixtures; never reboot anything."""
 import pathlib,subprocess,unittest
 ROOT=pathlib.Path(__file__).resolve().parents[2]
-VIEW=ROOT/'package/vendor/luci-app-5gmodem/htdocs/luci-static/resources/view/system/lg6851f-slots.js'
+VIEW=ROOT/'files/www/luci-static/resources/view/system/lg6851f-slots.js'
 class SlotViewTest(unittest.TestCase):
  def test_confirmation_restore_risk_readonly_stale_state_and_reboot(self):
   script=r'''

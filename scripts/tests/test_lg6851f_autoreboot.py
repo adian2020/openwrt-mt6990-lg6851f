@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-PACKAGE = ROOT / 'package/vendor/luci-app-autoreboot'
+PACKAGE = ROOT / 'package/lg6851f/luci-app-autoreboot'
 
 
 class AutoRebootTest(unittest.TestCase):

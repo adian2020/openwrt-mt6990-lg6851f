@@ -61,3 +61,10 @@ git-src
 
 # Local historical script copies are not part of the reproducible source tree.
 /scripts/*.bak*
+
+# Materialized during the Pro package build.
+/package/vendor/luci-app-fiberhomedash/files/etc/init.d/fiberhomedash
+/package/vendor/luci-app-fiberhomedash/files/usr/share/luci/menu.d/luci-app-fiberhome.json
+/package/vendor/luci-app-fiberhomedash/files/usr/share/rpcd/acl.d/luci-app-fiberhome.json
+/package/vendor/mt6990-adb-usb/files/etc/init.d/mt6990-adb-usb
+/package/vendor/luci-app-openclash/root/etc/init.d/openclash

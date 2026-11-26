@@ -10,14 +10,12 @@ CLI=/usr/bin/mipc_wan_cli
 ATCLI=/usr/bin/modem5g-at
 
 config_load lg6851f_modem_status
-config_get start_delay main start_delay 10
+config_get start_delay main start_delay 35
 config_get poll_seconds main poll_seconds 5
 config_get registration_interval main registration_interval 20
 config_get radio_interval main radio_interval 60
 config_get identity_interval main identity_interval 3600
 config_get detail_interval main detail_interval 300
-
-monotonic() { read -r seconds rest </proc/uptime; printf '%s' "${seconds%.*}"; }
 
 clean_value() {
 	printf '%s' "$1" | tr '\r\n' '  ' | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//'
@@ -25,12 +23,8 @@ clean_value() {
 
 query() {
 	local option="$1" output rc
-	# 首次拨号优先，状态读取不抢占 netifd 的 CMIPC6 初始化通道。
-	[ "${UP:-false}" = true ] || return 75
-	[ ! -e /tmp/lg6851f-modem-control.active ] || return 75
 	exec 9>"$LOCK"
 	flock -n 9 || return 75
-	[ ! -e /tmp/lg6851f-modem-control.active ] || { flock -u 9; return 75; }
 	output="$(timeout 6 "$CLI" --"$option" 2>/dev/null)"
 	rc=$?
 	# ttyCMIPC6 closes asynchronously. Keep the shared lock throughout the
@@ -43,59 +37,14 @@ query() {
 
 at_query() {
 	local command="$1"
-	[ ! -e /tmp/lg6851f-modem-control.active ] || return 75
 	# modem5g-at owns the same lock, has an 8 second hard timeout and a
 	# circuit breaker.  Informational failures retain the last good cache.
 	timeout 10 "$ATCLI" "$command" 2>/dev/null
 }
 
-update_ims() {
-	local output parsed
-	# One read in the existing slow detail cycle; never contend with first dial.
-	[ "${UP:-false}" = true ] || return 75
-	output="$(at_query 'AT+CIREG?')" || return 75
-	parsed="$(printf '%s\n' "$output" | tr -d '\r' | grep -E '^\+CIREG:[[:space:]]*[0-2][[:space:]]*,[[:space:]]*[01]([[:space:]]*,[[:space:]]*[0-9A-Fa-f]{1,8})?[[:space:]]*$' | head -n 1)"
-	[ -n "$parsed" ] || return 1
-	IMS_CIREG="$parsed"
-	IMS_UPDATED="$(date +%s)"
-}
-
-update_signal() {
-	local raw sample values
-	raw="$(at_query 'AT+CESQ')" || return 1
-	sample="$(printf '%s\n' "$raw" | tr -d '\r' | sed -n 's/^+CESQ:[[:space:]]*//p' | head -n 1)"
-	values="$(printf '%s\n' "$sample" | awk -F, '
-		{
-			for (i=1; i<=NF; i++) {
-				gsub(/[[:space:]]/, "", $i)
-				if ($i !~ /^[0-9]+$/) exit
-			}
-			rssi = ($1 <= 63) ? $1 - 110 : "-"
-			if (NF >= 9 && $8 <= 127) {
-				rsrq = ($7 <= 127) ? sprintf("%.1f", $7 / 2 - 43) : "-"
-				sinr = ($9 <= 127) ? sprintf("%.1f", $9 / 2 - 23) : "-"
-				printf "%s %d %s %s", rssi, $8 - 156, rsrq, sinr
-			} else if (NF == 6 && $6 <= 97) {
-				rsrq = ($5 <= 34) ? sprintf("%.1f", $5 / 2 - 19.5) : "-"
-				printf "%s %d %s -", rssi, $6 - 140, rsrq
-			}
-		}')"
-	[ -n "$values" ] || return 1
-	read -r RSSI RSRP RSRQ SINR <<EOF
-$values
-EOF
-	[ "$RSSI" != - ] || RSSI=
-	[ "$RSRQ" != - ] || RSRQ=
-	[ "$SINR" != - ] || SINR=
-	CESQ="$sample"
-	SIGNAL="CESQ RSRP=$RSRP RSRQ=$RSRQ SINR=$SINR"
-	SIGNAL_TS="$(date +%s)"
-}
-
 write_state() {
 	{
-		printf 'UPDATED=%s\n' "$(date +%s)"
-		printf 'SIGNAL_TS=%s\n' "$SIGNAL_TS"
+		printf 'UPDATED=%s\n' "$now"
 		printf 'UP=%s\n' "$UP"
 		printf 'UPTIME=%s\n' "$UPTIME"
 		printf 'WAN=%s\n' "$WAN"
@@ -112,29 +61,20 @@ write_state() {
 		printf 'IMSI=%s\n' "$IMSI"
 		printf 'ICCID=%s\n' "$ICCID"
 		printf 'OPERATOR=%s\n' "$OPERATOR"
-		printf 'MODEM_MODEL=%s\n' "$MODEM_MODEL"
-		printf 'MODEM_FIRMWARE=%s\n' "$MODEM_FIRMWARE"
-		printf 'PHONE=%s\n' "$PHONE"
-		printf 'ROAMING=%s\n' "$ROAMING"
 		printf 'CESQ=%s\n' "$CESQ"
 		printf 'RSSI=%s\n' "$RSSI"
 		printf 'RSRQ=%s\n' "$RSRQ"
 		printf 'SINR=%s\n' "$SINR"
-		printf 'IMS_CIREG=%s\n' "$IMS_CIREG"
-		printf 'IMS_UPDATED=%s\n' "$IMS_UPDATED"
 	} >"$STATE_NEW" && mv "$STATE_NEW" "$STATE"
 }
 
 trap 'rm -f "$STATE_NEW"; exit 0' TERM INT EXIT
 sleep "$start_delay"
 
-last_registration=$((-registration_interval))
-last_radio=$((-radio_interval))
-last_identity=$((-identity_interval))
-last_detail=$((-detail_interval))
-last_signal=$((-radio_interval))
-SIGNAL_TS=
-signal_context=
+last_registration=0
+last_radio=0
+last_identity=0
+last_detail=0
 SIM=unknown
 REGISTRATION=unknown
 REGISTERED=NO
@@ -147,19 +87,13 @@ IMEI=
 IMSI=
 ICCID=
 OPERATOR=
-MODEM_MODEL=
-MODEM_FIRMWARE=
-PHONE=
-ROAMING=
 CESQ=
 RSSI=
 RSRQ=
 SINR=
-IMS_CIREG=
-IMS_UPDATED=
 
 while :; do
-	now="$(monotonic)"
+	now="$(date +%s)"
 	NET_JSON="$(ubus call network.interface.modem5g status 2>/dev/null)"
 	UP="$(printf '%s' "$NET_JSON" | jsonfilter -e '@.up')"
 	UPTIME="$(printf '%s' "$NET_JSON" | jsonfilter -e '@.uptime')"
@@ -185,7 +119,6 @@ while :; do
 			esac
 		fi
 		last_registration="$now"
-		write_state
 	fi
 
 	if [ $((now - last_radio)) -ge "$radio_interval" ]; then
@@ -194,30 +127,19 @@ while :; do
 			RAT_RAW="$(clean_value "$value")"
 			case "$RAT_RAW" in *5G*) RAT=5G ;; *4G*|*LTE*) RAT=4G ;; *) RAT=OTHER ;; esac
 		fi
+		# The vendor implementation of nw_get_signal has a duplicate response
+		# free. Keep it isolated in its short-lived CLI process and rate-limit it.
+		value="$(query nw_get_signal)"
+		if [ -n "$value" ]; then
+			SIGNAL="$(clean_value "$value")"
+			RSRP="$(printf '%s' "$SIGNAL" | sed -n 's/.*RSRP=\(-\{0,1\}[0-9][0-9]*\).*/\1/p')"
+		fi
 		value="$(query nw_radio_state_get)"
 		[ -n "$value" ] && RADIO="$(clean_value "$value")"
 		last_radio="$now"
-		write_state
 	fi
 
-	# Rate limiting follows uptime. Cache age is the time of the last actual
-	# signal sample, and a RAT or bearer change invalidates the previous sample.
-	context="$UP:$WAN:$RAT:$SIM:$RADIO:$REGISTERED"
-	if [ "$context" != "$signal_context" ]; then
-		signal_context="$context"
-		SIGNAL_TS= SIGNAL= CESQ= RSSI= RSRP= RSRQ= SINR=
-		last_signal=$((-radio_interval))
-	fi
-	if [ "$UP" = true ] && [ "$REGISTERED" = YES ] &&
-	   [ $((now - last_signal)) -ge "$radio_interval" ]; then
-		last_signal="$now"
-		update_signal
-	fi
-
-	identity_wait="$identity_interval"
-	[ -n "$IMEI" ] && [ -n "$IMSI" ] && [ -n "$ICCID" ] || identity_wait=60
-	if [ $((now - last_identity)) -ge "$identity_wait" ]; then
-		[ -n "$IMEI" ] || IMEI="$(cat /tmp/imei 2>/dev/null)"
+	if [ $((now - last_identity)) -ge "$identity_interval" ]; then
 		value="$(query get_imei)"
 		[ -n "$value" ] && IMEI="$(clean_value "$value")"
 		value="$(at_query 'AT+CIMI')"
@@ -229,37 +151,24 @@ while :; do
 		value="$(at_query 'AT+COPS?')"
 		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+COPS:[[:space:]]*[^,]*,[^,]*,"\([^"]*\)".*/\1/p' | head -n 1)"
 		[ -n "$parsed" ] && OPERATOR="$parsed"
-		# 标准只读身份接口，复用现有 AT 所有者；型号/版本每次开机只取成功的一份。
-		if [ -z "$MODEM_MODEL" ]; then
-			value="$(at_query 'AT+CGMM')"
-			parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed '/^$/d; /^OK$/d; /^AT+/d; /^ERROR/d; /^+CME ERROR/d' | head -n 1)"
-			[ -n "$parsed" ] && MODEM_MODEL="$parsed"
-		fi
-		if [ -z "$MODEM_FIRMWARE" ]; then
-			value="$(at_query 'AT+CGMR')"
-			parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed '/^$/d; /^OK$/d; /^AT+/d; /^ERROR/d; /^+CME ERROR/d' | head -n 1)"
-			[ -n "$parsed" ] && MODEM_FIRMWARE="$parsed"
-		fi
-		value="$(at_query 'AT+CNUM')"
-		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+CNUM:[^,]*,[[:space:]]*"\([+0-9]*\)".*/\1/p' | head -n 1)"
-		[ -n "$parsed" ] && PHONE="$parsed"
 		last_identity="$now"
-		write_state
 	fi
 
 	if [ $((now - last_detail)) -ge "$detail_interval" ]; then
-		update_ims
-		value="$(at_query 'AT+C5GREG?')"
-		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+C5GREG:[[:space:]]*[0-9]*,\([0-9]*\).*/\1/p' | head -n 1)"
-		case "$parsed" in
-			1|9) ROAMING=0 ;;
-			5|10) ROAMING=1 ;;
-			*)
-				value="$(at_query 'AT+CEREG?')"
-				parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+CEREG:[[:space:]]*[0-9]*,\([0-9]*\).*/\1/p' | head -n 1)"
-				case "$parsed" in 1|9) ROAMING=0 ;; 5|10) ROAMING=1 ;; *) ROAMING= ;; esac
-				;;
-		esac
+		value="$(at_query 'AT+CESQ')"
+		parsed="$(printf '%s\n' "$value" | tr -d '\r' | sed -n 's/^+CESQ:[[:space:]]*//p' | head -n 1)"
+		if [ -n "$parsed" ]; then
+			CESQ="$parsed"
+			RSSI="$(printf '%s\n' "$parsed" | awk -F, '{ gsub(/ /, "", $1); if ($1 >= 0 && $1 <= 63) printf "%d", $1 - 110 }')"
+			# This MT6990 firmware appends 5G SS-RSRQ, SS-RSRP and
+			# SS-SINR as fields 7..9.  Their 3GPP ranges are respectively
+			# -43..20 dB, -156..-31 dBm and -23..40 dB.  Fall back to
+			# standard LTE CESQ fields 5..6 only for a six-field response.
+			RSRQ="$(printf '%s\n' "$parsed" | awk -F, '{ if (NF >= 9 && $7 >= 0 && $7 <= 127) printf "%.1f", ($7 / 2) - 43; else if (NF == 6 && $5 >= 0 && $5 <= 34) printf "%.1f", ($5 / 2) - 19.5 }')"
+			cesq_rsrp="$(printf '%s\n' "$parsed" | awk -F, '{ if (NF >= 9 && $8 >= 0 && $8 <= 127) printf "%d", $8 - 156; else if (NF == 6 && $6 >= 0 && $6 <= 97) printf "%d", $6 - 140 }')"
+			SINR="$(printf '%s\n' "$parsed" | awk -F, '{ if (NF >= 9 && $9 >= 0 && $9 <= 127) printf "%.1f", ($9 / 2) - 23 }')"
+			[ -n "$cesq_rsrp" ] && RSRP="$cesq_rsrp"
+		fi
 		last_detail="$now"
 	fi
 

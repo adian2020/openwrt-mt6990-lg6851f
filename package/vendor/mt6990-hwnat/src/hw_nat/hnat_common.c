@@ -79,6 +79,7 @@
 #include "hnat_dbg_proc.h"
 #include "mcast_tbl.h"
 #include "hnat_common.h"
+#include "hnat_lan_accel.h"
 #include "hnat_fast.h"
 #include "hnat_power.h"
 #ifdef CONFIG_MTK_TINYSYS_MEDMCU_SUPPORT
@@ -5685,6 +5686,9 @@ int rx_cpu_handler_modem(struct sk_buff *skb)
 
 int rx_cpu_handler_eth(struct sk_buff *skb)
 {
+	if (hnat_cpu_wifi_pingpong(skb))
+		return 0;
+
 	//struct foe_entry *entry = &ppe_foe_base[FOE_ENTRY_NUM(skb)];
 
 	struct foe_entry *entry;

@@ -76,6 +76,7 @@
 #include "hnat_config.h"
 #include "hnat_dbg_proc.h"
 #include "hnat_common.h"
+#include "hnat_lan_accel.h"
 #include "hnat_monitor.h"
 #include "hnat_fast.h"
 #include "hnat_power.h"
@@ -809,15 +810,16 @@ static int32_t ppe_init_mod(void){
 #endif /* CONFIG_HNAT_V2 */
 
 	mt76_hnat_init();
-
+	if (hnat_lan_accel_init())
+		pr_err("mt6990-hwnat: local Wi-Fi acceleration hook registration failed\n");
 	return 0;
 }
 
 static void ppe_cleanup_mod(void)
 {
-	NAT_PRINT("Ralink HW NAT Module Disabled\n");
-
+	hnat_lan_accel_exit();
 	mt76_hnat_exit();
+	NAT_PRINT("Ralink HW NAT Module Disabled\n");
 
 	/* Set GMAC fowrards packet to CPU */
 	set_gdma_fwd(0);

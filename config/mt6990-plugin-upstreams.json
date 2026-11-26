@@ -1,17 +1,5 @@
 [
   {
-    "package": "luci-app-openclash",
-    "repo": "vernesong/OpenClash",
-    "base": "e553e82e01c697aefbe1555261a503f425e00ccd",
-    "path": "luci-app-openclash",
-    "components": [
-      "root",
-      "luasrc",
-      "po",
-      "Makefile"
-    ]
-  },
-  {
     "package": "luci-app-uugamebooster",
     "repo": "xiaodoudou/luci-app-uugamebooster",
     "base": "93cf1863da856c9c7cc81c84474694fa31bac0bd",

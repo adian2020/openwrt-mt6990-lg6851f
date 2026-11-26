@@ -1,0 +1,23 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-only
+# Use the recorded read-only sample_nw sequence. Never open a second AT port.
+set -eu
+
+case "$(cat /tmp/sysinfo/board_name 2>/dev/null)" in
+	fiberhome,lg6851f|fiberhome_lg6851f) ;;
+	*) exit 95 ;;
+esac
+[ -x /usr/bin/sample_nw ] || exit 2
+[ ! -e /tmp/lg6851f-modem-control.active ] && [ ! -d /var/lock/lg6851f-modem-recovery.lock ] || exit 75
+exec 9>/var/lock/luci-modem5g-control.lock
+/usr/bin/flock -n 9 || exit 75
+[ ! -e /tmp/lg6851f-modem-control.active ] && [ ! -d /var/lock/lg6851f-modem-recovery.lock ] || exit 75
+
+printf 'LG6851F_CA_STARTED_TS=%s\n' "$(date +%s)"
+rc=0
+# 0 init, 21 current band, 25/5 CA, 1 release, -1 exit.
+printf '0\n21\n25\n5\n1\n-1\n' | /usr/bin/timeout -k 2 15 /usr/bin/sample_nw || rc=$?
+printf '\nLG6851F_CA_CAPTURED_TS=%s\n' "$(date +%s)"
+# Let the SDK control session release ttyCMIPC6 before granting the lock.
+sleep 6
+exit "$rc"

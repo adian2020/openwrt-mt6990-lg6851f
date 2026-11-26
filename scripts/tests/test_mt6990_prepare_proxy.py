@@ -25,6 +25,10 @@ class PrepareProxyTest(unittest.TestCase):
             folder = self.root / 'feeds' / recipe
             folder.mkdir(parents=True)
             (folder / 'Makefile').write_text('DEPENDS:=+mihomo\n' if recipe == 'nikki/nikki' else 'unchanged\n')
+        for package in ('nikki', 'luci-app-nikki', 'luci-i18n-nikki-zh-cn', 'mihomo-meta'):
+            folder = self.root / 'package/vendor' / package
+            folder.mkdir(parents=True)
+            (folder/'Makefile').write_text('DEPENDS:=+mihomo\n')
         (self.root / 'tmp').mkdir()
 
     def prepare(self, config):
@@ -38,7 +42,7 @@ class PrepareProxyTest(unittest.TestCase):
         self.assertFalse((self.root / 'feeds/video/frameworks/qt6/qt6base').exists())
         self.assertEqual((self.root / 'feeds/video/unrelated/Makefile').read_text(), 'unchanged\n')
         self.assertEqual((self.root / 'feeds-update-called').read_text(), 'update -i nikki video luci packages\n')
-        self.assertIn('+mihomo-meta', (self.root / 'feeds/nikki/nikki/Makefile').read_text())
+        self.assertEqual((self.root / 'package/vendor/nikki/Makefile').read_text(), 'DEPENDS:=+mihomo\n')
         self.assertFalse((self.root / 'feeds/nikki/mihomo-alpha').exists())
 
     def test_explicit_qt6_selection_is_rejected_and_preserved(self):

@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mt6990-hwnat
 PKG_VERSION:=2023.05
-PKG_RELEASE:=2
+PKG_RELEASE:=1
 PKG_LICENSE:=GPL-2.0
 
 include $(INCLUDE_DIR)/kernel.mk
@@ -19,6 +19,11 @@ endef
 define KernelPackage/mt6990-hwnat/description
  Complete MT6990 HNAT/PPE provider ported from the FG370 OpenSDK.  It binds
  the built-in MediaTek FOE hooks used by Ethernet, Wi-Fi and MED/CCMNI.
+endef
+
+define KernelPackage/mt6990-hwnat/install
+	$(INSTALL_DIR) $(1)/etc/sysctl.d
+	$(INSTALL_DATA) ./files/20-mt6990-hwnat.conf $(1)/etc/sysctl.d/20-mt6990-hwnat.conf
 endef
 
 define Build/Prepare

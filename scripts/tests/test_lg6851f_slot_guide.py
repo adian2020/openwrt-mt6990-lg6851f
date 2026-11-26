@@ -9,8 +9,8 @@ import tempfile
 import unittest
 
 ROOT=Path(__file__).resolve().parents[2]
-PACKAGE=ROOT/'package/vendor/luci-app-5gmodem'
-SOURCE=PACKAGE/'htdocs/luci-static/resources/modem5g/slot_guide_v1.js'
+PACKAGE=ROOT/'files'
+SOURCE=PACKAGE/'www/luci-static/resources/modem5g/slot_guide_v1.js'
 TOOL=ROOT/'target/linux/mediatek/mt6990/base-files/usr/sbin/lg6851f-slotctl'
 
 
@@ -56,11 +56,11 @@ print(json.load(sys.stdin)[sys.argv[2].removeprefix('@.')])
   result,selected=self.execute('a',actual='b');self.assertEqual(result.returncode,95,result.stderr);self.assertIsNone(selected)
   result,selected=self.execute('b',corrupt=True);self.assertEqual(result.returncode,5,result.stderr);self.assertIsNone(selected)
  def test_guide_is_available_from_the_slot_page_only(self):
-  menu=json.loads((PACKAGE/'root/usr/share/luci/menu.d/luci-app-5gmodem.json').read_text())
+  menu=json.loads((PACKAGE/'usr/share/luci/menu.d/luci-app-lg6851f-slots.json').read_text())
   self.assertNotIn('admin/system/boot_slot_guide',menu)
   slots=menu['admin/system/boot_slots']
   self.assertEqual(slots['depends'],{'acl':['luci-app-lg6851f-slots']})
-  view=PACKAGE/('htdocs/luci-static/resources/view/'+slots['action']['path']+'.js')
+  view=PACKAGE/('www/luci-static/resources/view/'+slots['action']['path']+'.js')
   self.assertIn("'require modem5g.slot_guide_v1 as G'",view.read_text())
   self.assertNotIn('rpc.declare',SOURCE.read_text())
 

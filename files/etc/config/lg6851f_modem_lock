@@ -1,0 +1,3 @@
+config profile 'main'
+	option autoapply '0'
+	option mode 'none'

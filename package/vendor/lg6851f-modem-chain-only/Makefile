@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=lg6851f-modem-chain-only
 PKG_VERSION:=0.6
-PKG_RELEASE:=19
+PKG_RELEASE:=2
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -10,13 +10,12 @@ define Package/lg6851f-modem-chain-only
   SECTION:=firmware
   CATEGORY:=Firmware
   TITLE:=LG6851F 5G modem chain only userspace/materials
-  DEPENDS:=+libstdcpp +libgcc +libuci +libubox +libubus +libjson-c +libcurl +alsa-lib +audio-support +jshn
+  DEPENDS:=+libstdcpp +libgcc +libuci +libubox +libubus +libjson-c +libcurl +alsa-lib +jshn
 endef
 
 define Package/lg6851f-modem-chain-only/description
- 5G modem chain userspace and early vendor-storage setup. WiFi 7 remains
- handled by OpenWrt mt76; startup only imports validated per-device MAC slots
- from the factory MT7990 EEPROM into the known-good SDK dual-band template.
+ 5G modem chain userspace and early vendor-storage setup. WiFi is handled by the stock vendor driver overlay. Public startup reads
+ this device own factory calibration without writing factory/NV partitions.
 endef
 
 define Build/Compile
@@ -31,7 +30,7 @@ endef
 define Package/lg6851f-modem-chain-only/install
 	$(CP) ./files/* $(1)/
 	# The official sample_nw binary is only reachable through the validated,
-	# modem-lock/details wrappers. Keep the old, independent AT poller absent.
+	# user-triggered modem-lock wrapper.  Keep the old polling wrapper absent.
 	rm -f $(1)/usr/bin/lg6851f-modem-band
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/modem5g-at $(1)/usr/bin/modem5g-at
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/modem5g-sms-send $(1)/usr/bin/modem5g-sms-send

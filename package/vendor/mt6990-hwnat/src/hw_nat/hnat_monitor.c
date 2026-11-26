@@ -53,6 +53,7 @@
 #include "hnat_ioctl.h"
 #include "hnat_define.h"
 #include "foe_fdb.h"
+#include "hnat_common.h"
 #include <linux/socket.h>
 #include <linux/inetdevice.h>
 #include <net/rtnetlink.h>
@@ -160,6 +161,14 @@ int hnat_netdevice_event(struct notifier_block *unused, unsigned long event, voi
 
 	dev = netdev_notifier_info_to_dev(ptr);
 	switch (event) {
+ case NETDEV_UP:
+  if (dev->ieee80211_ptr)
+   ppe_dev_reg_handler(dev);
+  break;
+ case NETDEV_UNREGISTER:
+  if (dev->ieee80211_ptr)
+   ppe_dev_unreg_handler(dev);
+  break;
 	case NETDEV_GOING_DOWN:
 
 		if (debug_level >= 3)

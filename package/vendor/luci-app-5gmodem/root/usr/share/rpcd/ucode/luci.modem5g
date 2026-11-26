@@ -2,24 +2,17 @@
 
 'use strict';
 
-import { popen, readfile, glob, open, rename, mkdtemp, rmdir, unlink } from 'fs';
-import { cursor } from 'uci';
-import * as dashboard from 'lg6851f.dashboard';
-import * as radio from 'lg6851f.radio';
-import * as apn_profiles from 'lg6851f.apn';
+import { popen, readfile } from 'fs';
 
 const CLI = '/usr/bin/mipc_wan_cli';
 const ATCLI = '/usr/bin/modem5g-at';
 const SMSCLI = '/usr/bin/modem5g-sms-send';
 const LOCKCLI = '/usr/bin/lg6851f-modem-lock';
-const DETAILSCLI = '/usr/bin/lg6851f-modem-details';
-const FORWARDCLI = '/usr/libexec/lg6851f-sms-forward.uc';
 const STATE = '/tmp/lg6851f-modem-status.state';
 const LOCKSTATE = '/etc/modem5g-lock.state';
 
 function board_ok() {
-	let board = trim(readfile('/tmp/sysinfo/board_name') || '');
-	return board == 'fiberhome,lg6851f' || board == 'fiberhome_lg6851f';
+	return trim(readfile('/tmp/sysinfo/board_name') || '') == 'fiberhome,lg6851f';
 }
 
 function quote(value) {
@@ -34,23 +27,11 @@ function capture(argv, seconds) {
 	return { output: trim(output), code: code || 0 };
 }
 
-function slot_call(argv) {
- if (!board_ok()) return {code:95,error:'当前设备不支持槽位设置'};
- let result=capture(['/usr/sbin/lg6851f-slotctl',...argv],45), response;
- try {response=json(result.output);} catch(e) {return {code:result.code||5,error:'槽位工具未返回有效结果'};}
- if (result.code && !response.code) return {code:result.code,error:'槽位工具异常退出'};
- return response;
-}
-
 function launch_lock(argv) {
-	let directory=mkdtemp('/tmp/lg6851f-lock-job.XXXXXX');
-	if(!directory)return {code:5,error:'无法创建锁定任务'};
-	let id=replace(directory,/^.*\//,'');
-	let command = [ '/sbin/start-stop-daemon', '-S', '-b', '-x', LOCKCLI, '--', '--request-id', id ];
+	let command = [ '/sbin/start-stop-daemon', '-S', '-b', '-x', LOCKCLI, '--' ];
 	for (let arg in argv)
 		push(command, arg);
-	let result=capture(command,5);result.request_id=id;
-	return result;
+	return capture(command, 5);
 }
 
 function cli(option, arg) {
@@ -96,43 +77,6 @@ function at(command) {
 	if (!valid_at(command))
 		return { output: '', code: 22, error: 'AT command contains unsupported characters' };
 	return capture([ ATCLI, command ], 18);
-}
-
-function forward_call(command, input) {
-	if (!board_ok()) return { code: 95, error: '不支持此设备' };
-	let argv=['/usr/bin/ucode',FORWARDCLI,command], directory=null, temporary=null;
-	if (input != null) {
-		directory=mkdtemp('/tmp/lg6851f-forward-edit.XXXXXX');
-		if (!directory) return { code: 5, error: '无法创建配置临时目录' };
-		temporary=directory+'/input';
-		let file=open(temporary,'wx',0o600), text=sprintf('%J',input);
-		if (!file || file.write(text)!=length(text) || !file.close()) {
-			unlink(temporary);rmdir(directory);return { code: 5, error: '无法暂存配置' };
-		}
-		push(argv,temporary);
-	}
-	let result=capture(argv,60), response;
-	if (temporary) {unlink(temporary);rmdir(directory);}
-	try {response=json(result.output);} catch(e) {response={code:result.code||5,error:'短信转发服务未返回有效结果'};}
-	return response;
-}
-function pool_call(command,input) {
-	if (!board_ok()) return { code: 95, error: '不支持此设备' };
-	let argv=['/usr/bin/ucode','/usr/libexec/lg6851f-sms-pool.uc',command], directory=null, temporary=null;
-	if (input != null) {
-		directory=mkdtemp('/tmp/lg6851f-forward-edit.XXXXXX');
-		if (!directory) return { code: 5, error: '无法创建配置临时目录' };
-		temporary=directory+'/input';
-		let file=open(temporary,'wx',0o600), text=sprintf('%J',input);
-		if (!file || file.write(text)!=length(text) || !file.close()) {
-			unlink(temporary);rmdir(directory);return { code: 5, error: '无法暂存配置' };
-		}
-		push(argv,temporary);
-	}
-	let result=capture(argv,6), response;
-	if (temporary) {unlink(temporary);rmdir(directory);}
-	try {response=json(result.output);} catch(e) {response={code:result.code||5,error:'短信归档服务未返回有效结果'};}
-	return response;
 }
 
 function band_list(value, allowed) {
@@ -183,16 +127,16 @@ function modem_settled(network) {
 	return true;
 }
 
-function status(network_json) {
+function status() {
 	if (!board_ok())
 		return { available: false, error: 'Unsupported board' };
 
-	network_json ??= network_state();
+	let network_json = network_state();
 	if (!modem_settled(network_json))
 		return { available: true, initializing: true, network: network_json, error: 'Modem is still completing the official startup sequence' };
 	let cached = cached_modem_state();
 	let age = time() - +(cached.UPDATED || 0);
-	if (!cached.UPDATED || age < 0 || age > 180)
+	if (!cached.UPDATED || age > 180)
 		return { available: true, initializing: true, network: network_json, error: 'Waiting for the shared modem status collector' };
 	return {
 		available: true,
@@ -217,252 +161,32 @@ function status(network_json) {
 	};
 }
 
-function native_lock_readback() {
-	let raw = readfile(LOCKSTATE) || '', boot = trim(readfile('/proc/sys/kernel/random/boot_id') || '');
-	let record = {};
-	for (let line in split(raw, '\n')) {
-		let pos = index(line, '=');
-		if (pos > 0) record[substr(line, 0, pos)] = substr(line, pos + 1);
-	}
-	let verified = boot && record.BOOT_ID == boot && record.STATUS == 'verified';
-	let bands = dashboard.reading('bands');
-	if (verified && +record.UPDATED <= time() && +record.UPDATED > +(bands?.updated || 0) &&
-	    match(raw, /lte band info\s*=/) && match(raw, /nr band info\s*=/))
-		bands = {code:0, output:'SAVED_LOCK_STATE\n'+raw, boot_id:boot,
-			updated:+record.UPDATED, age:time()-record.UPDATED, stale:time()-record.UPDATED>180};
-	return { bands, lock_record: verified ? {mode:record.MODE, rat:record.RAT,
-		arfcn:record.VERIFIED_SERVING_ARFCN, pci:record.VERIFIED_SERVING_PCI} : null };
-}
-
-function cell_status(refresh) {
-	if (!board_ok()) return {available:false};
-	let network = network_state(), scope = dashboard.cellular_scope(network);
-	let cells = dashboard.reading('cells');
-	if (!scope || cells?.scope != scope) cells = null;
-	let queued = false;
-	if (refresh && scope && +network.uptime >= 30 &&
-	    (!cells || cells.stale || cells.age >= 20)) {
-		let worker = popen('/usr/bin/lg6851f-radio-collect --cells >/dev/null 2>&1 </dev/null &', 'r');
-		queued = worker != null && worker.close() == 0;
-	}
-	return { ...status(network), ...native_lock_readback(), cells, queued,
-		signal_sample: scope ? dashboard.signal_cache(cached_modem_state()) : null };
-}
-
-function read_json_command(argv, seconds) {
-	let result = capture(argv, seconds || 5);
-	try { return result.code == 0 ? json(result.output) : null; } catch (e) { return null; }
-}
-function save_reading(name, result) {
-	result.updated = time();
-	result.boot_id = trim(readfile('/proc/sys/kernel/random/boot_id') || '');
-	let path = '/tmp/lg6851f-modem-' + name + '.json';
-	let directory = mkdtemp('/tmp/lg6851f-reading.XXXXXX');
-	if (!directory) return result;
-	let temporary = directory + '/reading';
-	let file = open(temporary, 'wx', 0o600);
-	if (file) {
-		let output = sprintf('%J', result);
-		let written = file.write(output);
-		let closed = file.close();
-		if (written == length(output) && closed) rename(temporary, path);
-	}
-	unlink(temporary);
-	rmdir(directory);
-	return result;
-}
-function apn_values() {
-	let uci = cursor(); uci.load('network');
-	let values = uci.get_all('network', 'modem5g') || {};
-	return { proto: values.proto, apn: values.apn || '', iptype: +(values.iptype || 3),
-		auth: +(values.auth || 0), username: values.username || '', password_set: !!values.password,
-		mtu: +(values.mtu || 1500), auto_conf: +(values.auto_conf ?? 1) };
-}
-function dashboard_state() {
- let boot=trim(readfile('/proc/sys/kernel/random/boot_id')||''), frame=null;
- try {frame=json(readfile('/tmp/lg6851f-dashboard-v2.json')||'null');}catch(e){}
- if(frame?.boot_id!=boot)frame=null;
- let age=frame?.collected_at==null?null:time()-frame.collected_at;
- if(age==null||age<0||age>=10){
-  // Redirect all worker descriptors before returning; never wait for its pipe.
-  let child=popen('/usr/bin/lg6851f-dashboard-collect >/dev/null 2>&1 </dev/null &','r');
-  child?.close?.();
- }
- if(!frame)frame={initializing:true,modem:{},network:{},apn:apn_values(),cached_modem_stale:true,
-  model:trim(readfile('/tmp/sysinfo/model')||''),board:trim(readfile('/tmp/sysinfo/board_name')||''),
-  collector_phase:'pending'};
- frame.modem_restart=trim(readfile('/tmp/lg6851f-modem-restart.state')||'');
- frame.boot_confirmation=dashboard.boot_confirmation();
- frame.collector_age=age;frame.collector_stale=age==null||age<0||age>60;
- try {frame.qos=json(readfile('/tmp/lg6851f-modem-qos.json')||'null');}catch(e){}
- if(frame.qos?.boot_id!=boot)frame.qos=null;
- try {frame.traffic=json(readfile('/var/run/lg6851f-traffic/view.json')||'null');}catch(e){frame.traffic=null;}
- try {frame.radio_request=json(readfile('/tmp/lg6851f-radio-request.json')||'null');}catch(e){}
- if(frame.radio_request?.boot_id!=boot)frame.radio_request=null;
- return frame;
-}
-
-function apn_identity() {
- let state=dashboard.cached();
- if(!state.UPDATED || time()-int(state.UPDATED)<0 || time()-int(state.UPDATED)>180)return null;
- return {iccid:state.ICCID,imsi:state.IMSI};
-}
-function apn_get() {
- let result=apn_profiles.get(cursor(),apn_identity()),net=network_state();
- result.connected=!!net?.up;result.connecting=!!net?.pending;
- return result;
-}
-function apn_change(req) {
- if(!board_ok())return {ok:0,error:'apn_unsupported'};
- let payload=req.args?.payload,input;
- if(type(payload)!='string'||length(payload)>4096)return {ok:0,error:'apn_invalid'};
- try{input=json(payload);}catch(e){return {ok:0,error:'apn_invalid'};}
- let c=cursor(),identity=apn_identity();
- return apn_profiles.change(c,req.args?.action,input,function(iface){
-  // Per-SIM profiles are resolved by netifd at dial time. Keep the global
-  // network settings intact, so another SIM cannot inherit private credentials.
-  // netifd owns reconnection. Never hold an RPC or modem lock while it dials.
-  let p=popen('(ubus call network reload; ifdown modem5g; ifup modem5g) >/dev/null 2>&1 </dev/null &','r');p?.close?.();
-  return true;
- },identity);
-}
-function traffic_call(method,args) {
- let result=read_json_command(['/bin/ubus','-t','2','call','lg6851f.traffic',method,sprintf('%J',args||{})],3);
- return result || {ok:0,error:'traffic_unavailable'};
-}
-
-function save_apn(req) {
-	if (!board_ok()) return { code: 95, error: '当前设备不支持 MT6990 APN 设置' };
-	let value = req.args?.values;
-	if (type(value) != 'object' || type(value.apn) != 'string' || length(value.apn) > 100 ||
-	    (length(value.apn) && !match(value.apn, /^[A-Za-z0-9][A-Za-z0-9._-]*$/)) ||
-	    index([1,2,3], +value.iptype) < 0 || index([0,1,2,3], +value.auth) < 0 ||
-	    !match('' + value.mtu, /^[0-9]+$/) || +value.mtu < 576 || +value.mtu > 1500 ||
-	    type(value.username) != 'string' || length(value.username) > 128 || match(value.username, /[[:cntrl:]]/) ||
-	    (value.password != null && (type(value.password) != 'string' || length(value.password) > 128 || match(value.password, /[[:cntrl:]]/))))
-		return { code: 22, error: 'APN、协议、认证或 MTU 参数无效' };
-	let uci = cursor(); uci.load('network');
-	let pending = uci.changes('network');
-	if (pending == null) return { code: 5, error: '无法检查网络配置状态' };
-	if (length(pending)) return { code: 16, error: '网络存在未提交修改，请先保存或撤销' };
-	if (uci.get('network', 'modem5g', 'proto') != 'ql_datacall') return { code: 95, error: '当前接口不是 ql_datacall' };
-	for (let key in ['apn', 'iptype', 'auth', 'username', 'mtu']) uci.set('network', 'modem5g', key, '' + value[key]);
-	uci.set('network', 'modem5g', 'auto_conf', value.auto_conf ? '1' : '0');
-	if (value.clear_password) uci.delete('network', 'modem5g', 'password');
-	else if (value.password != null && length(value.password)) uci.set('network', 'modem5g', 'password', value.password);
-	if (!uci.commit('network')) return { code: 5, error: 'APN 配置保存失败' };
-	if (req.args?.apply) {
-		let result = capture([ '/sbin/ifup', 'modem5g' ], 20);
-		return { code: result.code, output: result.code ? result.output : '已保存并请求应用；请确认接口重新联网' };
-	}
-	return { code: 0, output: '已保存，尚未重建数据连接' };
-}
-
 const methods = {
-	get_boot_slots: {call:function(){return slot_call(['show']);}},
-	select_boot_slot: {args:{target:'',expected:'',confirm:false,allow_vendor_recovery:false},call:function(req){
-  let a=req.args;
-  if(index(['a','b'],a.target)<0 || type(a.expected)!='string' || !match(a.expected,/^[0-9a-f]{64}$/) || a.confirm!==true || type(a.allow_vendor_recovery)!='bool')
-   return {code:22,error:'槽位或确认参数无效'};
-  let argv=['select',a.target,'--expect',a.expected,'--confirm'];
-  if(a.allow_vendor_recovery)push(argv,'--allow-vendor-recovery');
-  return slot_call(argv);
- }},
-	dashboard_action: {args:{operation:''},call:function(req){
-		if(!board_ok())return {code:95,error:'当前设备不支持此操作'};
-		let op=req.args?.operation;
-		if(op=='modem_restart'){
-		 if(cursor().get('network','modem5g','radio_enabled')=='0')return {code:16,error:'请先开启蜂窝射频'};
-		 if(trim(readfile('/tmp/lg6851f-modem-restart.state')||'')=='running')return {code:16,error:'模组重启正在执行'};
-		 let p=popen('/usr/bin/timeout -k 10 120 /usr/bin/lg6851f-modem-restart >/tmp/lg6851f-modem-restart.log 2>&1 </dev/null &','r');p?.close?.();
-		 return {code:0,output:'已提交模组协议栈重启，请等待蜂窝网络恢复'};
-		}
-		if(op=='wifi_on'||op=='wifi_off'){
-			let c=cursor(),disabled=op=='wifi_off'?'1':'0',count=0,ok=true,pending=c.changes('wireless');
-			if(pending==null)return {code:5,error:'无法读取无线配置状态'};
-			if(length(pending))return {code:16,error:'无线配置有未保存更改'};
-			c.foreach('wireless','wifi-device',s=>{if(!c.set('wireless',s['.name'],'disabled',disabled))ok=false;count++;});
-			if(!count||!ok||!c.commit('wireless'))return {code:5,error:'无线配置保存失败'};
-			let p=popen('(sleep 2; /sbin/wifi reload) >/dev/null 2>&1 </dev/null &','r');p?.close?.();
-			return {code:0,output:'已保存无线开关，正在应用'};
-		}
-		if(op=='reboot'||op=='poweroff'){
-			let command=op=='reboot'?'/sbin/reboot':'/sbin/poweroff';
-			let p=popen('(sleep 2; '+command+') >/dev/null 2>&1 </dev/null &','r');p?.close?.();
-			return {code:0,output:op=='reboot'?'设备即将重启':'设备即将关机'};
-		}
-		return {code:95,error:'尚无已验证的对应接口'};
-	}},
-	apn_get: {call: function(){return apn_get();}},
-	apn_set: {args:{action:'',payload:''},call:apn_change},
-	traffic_get: {call:function(){return traffic_call('get');}},
-	traffic_set: {args:{payload:''},call:function(req){return traffic_call('set',req.args);}},
-	traffic_clear: {args:{confirm:false},call:function(req){return traffic_call('clear',req.args);}},
-	get_radio_details: { call: function() {
-		if (!board_ok()) return { code: 95, error: '当前设备不支持此查询' };
-		if (!modem_settled(network_state())) return { code: 11, error: '请等待蜂窝网络完成启动后再读取' };
-		let result = capture([ DETAILSCLI ], 55);
-		if (result.code != 0) return result;
-		result.parsed = radio.parse(result.output);
-		if (!result.parsed.complete) return { code: 5, error: '高级参数读取不完整，请稍后重试', output: result.output };
-		return save_reading('radio-details', result);
-	} },
-	request_radio_details: {call:function(){
-		if(!board_ok())return {code:95,error:'不支持的设备'};
-		if(!modem_settled(network_state()))return {code:11,error:'请等待蜂窝网络完成启动后再读取'};
-		let p=popen('/usr/bin/lg6851f-radio-collect >/dev/null 2>&1 </dev/null &','r');p?.close?.();
-		return {code:0,output:'已提交后台读取，请等待看板自动更新'};
-	}},
-	get_dashboard: { call: function() { return dashboard_state(); } },
-	get_rates: { call: function() { return dashboard.rate_sample(network_state()?.l3_device); } },
-	get_apn: { call: function() { return apn_values(); } },
-	set_apn: { args: { values: {}, apply: false }, call: function(req) { return save_apn(req); } },
-	get_sim_identity: { args: { reveal: false }, call: function(req) {
-		let state = dashboard.cached();
-		return { sim: state.SIM, operator: state.OPERATOR, slots_confirmed: 1,
-			imei: req.args?.reveal ? state.IMEI : dashboard.mask(state.IMEI),
-			imsi: req.args?.reveal ? state.IMSI : dashboard.mask(state.IMSI),
-			iccid: req.args?.reveal ? state.ICCID : dashboard.mask(state.ICCID),
-			phone: req.args?.reveal ? state.PHONE : dashboard.mask(state.PHONE) };
-	} },
 	get_status: { call: function() { return status(); } },
-	get_cell_status: { args: {refresh: false}, call: function(req) { return cell_status(req.args.refresh === true); } },
 	get_cells: { call: function() {
-		let network = network_state();
-		if (!modem_settled(network))
+		if (!modem_settled(network_state()))
 			return { initializing: true, serving: { output: 'Waiting for modem startup to settle' }, engineering: { output: '' } };
-		let result = {
+		return {
 			serving: at('AT+ECELL'),
 			engineering: at('AT+EINFO?'),
-			scope: dashboard.cellular_scope(network),
 			note: 'Channel information is derived from the same read-only AT+ECELL response shown below.'
 		};
-		if (result.serving.code == 0 && match(result.serving.output, /\+ECELL:/) && match(result.serving.output, /\bOK\b/))
-			{let r=dashboard.reading('radio-details');if(r && !r.stale)result.serving.carriers=r.parsed?.carriers;return save_reading('cells', result);}
-		result.serving.code = result.serving.code || 5;
-		return result;
 	} },
-    sms_pool_list: {args:{page:1},call:function(req){return pool_call('list',req.args);}},
-    sms_pool_show: {args:{id:''},call:function(req){return pool_call('show',req.args);}},
-    sms_pool_delete: {args:{id:'',sim:false},call:function(req){return pool_call('delete',req.args);}},
-    sms_pool_send: {args:{number:'',text:''},call:function(req){return pool_call('send',req.args);}},
-    sms_pool_sync: {call:function(){return pool_call('sync');}},
-    sms_pool_job: {call:function(){return pool_call('job');}},
-    clear_forward_history: {call:function(){return forward_call('clear');}},
 	list_sms: { call: function() {
-		let messages = capture([ '/usr/bin/lg6851f-sms-list' ], 40);
+		let mode = at('AT+CMGF=1');
+		let charset = at('AT+CSCS="UCS2"');
+		let storage = at('AT+CPMS?');
+		/* atcid safely carries the complete multi-line response.  One CMGL
+		 * avoids monopolising rpcd with up to 100 sequential CMGR calls. */
+		let messages = at('AT+CMGL="ALL"');
 
 		return {
-			success: messages.code == 0,
+			success: mode.code == 0 && charset.code == 0 && messages.code == 0,
+			storage: storage.output,
 			output: messages.code != 0 ? (messages.output || 'SMS query failed') :
 				(index(messages.output, '+CMGL:') >= 0 ? messages.output : 'No stored messages')
 		};
 	} },
-	get_forward_config: { call: function() { return forward_call('get'); } },
-	get_forward_status: { call: function() { return forward_call('status'); } },
-	set_forward_config: { args: { values: {} }, call: function(req) { return forward_call('set',req.args?.values||{}); } },
-	test_forward: { call: function() { return forward_call('test'); } },
-	retry_forward: { call: function() { return forward_call('retry'); } },
 	get_smsc: { call: function() { return at('AT+CSCA?'); } },
 	delete_sms: { args: { index: 0 }, call: function(req) {
 		let index = +req.args?.index;
@@ -494,46 +218,18 @@ const methods = {
 	run_at: { args: { command: '' }, call: function(req) { return at(req.args?.command || ''); } },
 	get_network: { call: function() {
 		let state = capture([ '/bin/ubus', 'call', 'network.interface.modem5g', 'status' ], 5);
-		let values = apn_values();
-		let config = { output: join('\n', map(['apn', 'iptype', 'auth', 'mtu', 'auto_conf'], key => `network.modem5g.${key}='${values[key]}'`)) };
+		let config = capture([ '/sbin/uci', '-q', 'show', 'network.modem5g' ], 5);
 		let cached = cached_modem_state();
 		return { status: state.output, config: config.output, radio: cached.RADIO || '', rat: cached.RAT_RAW || cached.RAT || 'UNKNOWN', cached: true };
-	} },
-	get_lock_cache: { args: { refresh: false }, call: function(req) {
-		if (!board_ok()) return { code:95, error:'不支持此设备' };
-		let state=null,boot=trim(readfile('/proc/sys/kernel/random/boot_id')||'');
-		try {state=json(readfile('/tmp/lg6851f-lock-refresh.json')||'null');}catch(e){}
-		if(state?.boot_id!=boot)state=null;
-		if(req.args?.refresh && !(state?.status=='reading' && time()-state.updated>=0 && time()-state.updated<65)) {
-			let child=popen('/usr/bin/lg6851f-lock-status-collect >/dev/null 2>&1 </dev/null &','r');
-			child?.close?.();state={status:'pending'};
-		}
-		return {...native_lock_readback(),cells:dashboard.reading('cells'),refresh:state};
 	} },
 	get_locks: { call: function() {
 		if (!modem_settled(network_state()))
 			return { code: 11, output: 'Waiting for modem startup to settle' };
-		let result = capture([ LOCKCLI, 'get' ], 40);
-		if (result.code != 0) return result;
-		if (length(split(result.output, 'get band mode success!')) == 3 &&
-		    length(split(result.output, 'lte band info')) == 3 && length(split(result.output, 'nr band info')) == 3)
-			return save_reading('bands', result);
-		result.code = 5;
-		result.error = '无法完整读取当前频段和模组能力，请稍后重试';
-		return result;
+		return capture([ LOCKCLI, 'get' ], 40);
 	} },
-	get_lock_request: { args: { request_id: '' }, call: function(req) {
+	get_lock_request: { call: function() {
 		let state = readfile(LOCKSTATE) || '';
 		let active = readfile('/tmp/lg6851f-modem-control.active') || '';
-		let id=req.args?.request_id||'';
-		if(id){
-			if(!match(id,/^lg6851f-lock-job\.[A-Za-z0-9_-]+$/))return {code:22,error:'无效锁定任务编号'};
-			state=readfile('/tmp/'+id+'/state')||'';
-			let boot=trim(readfile('/proc/sys/kernel/random/boot_id')||'');
-			if(state&&index('\n'+state,'\nBOOT_ID='+boot+'\n')<0)return {code:11,error:'锁定任务不属于本次启动'};
-			return {code:0,request_id:id,active:index('\n'+active,'\nOP_ID='+id+'\n')>=0,
-				output:state?'SAVED_LOCK_STATE\n'+trim(state):'等待任务启动',pending:!length(state)};
-		}
 		if (!length(state)) return { code: 0, active: length(active) > 0, output: length(active) ? 'OPERATION_ACTIVE' : '' };
 		let boot = trim(readfile('/proc/sys/kernel/random/boot_id') || '');
 		let saved = match(`\n${state}`, /\nBOOT_ID=([^\r\n]+)/);
@@ -544,12 +240,8 @@ const methods = {
 		};
 	} },
 	set_band_lock: { args: { lte: [], nr: [] }, call: function(req) {
-		if (index(req.args?.lte || [], 46) >= 0)
-			return { code: 95, error: 'B46 为模组额外上报能力，未列入本机标称频段，暂不开放手动设置' };
-		if (index(req.args?.nr || [], 76) >= 0)
-			return { code: 95, error: '模组报告支持 n76，但厂商工具不接受手动设置；请使用恢复默认' };
 		let lte = band_list(req.args?.lte, [ 1, 3, 5, 7, 8, 20, 28, 32, 38, 40, 41, 42, 43 ]);
-		let nr = band_list(req.args?.nr, [ 1, 3, 5, 7, 8, 20, 28, 38, 40, 41, 75, 77, 78 ]);
+		let nr = band_list(req.args?.nr, [ 1, 3, 5, 7, 8, 20, 28, 38, 40, 41, 77, 78 ]);
 		if (!lte || !nr)
 			return { code: 22, error: 'Select at least one valid LTE band and one valid NR band' };
 		return launch_lock([ 'apply-bands', lte, nr ]);
@@ -559,35 +251,18 @@ const methods = {
 		let arfcnText = '' + (req.args?.arfcn ?? '');
 		let arfcn = +arfcnText;
 		let pciText = '' + (req.args?.pci ?? '');
+		if (!match(arfcnText, /^[0-9]+$/) || arfcn < 1 || arfcn > 3279165)
+			return { code: 22, error: 'ARFCN must be an integer from 1 to 3279165' };
+		if (length(pciText) && (!match(pciText, /^[0-9]+$/) || +pciText > 2000))
+			return { code: 22, error: 'PCI must be empty or an integer from 0 to 2000' };
 		let rat = '' + (req.args?.rat || '');
-		if (!match(arfcnText, /^[0-9]+$/) || arfcn < (rat=='lte'?0:1) || arfcn > 3279165)
-			return { code: 22, error: rat=='lte'?'LTE EARFCN须为0至3279165的整数':'NR ARFCN须为1至3279165的整数' };
-		if (length(pciText) && (!match(pciText, /^[0-9]+$/) || +pciText > (rat == 'nr' ? 1007 : 503)))
-			return { code: 22, error: 'PCI 超出当前制式范围（LTE 0–503，NR 0–1007）' };
 		let band = +(req.args?.band || 0);
-		if ((rat == 'lte' && band == 46) || (rat == 'nr' && band == 76))
-			return { code: 95, error: '该频段当前只读展示，暂不开放手动锁定' };
-		let allowed = rat == 'lte' ? [1,3,5,7,8,20,28,32,38,40,41,42,43] : [1,3,5,7,8,20,28,38,40,41,75,77,78];
-		if (index([ 'lte', 'nr' ], rat) < 0 || index(allowed, band) < 0)
+		if (index([ 'lte', 'nr' ], rat) < 0 || band < 0 || band > 1024)
 			return { code: 22, error: 'Select the LTE/NR type and a valid band' };
 		return launch_lock([ 'set-cell', arfcnText, pciText, rat, '' + band ]);
 	} },
 	clear_cell_lock: { call: function() { return launch_lock([ 'clear-cell' ]); } },
-	set_radio: { args: { enabled: true }, call: function(req) {
-		let enabled = req.args?.enabled ? '1' : '0';
-		return capture([ '/usr/bin/lg6851f-radio-control', enabled ], 45);
-	} },
-	set_network_mode: {args:{mode:''},call:function(req){
-  let mode=req.args?.mode;
-  if(!board_ok() || index(['auto','lte','sa','nsa'],mode)<0)return {code:22,error:'Invalid network mode'};
-  return launch_lock(['set-mode',mode]);
- } },
-	set_data_roaming: {args:{enabled:false},call:function(req){
-  if(!board_ok() || type(req.args?.enabled)!='bool')return {code:22,error:'Invalid roaming value'};
-  let u=cursor();u.load('network');u.set('network','modem5g','dataroaming',req.args.enabled?'1':'0');
-  if(!u.commit('network'))return {code:5,error:'漫游配置保存失败'};
-  return capture(['/bin/ubus','call','network','reload'],10);
- } },
+	set_radio: { args: { enabled: true }, call: function(req) { return cli('nw_radio_state_set', req.args?.enabled ? '1' : '0'); } },
 	set_rat: { args: { mode: 21 }, call: function(req) {
 		let mode = +req.args?.mode;
 		if (index([ 3, 15, 19, 21 ], mode) < 0) return { code: 22, error: 'Invalid RAT mode' };

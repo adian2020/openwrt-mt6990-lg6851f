@@ -137,38 +137,19 @@ rebuild_modem_chain() {
 }
 
 main() {
-	local state up uptime device failures=0 stage=0 down_failures=0 pending
+	local state up uptime device failures=0 stage=0
 
 	while true; do
 		sleep "$CHECK_INTERVAL"
 		# A user-triggered band/cell transaction deliberately tears down and
 		# recreates the PDN. Never race it with automatic recovery escalation.
 		[ ! -e "$CONTROL_ACTIVE" ] || { failures=0; stage=0; continue; }
-		[ "$(uci -q get network.modem5g.radio_enabled)" != 0 ] || { failures=0; stage=0; continue; }
 		state="$(interface_state)"
 		up="$(link_value "$state" '@.up')"
 		uptime="$(link_value "$state" '@.uptime')"
 		device="$(link_value "$state" '@.l3_device')"
 
-		if [ "$up" != true ]; then
-            failures=0
-            pending="$(link_value "$state" '@.pending')"
-            [ "$pending" != true ] || { down_failures=0; continue; }
-            [ "$(uci -q get network.modem5g.auto)" != 0 ] || { down_failures=0; continue; }
-            down_failures=$((down_failures + 1))
-            if [ "$down_failures" -ge "$FAIL_LIMIT" ]; then
-                down_failures=0
-                if recovery_lock; then
-                    [ "$(uci -q get network.modem5g.radio_enabled)" = 0 ] || {
-                        log "initial data call is down; request netifd retry without RF reset"
-                        timeout 10 /sbin/ifup modem5g
-                    }
-                    recovery_unlock
-                fi
-            fi
-            continue
-        fi
-        down_failures=0
+		[ "$up" = "true" ] || { failures=0; continue; }
 		case "$uptime" in ''|*[!0-9]*) continue ;; esac
 		[ "$uptime" -ge "$SETTLE_TIME" ] || continue
 		[ -n "$device" ] || continue
@@ -187,11 +168,6 @@ main() {
 
 		if ! recovery_lock; then
 			log "another modem recovery is active; postpone this round"
-			continue
-		fi
-		if [ "$(uci -q get network.modem5g.radio_enabled)" = 0 ]; then
-			recovery_unlock
-			stage=0
 			continue
 		fi
 		case "$stage" in

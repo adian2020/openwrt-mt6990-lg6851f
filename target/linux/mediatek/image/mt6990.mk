@@ -23,10 +23,10 @@ define Device/fiberhome_lg6851f
   KERNEL_ENTRY := 0x80080000
   DEVICE_DTS := mt6990-fiberhome-lg6851f
   DEVICE_DTS_DIR := ../dts
-	DEVICE_PACKAGES := kmod-mt7996e kmod-mt7990-firmware luci-app-5gmodem luci-app-pwmfan \
+	DEVICE_PACKAGES := kmod-mt7996e kmod-mt7990-firmware luci-app-5gmodem luci-app-fiberhomedash lg6851f-ipv6-prefix luci-app-pwmfan \
 	luci-theme-argon luci-theme-bootstrap \
 	mt6990-adb-usb \
-	kmod-mt6990-hwnat \
+	kmod-mt6990-hwnat kmod-lg6851f-ppe-stats \
 	libf2fs mkf2fs f2fsck
   IMAGES += boot_b.img rootfs_b.img
   IMAGE/boot_b.img := lg6851f-android-boot

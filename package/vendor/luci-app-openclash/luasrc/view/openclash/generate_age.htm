@@ -13,9 +13,6 @@
   btn.value = '<%:Generate Age Key%>';
   var parent = algoSelect.parentNode || algoSelect;
   parent.insertBefore(btn, algoSelect.nextSibling);
-  var btnStatus = document.createElement('span');
-  btnStatus.className = 'oc-flush-status';
-  parent.insertBefore(btnStatus, btn.nextSibling);
 
   var pbtn = document.createElement('input');
   pbtn.type = 'button';
@@ -24,19 +21,9 @@
   pbtn.value = '<%:Calculate Public Key%>';
   var pparent = age_public.parentNode || age_public;
   pparent.appendChild(pbtn);
-  var pbtnStatus = document.createElement('span');
-  pbtnStatus.className = 'oc-flush-status';
-  pparent.appendChild(pbtnStatus);
-
-  function setStatus(el, msg, ok) {
-    if (!el) return;
-    el.textContent = msg || '';
-    el.className = 'oc-flush-status' + (msg && !ok ? ' err' : '');
-  }
 
   btn.onclick = function() {
     var algo = (algoSelect && algoSelect.value) ? algoSelect.value : 'keygen';
-    setStatus(btnStatus, '', true);
     btn.disabled = true;
     var old = btn.value;
     btn.value = '<%:Generating...%>';
@@ -46,9 +33,11 @@
       if (xhr && xhr.status == 200 && data && data.status === 'success') {
         if (age_secret) age_secret.value = data.secret || '';
         if (age_public) age_public.value = data.public || '';
-        setStatus(btnStatus, '<%:Generated successfully%>', true);
+        btn.value = '<%:Generate Age Key%>';
+        setTimeout(function(){ btn.value = old; }, 4000);
       } else {
-        setStatus(btnStatus, '<%:Failed to generate age key%>', false);
+        btn.value = '<%:Failed to generate age key%>';
+        setTimeout(function(){ btn.value = old; }, 4000);
       }
     });
     return false;
@@ -56,24 +45,27 @@
 
   pbtn.onclick = function() {
     var secret = age_secret.value.trim();
-    setStatus(pbtnStatus, '', true);
-    if (!secret) {
-      setStatus(pbtnStatus, '<%:Please enter the Age Secret Key to calculate the public key!%>', false);
-      return false;
-    }
-    var old = pbtn.value;
     pbtn.disabled = true;
+    var old = pbtn.value;
     pbtn.value = '<%:Generating...%>';
-    XHR.get("<%=luci.dispatcher.build_url('admin','services','openclash','cal_age_public_key')%>", { secret: secret }, function(xhr, data) {
-      pbtn.disabled = false;
-      pbtn.value = old;
-      if (xhr && xhr.status == 200 && data && data.status === 'success') {
-        if (age_public) age_public.value = data.public || '';
-        setStatus(pbtnStatus, '<%:Calculated successfully%>', true);
-      } else {
-        setStatus(pbtnStatus, '<%:Failed to calculate public key%>', false);
-      }
-    });
+    if (!secret) {
+      alert("<%:Please enter the Age Secret Key to calculate the public key!%>");
+    } else {
+      XHR.get("<%=luci.dispatcher.build_url('admin','services','openclash','cal_age_public_key')%>", { secret: secret }, function(xhr, data) {
+        pbtn.disabled = false;
+        pbtn.value = old;
+        if (xhr && xhr.status == 200 && data && data.status === 'success') {
+          if (age_public) age_public.value = data.public || '';
+          pbtn.value = '<%:Calculate Public Key%>';
+          setTimeout(function(){ pbtn.value = old; }, 4000);
+        } else {
+          pbtn.value = '<%:Failed to calculate public key%>';
+          setTimeout(function(){ pbtn.value = old; }, 4000);
+        }
+      });
+    }
+    pbtn.disabled = false;
+    pbtn.value = old;
     return false;
   };
 })();
