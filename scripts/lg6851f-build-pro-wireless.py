@@ -201,8 +201,8 @@ def build_hostapd(args, includes, environment):
     subprocess.run([args.cross_compile + "strip", "--strip-debug", output], env=env, check=True)
     header = subprocess.check_output(["readelf", "-h", output], env=env, text=True)
     libraries = subprocess.check_output(["readelf", "-d", output], env=env, text=True)
-    if "AArch64" not in header or any(f"[{library}.so." not in libraries for library in
-                                     ("libnl-3", "libnl-genl-3", "libssl", "libcrypto")):
+    required = ("libnl-3", "libnl-genl-3", "libssl", "libcrypto", "libubox", "libubus")
+    if "AArch64" not in header or any(f"[{library}.so" not in libraries for library in required):
         raise ValueError("厂商 hostapd 的 ARM64 架构或目标动态链接库不符")
     print(output, flush=True)
 

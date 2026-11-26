@@ -63,7 +63,7 @@ jobs:
           make defconfig 2>&1 | tee defconfig.log
           if grep -Eq 'recursive dependency detected|error:' defconfig.log; then exit 1; fi
           grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' .config
-          for package in kmod-cfg80211 kmod-mac80211 kmod-mt6990-hwnat libnl-core libnl-genl libopenssl; do
+          for package in kmod-cfg80211 kmod-mac80211 kmod-mt6990-hwnat libnl-core libnl-genl libopenssl libubox libubus libjson-c liblua; do
             grep -qx "CONFIG_PACKAGE_${package}=y" .config
           done
 
@@ -78,7 +78,14 @@ jobs:
 
       - name: Build target hostapd libraries
         run: |
+          make -j"$JOBS" V=s package/libs/libjson-c/compile
+          make -j"$JOBS" V=s package/utils/lua/compile
+          make -j"$JOBS" V=s package/libs/libubox/compile
+          make -j"$JOBS" V=s package/system/ubus/compile
           make -j"$JOBS" V=s package/libs/libnl/compile
+          if grep -qx 'CONFIG_OPENSSL_WITH_COMPRESSION=y' .config; then
+            make -j"$JOBS" V=s package/libs/zlib/compile
+          fi
           make -j"$JOBS" V=s package/libs/openssl/compile
 
       - uses: actions/setup-python@v5
