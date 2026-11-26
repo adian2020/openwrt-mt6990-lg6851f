@@ -1,0 +1,133 @@
+name: LG6851F Pro Wireless ABI
+
+on:
+  push:
+    branches: [cloud-build-stock-accel-port]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lg6851f-pro-wireless-abi-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  wireless-abi:
+    if: github.ref == 'refs/heads/cloud-build-stock-accel-port'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 210
+    env:
+      PRO_BUILD_REVISION: b942f071af127ece3d40321aca41f4f96f2ab800
+      JOBS: '4'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          repository: adian2020/LG6851F-Pro
+          ref: ${{ env.PRO_BUILD_REVISION }}
+          fetch-depth: 0
+          path: pro-source
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison gcc-multilib gawk gettext \
+            git libncurses-dev libssl-dev python3 python3-distutils python3-setuptools \
+            rsync unzip zlib1g-dev file wget curl swig jq xsltproc libelf-dev libmd-dev
+
+      - name: Restore verified source downloads
+        uses: actions/cache@v4
+        with:
+          path: dl
+          key: lg6851f-pro-wireless-dl-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            lg6851f-pro-wireless-dl-${{ runner.os }}-
+            openwrt-dl-${{ runner.os }}-
+
+      - name: Prepare target build configuration
+        run: |
+          set -euo pipefail
+          cp .config "$RUNNER_TEMP/lg6851f.config"
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          cp "$RUNNER_TEMP/lg6851f.config" .config
+          for package in kmod-mt6990-hwnat libnl-core libnl-genl libopenssl; do
+            sed -i -e "/^CONFIG_PACKAGE_${package}=/d" -e "/^# CONFIG_PACKAGE_${package} is not set$/d" .config
+            printf 'CONFIG_PACKAGE_%s=y\n' "$package" >> .config
+          done
+          make defconfig 2>&1 | tee defconfig.log
+          if grep -Eq 'recursive dependency detected|error:' defconfig.log; then exit 1; fi
+          grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' .config
+          for package in kmod-cfg80211 kmod-mac80211 kmod-mt6990-hwnat libnl-core libnl-genl libopenssl; do
+            grep -qx "CONFIG_PACKAGE_${package}=y" .config
+          done
+
+      - name: Build kernel and exports with the target toolchain
+        run: |
+          make -j"$JOBS" V=s tools/install
+          make -j"$JOBS" V=s toolchain/install
+          make -j"$JOBS" V=s package/system/apk/host/compile
+          make -j"$JOBS" V=s target/linux/compile
+          make -j"$JOBS" V=s package/kernel/mac80211/compile
+          make -j"$JOBS" V=s package/vendor/mt6990-hwnat/compile
+
+      - name: Build target hostapd libraries
+        run: |
+          make -j"$JOBS" V=s package/libs/libnl/compile
+          make -j"$JOBS" V=s package/libs/openssl/compile
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate the vendor wireless modules and build hostapd
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          kernels=(build_dir/target-*/linux-mediatek_mt6990/linux-6.18.44)
+          compilers=(staging_dir/toolchain-aarch64_cortex-a55*/bin/aarch64-openwrt-linux-musl-gcc)
+          staging=(staging_dir/target-aarch64_cortex-a55*)
+          test "${#kernels[@]}" -eq 1 && test "${#compilers[@]}" -eq 1 && test "${#staging[@]}" -eq 1
+          compiler="$PWD/${compilers[0]}"
+          python3 scripts/lg6851f-build-pro-wireless.py \
+            --vendor-repo pro-source --kernel "${kernels[0]}" --staging "${staging[0]}" \
+            --cross-compile "${compiler%gcc}" --work-dir build-pro-wireless -j "$JOBS" --hostapd
+          mkdir pro-wireless-verified
+          cp build-pro-wireless/{pro-warp.dtb,driver-repair.json,lg6851f-hostapd} pro-wireless-verified/
+          for name in wifi_md_coex mt_wifi_cmn mtk_warp mt_wifi mtk_hwifi connac_if mtk_pci mtk_wed mt7990 mt7991; do
+            mapfile -t matches < <(find build-pro-wireless/vendor-source -type f -name "$name.ko")
+            test "${#matches[@]}" -eq 1
+            "${compiler%gcc}strip" --strip-debug "${matches[0]}" -o "pro-wireless-verified/$name.ko"
+          done
+          printf 'source=%s\npro_build_source=%s\n' "$GITHUB_SHA" "$PRO_BUILD_REVISION" > pro-wireless-verified/build-id.txt
+          kernel="${kernels[0]}"
+          sha256sum "$kernel/Module.symvers" "${kernel%/*}/symvers/mac80211.symvers" \
+            "${kernel%/*}/symvers/mt6990-hwnat.symvers" >> pro-wireless-verified/build-id.txt
+          cd pro-wireless-verified
+          sha256sum *.ko pro-warp.dtb driver-repair.json lg6851f-hostapd build-id.txt > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Upload wireless ABI build diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LG6851F-Pro-wireless-ABI-diagnostics
+          include-hidden-files: true
+          path: |
+            .config
+            defconfig.log
+            build-pro-wireless/*.log
+          retention-days: 7
+
+      - name: Upload verified components
+        uses: actions/upload-artifact@v4
+        with:
+          name: LG6851F-Pro-wireless-ABI-${{ github.run_id }}-${{ github.run_attempt }}
+          path: pro-wireless-verified/
+          if-no-files-found: error
+          retention-days: 14

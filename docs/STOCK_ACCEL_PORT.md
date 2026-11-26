@@ -80,11 +80,13 @@ python3 scripts/lg6851f-build-pro-wireless.py \
   --work-dir "$OUTPUT_DIR" --objects
 ```
 
-`CROSS_COMPILE` 使用目标 ARM64 工具链的前缀并带末尾 `-`。`OUTPUT_DIR` 使用新建或空目录。完成目标内核、mac80211 和 HNAT 构建后，在另一个工作目录去掉 `--objects` 执行模块符号校验和生成 `.ko`。
+`CROSS_COMPILE` 使用目标 ARM64 工具链的前缀并带末尾 `-`。`OUTPUT_DIR` 使用新建或空目录。对象模式也检查 `hwifi` 生成的 `connac_if`、`mtk_pci`、`mtk_wed`、`mt7990`、`mt7991`。完整模块模式还使用 Pro 实验构建 `b942f071` 中的源码修复和 APCLI 指令检查，保留 `modpost` 未解析符号的失败行为，并逐个检查模块架构和 `vermagic`。`--hostapd` 使用同一 ARM64 工具链和同批 libnl/OpenSSL 重编厂商 hostapd。[Pro 驱动修复入口](https://github.com/adian2020/LG6851F-Pro/blob/b942f071af127ece3d40321aca41f4f96f2ab800/scripts/cloud/vendor_repair.py)
+
+`cloud-build-stock-accel-port` 的独立 Actions 工作流先构建目标内核、mac80211 和 HNAT，再执行完整模块校验和 hostapd 构建。成功产物包含候选 DTB、10 个模块、hostapd、驱动修复报告及 SHA256，供下一步组装使用。工作流只上传组件，不生成或发布刷机包。
 
 候选 DTS 从本分支的板级设备树继承启动和其他外设资源，移除以太网对上游 WED 的引用和两个上游 WED 节点，加入 Pro 的三路 WED、WDMA、AP↔WO CCIF 及 WO 的 ILM、DLM、启动寄存器。编译后的 DTB 回读核对了这八个节点与 Pro 一致，其余基线属性和 phandle 一致。从 ARM64 `mtk_warp.o` 提取的三个内置固件，各自的 ILM/EMI 载荷为 22048/87264 字节，分别落在候选 DTB 的三对地址范围内。该方案使用 WARP 的嵌入固件和复位流程，避免把仓库里的外置 WO 文件按尾号当作 PCI 域编号。[Pro 板级设备树](https://github.com/adian2020/LG6851F-Pro/blob/0e1518ed632388e814032e0831560d22d9488981/target/linux/mediatek/dts/mt6990-fiberhome-lg6851f.dts)
 
-五个部件已使用目标 Linux 6.18.44 和无线 backports 6.18.26 编译并链接为 ARM64 对象。当前验证目录缺少完整目标内核和外部依赖的符号表，完整模块 ABI 校验尚未完成。
+本地验证目录只有准备后的 Linux 6.18.44 内核和无线 backports 6.18.26。该目录用于核对 ARM64 对象，完整模块 ABI 由独立云流程使用同批符号表验证。
 
 整机接入仍需把当前构建生成的模块与原生 hostapd、`vendor618` 运行层、校准入口及固件成套装配，并确认两个 Wi-Fi PCIe 功能只由厂商驱动绑定。WED RX 需要观察 WO 启动、接收环和每站点 RX 计数。Pro 的同 BSSID 软件直转根据站点隔离与 VLAN 检查选取目标 WCID，进入 `RTMPSendPackets()`。同 BSSID 硬件验收需要同时观察两个客户端的实际流和对应硬件命中，并复测隔离、VLAN 以及重连后的流项失效。[Pro AP 转发](https://github.com/adian2020/LG6851F-Pro/blob/0e1518ed632388e814032e0831560d22d9488981/vendor-source/wifi/mt_wifi/ap/ap_data.c#L4365)
 

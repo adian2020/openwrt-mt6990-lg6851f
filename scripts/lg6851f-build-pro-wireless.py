@@ -7,16 +7,21 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 
 
 PRO_REVISION = "0e1518ed632388e814032e0831560d22d9488981"
+PRO_BUILD_REVISION = "b942f071af127ece3d40321aca41f4f96f2ab800"
+REPAIR_SOURCE = "development-history/systemfix-source/systemfix-20261021-30/driver-build/repair-source"
+RX_REPAIR = "development-history/V2.10/wifi-rebuild/patch-source.py"
+HOSTAPD_SOURCE = "development-history/V2.10/hostapd-native"
 PARTS = {
-    "coex": ("wifi_md_coex", "wifi_md_coex"),
-    "cmn": ("mt_wifi_cmn", "mt_wifi_cmn"),
-    "warp": ("wifi/warp_driver/warp", "mtk_warp"),
-    "wifi": ("wifi/mt_wifi_ap", "mt_wifi"),
-    "hwifi": ("wifi/wlan_hwifi", "mtk_hwifi"),
+    "coex": ("wifi_md_coex", ("wifi_md_coex",)),
+    "cmn": ("mt_wifi_cmn", ("mt_wifi_cmn",)),
+    "warp": ("wifi/warp_driver/warp", ("mtk_warp",)),
+    "wifi": ("wifi/mt_wifi_ap", ("mt_wifi",)),
+    "hwifi": ("wifi/wlan_hwifi", ("mtk_hwifi", "connac_if", "mtk_pci", "mtk_wed", "mt7990", "mt7991")),
 }
 BACKPORT_HEADERS = (
     "mac80211-backport", "mac80211-backport/uapi", "mac80211", "mac80211/uapi",
@@ -29,16 +34,15 @@ def require_file(path):
         raise ValueError(f"缺少有效构建输入 {path}")
 
 
-def extract_source(repository, work):
+def extract_source(repository, work, revision, paths):
     with subprocess.Popen(
-        ["git", "-C", str(repository), "archive", PRO_REVISION,
-         "vendor-source", "vendor-include", "vendor-config.json"],
+        ["git", "-C", str(repository), "archive", revision, *paths],
         stdout=subprocess.PIPE,
     ) as archive:
         with tarfile.open(fileobj=archive.stdout, mode="r|") as source:
             source.extractall(work, filter="data")
         if archive.wait():
-            raise ValueError(f"无法导出 Pro 源提交 {PRO_REVISION}")
+            raise ValueError(f"无法导出 Pro 源提交 {revision}")
 
 
 def prepare_wifi_source(work):
@@ -50,6 +54,27 @@ def prepare_wifi_source(work):
         raise ValueError(f"厂商 Wi-Fi 头文件顺序与固定源码不符 {path}")
     # debug.h uses vendor typedefs declared through rt_config.h.
     path.write_bytes(source.replace(before, after))
+
+
+def prepare_repairs(args):
+    work = args.work_dir
+    extract_source(args.vendor_repo, work, PRO_BUILD_REVISION,
+                   [REPAIR_SOURCE, RX_REPAIR, "scripts/cloud/vendor_repair.py", "scripts/cloud/elf64.py"])
+    wifi = work / "vendor-source/wifi/mt_wifi_ap"
+    shutil.copytree(work / REPAIR_SOURCE, wifi / "cloud-repairs")
+    with (wifi / "Makefile").open("a", encoding="utf-8") as makefile:
+        makefile.write("\n$(MOD_NAME)-objs += cloud-repairs/parser-repair.o cloud-repairs/action-repair.o "
+                       "cloud-repairs/pmksa-repair.o\n")
+    receive = work / "vendor-source/wifi/mt_wifi/ap/ap_data.c"
+    if b"An authenticated STA may send a complete" not in receive.read_bytes():
+        subprocess.run([sys.executable, work / RX_REPAIR, receive], check=True)
+    cfg = work / "vendor-source/wifi/mt_wifi/os/linux/cfg80211/cfg80211.c"
+    source = cfg.read_bytes()
+    old = b"(sizeof(u32)+sizeof(u32))*6, vendor_event, GFP_KERNEL)"
+    new = b"(sizeof(u32)+sizeof(u32))*6, vendor_event - 1, GFP_KERNEL)"
+    if source.count(old) != 1:
+        raise ValueError("厂商雷达事件源码与固定版本不符")
+    cfg.write_bytes(source.replace(old, new))
 
 
 def build_dtb(args, environment):
@@ -72,7 +97,7 @@ def build_dtb(args, environment):
 
 def build_part(args, part, sources, includes, config, environment):
     path = sources[part]
-    module = PARTS[part][1]
+    names = PARTS[part][1]
     flags = [f"-I{args.staging / 'usr/include' / header}" for header in BACKPORT_HEADERS]
     flags += ["-DBACKPORT_NOSTDINC", "-include", "backport/backport.h"]
     settings = {}
@@ -116,14 +141,16 @@ def build_part(args, part, sources, includes, config, environment):
     if not args.objects:
         for table in symbols:
             require_file(table)
-    target = f"{module}.o" if args.objects else "modules"
     command = ["make", "-C", str(args.kernel), f"-j{args.jobs}", "ARCH=arm64",
                f"CROSS_COMPILE={args.cross_compile}", f"M={path}", "CONFIG_WERROR=n"]
     command += [f"{key}={value}" for key, value in settings.items()]
     command += [f"KCFLAGS=-Wno-error -include {includes / 'vendor618_compat.h'}",
-                "NOSTDINC_FLAGS=" + " ".join(flags), target]
-    if not args.objects:
-        command.insert(-1, "KBUILD_EXTRA_SYMBOLS=" + " ".join(map(str, symbols)))
+                "NOSTDINC_FLAGS=" + " ".join(flags)]
+    if args.objects:
+        command += [f"{module}.o" for module in names]
+    else:
+        command += ["KBUILD_EXTRA_SYMBOLS=" + " ".join(map(str, symbols)),
+                    "KBUILD_MODPOST_WARN=", "KBUILD_MODPOST_NOFINAL=", "modules"]
 
     log_path = args.work_dir / f"{part}.log"
     print(f"{part} → {log_path}", flush=True)
@@ -134,11 +161,49 @@ def build_part(args, part, sources, includes, config, environment):
     if result.returncode:
         raise ValueError(f"{part} 构建失败，退出码 {result.returncode}，日志 {log_path}")
     suffix = "o" if args.objects else "ko"
-    output = path / f"{module}.{suffix}"
-    require_file(output)
-    header = subprocess.check_output(["readelf", "-h", output], env=environment, text=True)
-    if "AArch64" not in header:
-        raise ValueError(f"产物架构不匹配 {output}")
+    if part == "wifi" and not args.objects:
+        subprocess.run([sys.executable, args.work_dir / "scripts/cloud/vendor_repair.py", path / "mt_wifi.ko",
+                        args.work_dir / "driver-repair.json"], env=environment, check=True)
+    for module in names:
+        output = path / f"{module}.{suffix}"
+        require_file(output)
+        header = subprocess.check_output(["readelf", "-h", output], env=environment, text=True)
+        if "AArch64" not in header:
+            raise ValueError(f"产物架构不匹配 {output}")
+        if not args.objects:
+            metadata = subprocess.check_output(["readelf", "-p", ".modinfo", output], env=environment, text=True)
+            release = (args.kernel / "include/config/kernel.release").read_text().strip()
+            if f"vermagic={release} " not in metadata:
+                raise ValueError(f"模块 vermagic 不匹配 {output}")
+        print(output, flush=True)
+
+
+def build_hostapd(args, includes, environment):
+    extract_source(args.vendor_repo, args.work_dir, PRO_BUILD_REVISION, [HOSTAPD_SOURCE])
+    tree = args.work_dir / HOSTAPD_SOURCE
+    staging = args.staging / "usr"
+    env = dict(environment, PKG_CONFIG_LIBDIR=str(staging / "lib/pkgconfig"),
+               PKG_CONFIG_SYSROOT_DIR=str(args.staging),
+               LDFLAGS=f"-L{staging / 'lib'} -Wl,-rpath-link,{args.staging / 'lib'} "
+                       f"-Wl,-rpath-link,{staging / 'lib'}")
+    command = ["make", "-C", tree / "hostapd", f"-j{args.jobs}", f"CC={args.cross_compile}gcc",
+               "CONFIG_LIBNL32=y", "CONFIG_TLS=openssl", f"LIBNL_INC={staging / 'include/libnl3'}",
+               f"EXTRA_CFLAGS=-I{staging / 'include'} -I{includes / 'mtk_nl80211_inc'} "
+               f"-I{tree / 'wpa_supplicant'}", "hostapd"]
+    log_path = args.work_dir / "hostapd.log"
+    with log_path.open("w", encoding="utf-8") as log:
+        result = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT)
+    if result.returncode:
+        raise ValueError(f"厂商 hostapd 构建失败，日志 {log_path}")
+    output = args.work_dir / "lg6851f-hostapd"
+    shutil.copyfile(tree / "hostapd/hostapd", output)
+    output.chmod(0o755)
+    subprocess.run([args.cross_compile + "strip", "--strip-debug", output], env=env, check=True)
+    header = subprocess.check_output(["readelf", "-h", output], env=env, text=True)
+    libraries = subprocess.check_output(["readelf", "-d", output], env=env, text=True)
+    if "AArch64" not in header or any(f"[{library}.so." not in libraries for library in
+                                     ("libnl-3", "libnl-genl-3", "libssl", "libcrypto")):
+        raise ValueError("厂商 hostapd 的 ARM64 架构或目标动态链接库不符")
     print(output, flush=True)
 
 
@@ -150,6 +215,7 @@ def main():
     parser.add_argument("--cross-compile", required=True, help="ARM64 cross-compiler prefix, including trailing -")
     parser.add_argument("--work-dir", required=True, type=Path, help="new or empty output directory")
     parser.add_argument("--objects", action="store_true", help="compile linked objects without module ABI checks")
+    parser.add_argument("--hostapd", action="store_true", help="also rebuild the vendor hostapd with target libraries")
     parser.add_argument("-j", "--jobs", type=int, default=4)
     args = parser.parse_args()
     args.kernel = args.kernel.resolve()
@@ -175,13 +241,18 @@ def main():
             raise ValueError(f"输出目录须为空 {args.work_dir}")
         environment = dict(os.environ, STAGING_DIR=str(args.staging), LC_ALL="C")
         build_dtb(args, environment)
-        extract_source(args.vendor_repo, args.work_dir)
+        extract_source(args.vendor_repo, args.work_dir, PRO_REVISION,
+                       ["vendor-source", "vendor-include", "vendor-config.json"])
         prepare_wifi_source(args.work_dir)
+        if not args.objects:
+            prepare_repairs(args)
         config = json.loads((args.work_dir / "vendor-config.json").read_text())
         sources = {part: args.work_dir / "vendor-source" / path for part, (path, _) in PARTS.items()}
         includes = args.work_dir / "vendor-include"
         for part in PARTS:
             build_part(args, part, sources, includes, config, environment)
+        if args.hostapd:
+            build_hostapd(args, includes, environment)
     except (OSError, ValueError, tarfile.TarError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"{error}\n")
 
