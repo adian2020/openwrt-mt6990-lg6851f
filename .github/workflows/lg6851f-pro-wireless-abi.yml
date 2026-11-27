@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: lg6851f-pro-wireless-abi-${{ github.ref }}
@@ -74,8 +74,13 @@ jobs:
             sed -i -e "/^CONFIG_PACKAGE_${package}=/d" -e "/^# CONFIG_PACKAGE_${package} is not set$/d" .config
             printf 'CONFIG_PACKAGE_%s=y\n' "$package" >> .config
           done
+          python3 scripts/mt6990-apk-library.py select
+          python3 scripts/mt6990-apk-library.py prepare \
+            --repository "$GITHUB_REPOSITORY" --snapshot "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" --source "$GITHUB_SHA"
+          python3 scripts/mt6990-update-plugins.py --report-only
           make defconfig 2>&1 | tee defconfig.log
           if grep -Eq 'recursive dependency detected|error:' defconfig.log; then exit 1; fi
+          python3 scripts/mt6990-apk-library.py verify-selection
           grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' .config
           if grep -Eq '^CONFIG_PACKAGE_kmod-mt(76|79)[^=]*=y$' .config; then
             echo 'The vendor image must have exclusive ownership of the Wi-Fi hardware'
@@ -222,9 +227,30 @@ jobs:
           done
           cp "$dtb" "$out/"
           cp pro-wireless-verified/{build-id.txt,driver-repair.json} "$out/"
-          cd "$out"
-          sha256sum a/* b/* ./*.dtb build-id.txt driver-repair.json > SHA256SUMS
-          sha256sum -c SHA256SUMS
+
+      - name: Verify and publish the matching experimental APK library
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ./scripts/mt6990-build-apk-repository.sh
+          library=bin/mt6990-apk-repository
+          shopt -s nullglob
+          kdirs=(build_dir/target-*/linux-mediatek_mt6990)
+          test "${#kdirs[@]}" -eq 1
+          for name in build.json public-key.pem selection.json; do
+            unsquashfs -cat "${kdirs[0]}/root.squashfs" "usr/share/mt6990-apk/$name" | cmp - "$library/$name"
+          done
+          unsquashfs -cat "${kdirs[0]}/root.squashfs" etc/apk/world | cmp - "$library/firmware.world"
+          for slot in a b; do
+            cp "$library/repository.manifest.json" "pro-image-verified/$slot/APK_LIBRARY.json"
+          done
+          (
+            cd pro-image-verified
+            sha256sum a/* b/* ./*.dtb build-id.txt driver-repair.json > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+          python3 scripts/mt6990-publish-apk-library.py --branch firmware-apk-stock-accel-port
 
       - name: Upload wireless ABI build diagnostics
         if: failure()
@@ -236,6 +262,7 @@ jobs:
             .config
             defconfig.log
             build-pro-wireless/*.log
+            bin/mt6990-apk-validation/
           retention-days: 7
 
       - name: Upload the experimental images

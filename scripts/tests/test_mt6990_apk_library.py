@@ -119,6 +119,16 @@ class PublisherTest(unittest.TestCase):
   git(self.origin,'update-ref','refs/tags/apk-lib-123-2',wrong)
   with self.assertRaises((ValueError,subprocess.CalledProcessError)):pub.publish(self.repo,self.library)
   self.assertEqual(git(self.origin,'rev-parse','refs/tags/apk-lib-123-2'),wrong)
+ def test_experimental_snapshot_uses_a_separate_branch_and_immutable_tag(self):
+  self.library_files('123-1');pub.publish(self.repo,self.library)
+  stable=git(self.origin,'rev-parse','refs/heads/firmware-apk')
+  self.library_files('123-2');pub.publish(self.repo,self.library,'firmware-apk-stock-accel-port')
+  experimental=git(self.origin,'rev-parse','refs/heads/firmware-apk-stock-accel-port')
+  self.assertEqual(git(self.origin,'rev-parse','refs/tags/apk-lib-123-2'),experimental)
+  self.assertEqual(git(self.origin,'rev-parse','refs/heads/firmware-apk'),stable)
+  self.assertNotIn('123-1',git(self.origin,'ls-tree','--name-only',experimental).splitlines())
+  pub.publish(self.repo,self.library,'firmware-apk-stock-accel-port')
+  self.assertEqual(git(self.origin,'rev-parse','refs/heads/firmware-apk-stock-accel-port'),experimental)
  def test_bad_hashes_and_source_drift_are_rejected_before_publish(self):
   self.library_files('123-1');(self.library/'fixture.apk').write_text('tampered')
   with self.assertRaises(ValueError):pub.publish(self.repo,self.library)

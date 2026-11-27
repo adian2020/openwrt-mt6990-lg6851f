@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Append a verified library snapshot to firmware-apk; never overwrite snapshots."""
+"""Append a verified library snapshot to the selected APK branch."""
 import argparse
 import importlib.util
 import json
@@ -10,10 +10,13 @@ import tempfile
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('library',ROOT/'scripts/mt6990-apk-library.py');lib=importlib.util.module_from_spec(spec);spec.loader.exec_module(lib)
+APK_BRANCHES=('firmware-apk','firmware-apk-stock-accel-port')
 
 def git(root,*args,**kwargs):return subprocess.run(['git','-C',str(root),*map(str,args)],check=True,**kwargs)
 
-def publish(root,library):
+def publish(root,library,branch=APK_BRANCHES[0]):
+    if branch not in APK_BRANCHES:raise ValueError('Unsupported firmware APK branch')
+    branch_ref='refs/heads/'+branch
     manifest=lib.readjson(library/'repository.manifest.json');snapshot=manifest['snapshot']
     lib.checked_identity(manifest['repository'],snapshot,manifest['source_sha'])
     current=subprocess.check_output(['git','-C',str(root),'rev-parse','HEAD'],text=True).strip()
@@ -26,7 +29,7 @@ def publish(root,library):
     hashes=lib.tree_hashes(library);hashes.pop('SHA256SUMS')
     if hashes!=expected:raise ValueError('Library manifest hashes do not match files')
     if any(p.name.endswith('private-key.pem') for p in library.iterdir()):raise ValueError('Private key in publish directory')
-    status=subprocess.run(['git','-C',str(root),'ls-remote','--exit-code','origin','refs/heads/firmware-apk'],capture_output=True,text=True)
+    status=subprocess.run(['git','-C',str(root),'ls-remote','--exit-code','origin',branch_ref],capture_output=True,text=True)
     if status.returncode not in [0,2]:raise RuntimeError('Cannot inspect library branch: '+status.stderr)
     tag='apk-lib-'+snapshot
     existing_tag=subprocess.run(['git','-C',str(root),'ls-remote','--exit-code','origin','refs/tags/'+tag],capture_output=True,text=True)
@@ -43,7 +46,7 @@ def publish(root,library):
         if status.returncode==0:
             git(work,'config','remote.origin.promisor','true')
             git(work,'config','remote.origin.partialclonefilter','blob:none')
-            git(work,'fetch','--depth=1','--filter=blob:none','origin','refs/heads/firmware-apk')
+            git(work,'fetch','--depth=1','--filter=blob:none','origin',branch_ref)
             git(work,'sparse-checkout','init','--no-cone')
             git(work,'sparse-checkout','set','--no-cone','/README.md','/'+snapshot+'/')
             git(work,'checkout','--detach','FETCH_HEAD')
@@ -56,7 +59,7 @@ def publish(root,library):
                 current=git(work,'rev-parse','HEAD:'+snapshot,text=True,capture_output=True).stdout.strip()
                 if tagged!=current:raise ValueError('Immutable tag points to different library bytes')
             else:
-                git(work,'push','--atomic','origin','HEAD:refs/heads/firmware-apk','HEAD:refs/tags/'+tag)
+                git(work,'push','--atomic','origin','HEAD:'+branch_ref,'HEAD:refs/tags/'+tag)
             print('APK_LIBRARY_ALREADY_PUBLISHED='+snapshot);return
         if existing_tag.returncode==0:raise ValueError('Immutable tag exists but snapshot is missing from branch')
         shutil.copytree(library,dest)
@@ -64,10 +67,10 @@ def publish(root,library):
         git(work,'add',snapshot,'README.md')
         git(work,'commit','-m',f'Publish firmware APK library {snapshot} from {manifest["source_sha"]}')
         # No force-push: concurrent changes must fail for a fresh recheck.
-        git(work,'push','--atomic','origin','HEAD:refs/heads/firmware-apk','HEAD:refs/tags/'+tag)
+        git(work,'push','--atomic','origin','HEAD:'+branch_ref,'HEAD:refs/tags/'+tag)
     print('APK_LIBRARY_PUBLISHED='+snapshot)
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--root',type=pathlib.Path,default=ROOT);p.add_argument('--library',type=pathlib.Path);a=p.parse_args()
-    publish(a.root.resolve(),a.library or a.root/'bin/mt6990-apk-repository')
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--root',type=pathlib.Path,default=ROOT);p.add_argument('--library',type=pathlib.Path);p.add_argument('--branch',choices=APK_BRANCHES,default=APK_BRANCHES[0]);a=p.parse_args()
+    publish(a.root.resolve(),a.library or a.root/'bin/mt6990-apk-repository',a.branch)
 if __name__=='__main__':main()

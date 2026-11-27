@@ -105,3 +105,9 @@ python3 scripts/lg6851f-build-pro-wireless.py \
 ## Pro 服务插件
 
 从 Pro 实验构建 `b942f071` 的 B 槽根文件系统核对到“服务”下有 OpenClash 和 Nikki。实验分支内置 Nikki、中文包及对应 Mihomo，保留 Pro 的菜单、权限、页面、启动脚本和升级配置保留路径。使用公开版的默认配置，首次安装时两套代理保持关闭。Pro 的 TurboACC 位于“网络”，本次服务插件移植不涉及该入口。现有本分支插件保留。[Pro 参考固件](https://github.com/adian2020/LG6851F-Pro/actions/runs/45776501611)
+
+## 实验镜像的同批 APK 库
+
+运行 `46008042112` 已编译内核、厂商无线组件和 hostapd，并生成通过两槽启动分区和证书检查的签名镜像。实验工作流在 `make defconfig` 前漏掉了同批 APK 软件库准备步骤，组装后的根文件系统缺少 APK 库的构建身份、选包清单、仓库 URL 和 ROM 公钥，产物检查因此停止。[失败日志与诊断](https://github.com/adian2020/openwrt-mt6990-lg6851f/actions/runs/46008042112)
+
+实验工作流现复用固件的选包、APK 签名和逐包依赖验证流程。组装后用实际 SquashFS 核对同批软件库的固件身份、公钥、选包清单和 `firmware.world`，再向 `firmware-apk-stock-accel-port` 追加本次软件库，以 `apk-lib-<运行号>-<尝试号>` 标签固定 URL。A、B 两槽产物都附带同一份 APK 库清单。固定的 Pro 插件从源码记录版本和来源，构建时继续使用该快照。

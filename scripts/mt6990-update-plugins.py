@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Resolve latest upstream plugins once per build, preserving local adaptations."""
+import argparse
 import datetime
 import hashlib
 import json
@@ -158,22 +159,33 @@ def smart_asset(release):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--report-only', action='store_true', help='report the fixed checkout without updating plugins')
+    args = parser.parse_args()
     rows = json.loads(REGISTRY.read_text())
-    records = []
-    with tempfile.TemporaryDirectory(prefix='mt6990-plugin-update-') as folder:
-        folder = pathlib.Path(folder)
-        for row in rows:
-            if row.get('branch'):
-                latest = api(f'repos/{row["repo"]}/commits/{row["branch"]}')['sha']
-            else:
-                release = api(f'repos/{row["repo"]}/releases/latest')
-                if release['draft'] or release['prerelease']:
-                    raise RuntimeError('Latest stable release was not returned')
-                latest = api(f'repos/{row["repo"]}/commits/{release["tag_name"]}')['sha']
-            records.append(prepare_package(row, latest, folder))
-            REGISTRY.write_text(json.dumps(rows, indent=2) + "\n")
+    if args.report_only:
+        checkout = subprocess.check_output(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], text=True).strip()
+        records = [{'package': row['package'], 'repo': row['repo'], 'upstream_base': row['base'],
+                    'source_sha': checkout} for row in rows]
+    else:
+        records = []
+        with tempfile.TemporaryDirectory(prefix='mt6990-plugin-update-') as folder:
+            folder = pathlib.Path(folder)
+            for row in rows:
+                if row.get('branch'):
+                    latest = api(f'repos/{row["repo"]}/commits/{row["branch"]}')['sha']
+                else:
+                    release = api(f'repos/{row["repo"]}/releases/latest')
+                    if release['draft'] or release['prerelease']:
+                        raise RuntimeError('Latest stable release was not returned')
+                    latest = api(f'repos/{row["repo"]}/commits/{release["tag_name"]}')['sha']
+                records.append(prepare_package(row, latest, folder))
+                REGISTRY.write_text(json.dumps(rows, indent=2) + "\n")
     # The Pro port keeps these vendor package recipes at the imported revision.
-    for package in ('luci-app-openclash', 'mihomo-openclash-core'):
+    pinned = ['luci-app-openclash', 'mihomo-openclash-core']
+    if args.report_only:
+        pinned += ['nikki', 'luci-app-nikki', 'luci-i18n-nikki-zh-cn', 'mihomo-meta']
+    for package in pinned:
         recipe = (ROOT/'package/vendor'/package/'Makefile').read_text()
         version = re.search(r'^PKG_VERSION:=(.+)$', recipe, re.M)
         if not version:
@@ -188,7 +200,8 @@ def main():
     report = ROOT / 'files/etc/mt6990-plugin-versions.json'
     report.parent.mkdir(parents=True, exist_ok=True)
     report.write_text(json.dumps(records, ensure_ascii=False, indent=2) + '\n')
-    REGISTRY.write_text(json.dumps(rows, indent=2) + '\n')
+    if not args.report_only:
+        REGISTRY.write_text(json.dumps(rows, indent=2) + '\n')
     print(report.read_text())
 
 
