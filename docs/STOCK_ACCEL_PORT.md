@@ -84,7 +84,7 @@ python3 scripts/lg6851f-build-pro-wireless.py \
 
 `cloud-build-stock-accel-port` 的独立 Actions 工作流先构建目标内核、mac80211 和 HNAT，再执行完整模块校验和 hostapd 构建。运行 `45915068532` 的候选 DTB、10 个模块、hostapd 和驱动修复报告已经通过产物 SHA256 校验。该次归档缺少内核 `Image`。新版流程在同一任务内组装并签名 A/B 镜像，再核对内核与符号表散列、候选设备树、实际 SquashFS 内的模块和 hostapd，以及两槽 `CONTROL`。实验镜像由 Actions 保存，实机启动及 WED 收发需要分别验收。[已验证的组件构建](https://github.com/adian2020/openwrt-mt6990-lg6851f/actions/runs/45915068532)
 
-通过 `LG6851F_PRO_WARP_IMAGE=1` 选择候选设备树和厂商无线栈。运行层取自固定 Pro 提交，校准从本机 `fh_data` 只读取得，启动确认继续由本分支负责。全新安装复用 Pro 的首启随机密码。保留配置时，实验驱动支持标准 `radio0` 为 2.4 GHz、`radio1` 为 5 GHz 的映射，仅迁移驱动类型，保留 SSID、密码和开关。不兼容的映射会保留原配置，待通过有线管理调整。
+通过 `LG6851F_PRO_WARP_IMAGE=1` 选择候选设备树和厂商无线栈。运行层取自固定 Pro 提交，校准从本机 `fh_data` 只读取得，启动确认继续由本分支负责。全新安装时 `LG6851F-Pro-2G`、`LG6851F-Pro-5G` 默认无密码。保留配置时，实验驱动支持标准 `radio0` 为 2.4 GHz、`radio1` 为 5 GHz 的映射，仅迁移驱动类型，保留 SSID、密码和开关。不兼容的映射会保留原配置，待通过有线管理调整。
 
 配置阶段复用主构建的 feeds 兼容脚本。它从原始 `.config` 检查选项，避免未选配方的 Kconfig 循环进入索引。安装 feeds 后再次恢复原始配置，再核对无线内核模块及 hostapd 依赖仍为 `y`。
 

@@ -18,7 +18,7 @@ RX_REPAIR = "development-history/V2.10/wifi-rebuild/patch-source.py"
 HOSTAPD_SOURCE = "development-history/V2.10/hostapd-native"
 IMAGE_RUNTIME = (
     "etc/config/wireless", "etc/init.d/lg6851f-vendor618", "etc/init.d/lg6851f_hostapd",
-    "etc/init.d/wpad", "etc/uci-defaults/zzzz-lg6851f-public-firstboot",
+    "etc/init.d/wpad",
     "etc/lg6851f-vendor618/firmware", "etc/lg6851f-vendor618/wireless",
     "lib/netifd/hostapd.sh", "lib/netifd/netifd-wireless.sh", "lib/netifd/vendor618-client64.sh",
     "lib/netifd/wireless-device.uc", "lib/netifd/wireless.uc", "lib/netifd/wireless/vendor618.sh",
@@ -225,11 +225,26 @@ def build_hostapd(args, includes, environment):
     print(output, flush=True)
 
 
+def set_open_wireless_defaults(path):
+    config = path.read_text()
+    replacements = (
+        ("\toption encryption 'psk2'\n", "\toption encryption 'none'\n"),
+        ("\toption ssid 'LG6851F-PUBLIC-Pro-", "\toption ssid 'LG6851F-Pro-"),
+        ("\toption key 'PUBLIC-FIRSTBOOT-REPLACES-THIS'\n", ""),
+    )
+    for original, replacement in replacements:
+        if config.count(original) != 2:
+            raise ValueError("固定 Pro 的两组无线默认配置与预期不符")
+        config = config.replace(original, replacement)
+    path.write_text(config)
+
+
 def stage_image(args, sources, environment):
     work = args.work_dir / "image-runtime"
     work.mkdir()
     extract_source(args.vendor_repo, work, PRO_BUILD_REVISION, [f"files/{path}" for path in IMAGE_RUNTIME])
     payload = work / "files"
+    set_open_wireless_defaults(payload / "etc/config/wireless")
     vendor = payload / "etc/lg6851f-vendor618"
     (vendor / "firmware/MT7990_EEPROM.bin").unlink()
     for calibration in (vendor / "wireless/mediatek").glob("e2p*"):

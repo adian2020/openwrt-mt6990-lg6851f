@@ -171,11 +171,15 @@ jobs:
             unsquashfs -cat "$rootfs" "usr/lib/lg6851f-vendor618/modules/${module##*/}" | cmp - "$module"
           done
           unsquashfs -cat "$rootfs" usr/sbin/lg6851f-hostapd | cmp - pro-wireless-verified/lg6851f-hostapd
-          for runtime in etc/uci-defaults/zzzz-lg6851f-public-firstboot etc/init.d/lg6851f-vendor618-prepare \
+          for runtime in etc/config/wireless etc/init.d/lg6851f-vendor618-prepare \
                          usr/sbin/lg6851f-vendor618-start usr/sbin/lg6851f-prepare-vendor-wireless \
                          lib/netifd/wireless/vendor618.sh; do
             unsquashfs -cat "$rootfs" "$runtime" | cmp - "files/$runtime"
           done
+          if unsquashfs -ll "$rootfs" | grep -F '/etc/uci-defaults/zzzz-lg6851f-public-firstboot' >/dev/null; then
+            echo 'Unexpected Pro first-boot password generator in the experimental rootfs'
+            exit 1
+          fi
           out=pro-image-verified
           mkdir -p "$out/a" "$out/b"
           cp 'A槽单刷boot和rootfs签名成功包/'{boot_a.img,rootfs_a.img,lg6851f-signed-boot-rootfs.manifest.json} "$out/a/"
