@@ -68,3 +68,10 @@ git-src
 /package/vendor/luci-app-fiberhomedash/files/usr/share/rpcd/acl.d/luci-app-fiberhome.json
 /package/vendor/mt6990-adb-usb/files/etc/init.d/mt6990-adb-usb
 /package/vendor/luci-app-openclash/root/etc/init.d/openclash
+/package/vendor/luci-app-openclash/root/lib/upgrade/keep.d/luci-app-openclash
+/package/vendor/luci-app-openclash/root/usr/share/rpcd/acl.d/luci-app-openclash.json
+/package/vendor/nikki/files/etc/init.d/nikki
+/package/vendor/nikki/files/lib/upgrade/keep.d/nikki
+/package/vendor/luci-app-nikki/files/usr/share/luci/menu.d/luci-app-nikki.json
+/package/vendor/luci-app-nikki/files/usr/share/rpcd/acl.d/luci-app-nikki.json
+/package/vendor/luci-app-nikki/files/www/luci-static/resources/view/nikki/log_ui_v20261017_1.js

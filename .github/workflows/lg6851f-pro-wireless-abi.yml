@@ -72,6 +72,9 @@ jobs:
           for package in kmod-cfg80211 kmod-mac80211 kmod-mt6990-hwnat libnl-core libnl-genl libopenssl libubox libubus libjson-c liblua; do
             grep -qx "CONFIG_PACKAGE_${package}=y" .config
           done
+          for package in nikki luci-app-nikki luci-i18n-nikki-zh-cn mihomo-meta luci-app-openclash mihomo-openclash-core; do
+            grep -qx "CONFIG_PACKAGE_${package}=y" .config || { echo "Missing Pro service package $package"; exit 1; }
+          done
 
       - name: Build kernel and exports with the target toolchain
         run: |
@@ -112,17 +115,21 @@ jobs:
             --cross-compile "${compiler%gcc}" --work-dir build-pro-wireless -j "$JOBS" --hostapd
           mkdir pro-wireless-verified
           cp build-pro-wireless/{pro-warp.dtb,driver-repair.json,lg6851f-hostapd} pro-wireless-verified/
+          kernel="${kernels[0]}"
+          test -s "$kernel/arch/arm64/boot/Image"
+          test -s "$kernel/.config"
+          cp "$kernel/arch/arm64/boot/Image" pro-wireless-verified/Image
+          cp "$kernel/.config" pro-wireless-verified/kernel.config
           for name in wifi_md_coex mt_wifi_cmn mtk_warp mt_wifi mtk_hwifi connac_if mtk_pci mtk_wed mt7990 mt7991; do
             mapfile -t matches < <(find build-pro-wireless/vendor-source -type f -name "$name.ko")
             test "${#matches[@]}" -eq 1
             "${compiler%gcc}strip" --strip-debug "${matches[0]}" -o "pro-wireless-verified/$name.ko"
           done
           printf 'source=%s\npro_build_source=%s\n' "$GITHUB_SHA" "$PRO_BUILD_REVISION" > pro-wireless-verified/build-id.txt
-          kernel="${kernels[0]}"
           sha256sum "$kernel/Module.symvers" "${kernel%/*}/symvers/mac80211.symvers" \
             "${kernel%/*}/symvers/mt6990-hwnat.symvers" >> pro-wireless-verified/build-id.txt
           cd pro-wireless-verified
-          sha256sum *.ko pro-warp.dtb driver-repair.json lg6851f-hostapd build-id.txt > SHA256SUMS
+          sha256sum *.ko Image kernel.config pro-warp.dtb driver-repair.json lg6851f-hostapd build-id.txt > SHA256SUMS
           sha256sum -c SHA256SUMS
 
       - name: Upload wireless ABI build diagnostics

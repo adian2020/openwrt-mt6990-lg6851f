@@ -82,7 +82,7 @@ python3 scripts/lg6851f-build-pro-wireless.py \
 
 `CROSS_COMPILE` 使用目标 ARM64 工具链的前缀并带末尾 `-`。`OUTPUT_DIR` 使用新建或空目录。对象模式也检查 `hwifi` 生成的 `connac_if`、`mtk_pci`、`mtk_wed`、`mt7990`、`mt7991`。完整模块模式还使用 Pro 实验构建 `b942f071` 中的源码修复和 APCLI 指令检查，保留 `modpost` 未解析符号的失败行为，并逐个检查模块架构和 `vermagic`。`--hostapd` 使用同一 ARM64 工具链和同批 libnl/OpenSSL 重编厂商 hostapd。[Pro 驱动修复入口](https://github.com/adian2020/LG6851F-Pro/blob/b942f071af127ece3d40321aca41f4f96f2ab800/scripts/cloud/vendor_repair.py)
 
-`cloud-build-stock-accel-port` 的独立 Actions 工作流先构建目标内核、mac80211 和 HNAT，再执行完整模块校验和 hostapd 构建。成功产物包含候选 DTB、10 个模块、hostapd、驱动修复报告及 SHA256，供下一步组装使用。工作流只上传组件，不生成或发布刷机包。
+`cloud-build-stock-accel-port` 的独立 Actions 工作流先构建目标内核、mac80211 和 HNAT，再执行完整模块校验和 hostapd 构建。运行 `45915068532` 的候选 DTB、10 个模块、hostapd 和驱动修复报告已经通过产物 SHA256 校验。该运行的归档缺少内核 `Image`。后续组件归档会附上同次内核 `Image` 和 `kernel.config`，并写入 SHA256 清单。组装时使用同次构建的 cfg80211 和其他依赖，保留既有 A/B 签名及升级检查。[已验证的组件构建](https://github.com/adian2020/openwrt-mt6990-lg6851f/actions/runs/45915068532)
 
 配置阶段复用主构建的 feeds 兼容脚本。它从原始 `.config` 检查选项，避免未选配方的 Kconfig 循环进入索引。安装 feeds 后再次恢复原始配置，再核对无线内核模块及 hostapd 依赖仍为 `y`。
 
@@ -97,5 +97,9 @@ python3 scripts/lg6851f-build-pro-wireless.py \
 - 移植固定到 `adian2020/LG6851F-Pro` 的 `main` 提交 `0e1518ed632388e814032e0831560d22d9488981`。`package/vendor` 的 494 个 Git 文件、可执行位和符号链接逐项一致。包管理准备阶段从已跟踪的文件补入原配方引用的五项安装材料，生成文件不计入源码快照。
 - 蜂窝沿用 Pro 菜单下的状态与小区、短信、流量统计、拨号与网络、AT 调试和状态缓存。首页使用 `fiberhome/home_stable_v20261026_71`，主题使用 Pro 的 Aurora 模板、资源和路由脚本，同时保留 Pro 的 Argon 包。目标仓库的 LuCI 登录设置和已有用户配置继续生效。
 - 目标仍使用本分支的 `mt76` 无线栈和既有 A/B、启动确认、恢复及升级流程。系统的启动槽位工具使用独立的 `luci.lg6851fslots` 对象。自动重启、UU 和 Aurora 配置等本分支已有插件放到 `package/lg6851f`。
-- IPv6 前缀工具从 Pro 保留的 C 源码构建。聚合采样调用同机型已记录的 `sample_nw` 只读查询，复用模组锁。PPE 统计模块从 Pro 源码编译，并与本次构建的 HNAT 符号表链接。看板可用时读目标的只读 PLL 频率，未读到的上限和请求频率保持缺失。Nikki 及其核心仍为可选 APK。
+- IPv6 前缀工具从 Pro 保留的 C 源码构建。聚合采样调用同机型已记录的 `sample_nw` 只读查询，复用模组锁。PPE 统计模块从 Pro 源码编译，并与本次构建的 HNAT 符号表链接。看板可用时读目标的只读 PLL 频率，未读到的上限和请求频率保持缺失。
 - 这些是源码和接口适配。流量统计、实际模组收发、WED 硬件命中、完整签名固件及实机启动需要分别验证。
+
+## Pro 服务插件
+
+从 Pro 实验构建 `b942f071` 的 B 槽根文件系统核对到“服务”下有 OpenClash 和 Nikki。实验分支内置 Nikki、中文包及对应 Mihomo，保留 Pro 的菜单、权限、页面、启动脚本和升级配置保留路径。使用公开版的默认配置，首次安装时两套代理保持关闭。Pro 的 TurboACC 位于“网络”，本次服务插件移植不涉及该入口。现有本分支插件保留。[Pro 参考固件](https://github.com/adian2020/LG6851F-Pro/actions/runs/45776501611)

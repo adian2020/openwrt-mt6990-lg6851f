@@ -102,6 +102,21 @@ if grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' "$repo_di
 			exit 1
 		}
 	fi
+	if grep -qx 'CONFIG_PACKAGE_nikki=y' "$repo_dir/.config"; then
+		for service in nikki openclash; do
+			[ -x "$rootfs_dir/etc/init.d/$service" ] &&
+				[ "$(readlink "$rootfs_dir/etc/rc.d/S99$service")" = "../init.d/$service" ] || {
+				printf 'ERROR: Pro service startup entry is missing: %s\n' "$service" >&2
+				exit 1
+			}
+		done
+		for program in etc/init.d/nikki usr/share/luci/menu.d/luci-app-nikki.json usr/share/rpcd/acl.d/luci-app-nikki.json usr/share/rpcd/acl.d/luci-app-openclash.json www/luci-static/resources/view/nikki/log_ui_v20261017_1.js lib/upgrade/keep.d/nikki lib/upgrade/keep.d/luci-app-openclash; do
+			cmp -s "$rootfs_dir/$program" "$repo_dir/files/$program" || {
+				printf 'ERROR: Pro service payload differs or is missing: %s\n' "$program" >&2
+				exit 1
+			}
+		done
+	fi
 	if grep -qx 'CONFIG_PACKAGE_luci-app-uugamebooster=y' "$repo_dir/.config"; then
 		for program in etc/init.d/uuplugin usr/libexec/uuplugin/uu-detect usr/libexec/uuplugin/uu-view usr/libexec/uuplugin/xt/iptables; do
 			[ -x "$rootfs_dir/$program" ] || {
