@@ -70,7 +70,7 @@ jobs:
           cp "$RUNNER_TEMP/lg6851f.config" .config
           sed -i -E 's/^(CONFIG_PACKAGE_kmod-mt(76|79)[^=]*)=[ym]$/# \1 is not set/' .config
           sed -i -E 's/^(CONFIG_PACKAGE_wpad-basic-mbedtls)=[ym]$/# \1 is not set/' .config
-          for package in kmod-mt6990-hwnat libnl-core libnl-genl libopenssl wpad-mbedtls; do
+          for package in kmod-mt6990-hwnat kmod-sched kmod-tcp-bbr libnl-core libnl-genl libopenssl wpad-mbedtls; do
             sed -i -e "/^CONFIG_PACKAGE_${package}=/d" -e "/^# CONFIG_PACKAGE_${package} is not set$/d" .config
             printf 'CONFIG_PACKAGE_%s=y\n' "$package" >> .config
           done
@@ -85,16 +85,39 @@ jobs:
           for package in kmod-cfg80211 kmod-mac80211 kmod-mt6990-hwnat libnl-core libnl-genl libopenssl libubox libubus libjson-c liblua wpad-mbedtls; do
             grep -qx "CONFIG_PACKAGE_${package}=y" .config
           done
+          for package in luci-mod-network luci-app-firewall rpcd-mod-iwinfo kmod-nf-nat kmod-lg6851f-ppe-stats kmod-sched kmod-sched-cake kmod-tcp-bbr; do
+            grep -qx "CONFIG_PACKAGE_${package}=y" .config
+          done
+          scan_patch=package/network/utils/iwinfo/patches/900-lg6851f-vendor618-scan.patch
+          cmp package/network/utils/iwinfo/Makefile "pro-source/package/network/utils/iwinfo/Makefile"
+          cp "pro-source/$scan_patch" "$scan_patch"
           for package in nikki luci-app-nikki luci-i18n-nikki-zh-cn mihomo-meta luci-app-openclash mihomo-openclash-core; do
             grep -qx "CONFIG_PACKAGE_${package}=y" .config || { echo "Missing Pro service package $package"; exit 1; }
           done
 
       - name: Build kernel and exports with the target toolchain
         run: |
+          set -euo pipefail
           make -j"$JOBS" V=s tools/install
           make -j"$JOBS" V=s toolchain/install
           make -j"$JOBS" V=s package/system/apk/host/compile
+          make -j"$JOBS" V=s target/linux/prepare
+          shopt -s nullglob
+          kernels=(build_dir/target-*/linux-mediatek_mt6990/linux-6.18.44)
+          test "${#kernels[@]}" -eq 1
+          nat_dir="${kernels[0]}/net/netfilter"
+          nat_sources=(nf_nat_core.c nf_nat_helper.c nf_nat_masquerade.c nf_nat_proto.c nf_nat_redirect.c nf_internals.h)
+          : > "$RUNNER_TEMP/pro-nat-sources.sha256"
+          for source in "${nat_sources[@]}"; do
+            test -f "$nat_dir/$source"
+            git -C pro-source show "$PRO_BUILD_REVISION:development-history/V2.10/nf-nat/$source" > "$nat_dir/$source"
+            test -s "$nat_dir/$source"
+            sha256sum "$nat_dir/$source" >> "$RUNNER_TEMP/pro-nat-sources.sha256"
+          done
           make -j"$JOBS" V=s target/linux/compile
+          sha256sum -c "$RUNNER_TEMP/pro-nat-sources.sha256"
+          readelf -SW "$nat_dir/nf_nat.ko" | grep -E ' __param +PROGBITS '
+          readelf -p .rodata "$nat_dir/nf_nat.ko" | grep -E ' lg6851f_nat_mode$'
           make -j"$JOBS" V=s package/kernel/mac80211/compile
           make -j"$JOBS" V=s package/vendor/mt6990-hwnat/compile
 
@@ -151,6 +174,7 @@ jobs:
           set -euo pipefail
           export PATH="$RUNNER_TEMP/lg6851f-sign/bin:$PATH"
           ./scripts/mt6990-build-and-record.sh -j"$JOBS" V=s
+          sha256sum -c "$RUNNER_TEMP/pro-nat-sources.sha256"
           shopt -s nullglob
           roots=(build_dir/target-*/root-mediatek)
           kdirs=(build_dir/target-*/linux-mediatek_mt6990)
@@ -176,6 +200,13 @@ jobs:
                          lib/netifd/wireless/vendor618.sh; do
             unsquashfs -cat "$rootfs" "$runtime" | cmp - "files/$runtime"
           done
+          while IFS= read -r runtime; do
+            unsquashfs -cat "$rootfs" "$runtime" | cmp - "files/$runtime"
+          done < build-pro-wireless/network-runtime.txt
+          unsquashfs -ll "$rootfs" etc/rc.d/S18turboacc | grep -F '/etc/rc.d/S18turboacc -> ../init.d/turboacc'
+          unsquashfs -cat "$rootfs" lib/modules/6.18.44/nf_nat.ko > "$RUNNER_TEMP/pro-image-nf_nat.ko"
+          readelf -SW "$RUNNER_TEMP/pro-image-nf_nat.ko" | grep -E ' __param +PROGBITS '
+          readelf -p .rodata "$RUNNER_TEMP/pro-image-nf_nat.ko" | grep -E ' lg6851f_nat_mode$'
           if unsquashfs -ll "$rootfs" | grep -F '/etc/uci-defaults/zzzz-lg6851f-public-firstboot' >/dev/null; then
             echo 'Unexpected Pro first-boot password generator in the experimental rootfs'
             exit 1

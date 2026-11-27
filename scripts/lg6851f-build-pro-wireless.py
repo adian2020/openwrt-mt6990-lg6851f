@@ -16,6 +16,31 @@ PRO_BUILD_REVISION = "b942f071af127ece3d40321aca41f4f96f2ab800"
 REPAIR_SOURCE = "development-history/systemfix-source/systemfix-20261021-30/driver-build/repair-source"
 RX_REPAIR = "development-history/V2.10/wifi-rebuild/patch-source.py"
 HOSTAPD_SOURCE = "development-history/V2.10/hostapd-native"
+NETWORK_RESOURCES = (
+    "network.js", "network_systemfix_v20261019_2.js", "firewall.js", "uqr.js",
+    "lg6851f/wireless_v20261019_2.js", "lg6851f/wireless_v20261023_53.js",
+    "tools/network.js", "tools/bridgevlan.js", "tools/dnsrecordhandlers.js",
+    "tools/firewall.js", "tools/widgets.js",
+    "view/network/interfaces.js", "view/network/interfaces_mbss_v20261027_81.js",
+    "view/network/wireless.js", "view/network/wireless_mbss_v20261027_86b.js",
+    "view/network/switch.js", "view/network/switch-vlan.js", "view/network/switch-vlan.css",
+    "view/network/routes.js", "view/network/dhcp.js", "view/network/dns.js",
+    "view/network/diagnostics.js", "view/network/turboacc-lg6851f.js",
+    "view/firewall/zones.js", "view/firewall/forwards.js", "view/firewall/rules.js",
+    "view/firewall/snats.js", "view/firewall/ipsets.js", "view/firewall/custom.js",
+)
+NETWORK_RUNTIME = (
+    "etc/config/turboacc", "etc/init.d/turboacc",
+    "usr/libexec/lg6851f-nat-mode", "usr/libexec/lg6851f-turboacc",
+    "usr/share/luci/menu.d/luci-mod-network.json", "usr/share/luci/menu.d/luci-app-firewall.json",
+    "usr/share/luci/menu.d/luci-app-turboacc.json",
+    "usr/share/rpcd/acl.d/luci-mod-network.json", "usr/share/rpcd/acl.d/luci-app-firewall.json",
+    "usr/share/rpcd/acl.d/luci-app-turboacc.json", "usr/share/rpcd/acl.d/luci-lg6851f-wifi-power.json",
+    "usr/share/rpcd/ucode/luci", "usr/share/rpcd/ucode/luci.turboacc",
+    "usr/share/rpcd/ucode/lg6851f.wifi_power", "usr/share/ucode/fw4.uc",
+) + tuple(f"www/luci-static/resources/{path}" for path in NETWORK_RESOURCES)
+BASE_MENU = "usr/share/luci/menu.d/luci-base.json"
+NETWORK_MENU = "usr/share/luci/menu.d/zz-lg6851f-pro-network.json"
 IMAGE_RUNTIME = (
     "etc/config/wireless", "etc/init.d/lg6851f-vendor618", "etc/init.d/lg6851f_hostapd",
     "etc/init.d/wpad",
@@ -25,14 +50,13 @@ IMAGE_RUNTIME = (
     "usr/libexec/lg6851f-detach", "usr/sbin/lg6851f-auth-recover", "usr/sbin/lg6851f-hostapd-ctl",
     "usr/sbin/lg6851f-hostapd-run", "usr/sbin/lg6851f-mwctl", "usr/sbin/lg6851f-public-calibration",
     "usr/sbin/lg6851f-vendor618-start", "usr/sbin/lg6851f-wifi-power",
-    "usr/share/rpcd/acl.d/luci-lg6851f-wifi-power.json", "usr/share/rpcd/acl.d/luci-vendor618-wireless.json",
+    "usr/share/rpcd/acl.d/luci-vendor618-wireless.json",
     "usr/share/ucode/lg6851f/auth-plan.uc", "usr/share/ucode/lg6851f/bss-fingerprint.uc",
     "usr/share/ucode/lg6851f/bss-prepare.uc", "usr/share/ucode/lg6851f/client64-plan.uc",
     "usr/share/ucode/lg6851f/mlo-policy.uc", "usr/share/ucode/lg6851f/prepare-wireless-profile.uc",
     "usr/share/ucode/lg6851f/wifi-power-cli.uc", "usr/share/ucode/lg6851f/wifi-power-engine.uc",
     "usr/share/ucode/lg6851f/wifi-power-model.uc", "usr/share/ucode/wifi/hostapd.uc",
-    "www/luci-static/resources/view/network/wireless.js",
-)
+) + NETWORK_RUNTIME
 PARTS = {
     "coex": ("wifi_md_coex", ("wifi_md_coex",)),
     "cmn": ("mt_wifi_cmn", ("mt_wifi_cmn",)),
@@ -242,8 +266,15 @@ def set_open_wireless_defaults(path):
 def stage_image(args, sources, environment):
     work = args.work_dir / "image-runtime"
     work.mkdir()
-    extract_source(args.vendor_repo, work, PRO_BUILD_REVISION, [f"files/{path}" for path in IMAGE_RUNTIME])
+    extract_source(args.vendor_repo, work, PRO_BUILD_REVISION,
+                   [f"files/{path}" for path in (*IMAGE_RUNTIME, BASE_MENU)])
     payload = work / "files"
+    base_menu = payload / BASE_MENU
+    network_entry = json.loads(base_menu.read_text())["admin/network"]
+    (payload / NETWORK_MENU).write_text(json.dumps({"admin/network": network_entry}, ensure_ascii=False) + "\n")
+    base_menu.unlink()
+    # The Pro build turns the source rc wrapper into this init link at assembly.
+    (args.work_dir / "network-runtime.txt").write_text("\n".join((*NETWORK_RUNTIME, NETWORK_MENU)) + "\n")
     set_open_wireless_defaults(payload / "etc/config/wireless")
     vendor = payload / "etc/lg6851f-vendor618"
     (vendor / "firmware/MT7990_EEPROM.bin").unlink()
@@ -274,7 +305,7 @@ def stage_image(args, sources, environment):
         (payload / where).chmod(0o755)
     rc = payload / "etc/rc.d"
     rc.mkdir()
-    for order, name in (("S01", "lg6851f-vendor618-prepare"), ("S19", "lg6851f_hostapd"),
+    for order, name in (("S01", "lg6851f-vendor618-prepare"), ("S18", "turboacc"), ("S19", "lg6851f_hostapd"),
                         ("K20", "lg6851f_hostapd"), ("S95", "lg6851f-vendor618")):
         (rc / (order + name)).symlink_to(f"../init.d/{name}")
 
