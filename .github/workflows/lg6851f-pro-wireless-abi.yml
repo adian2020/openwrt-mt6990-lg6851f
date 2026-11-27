@@ -54,6 +54,12 @@ jobs:
           set -euo pipefail
           cp .config "$RUNNER_TEMP/lg6851f.config"
           ./scripts/feeds update -a
+          cp "$RUNNER_TEMP/lg6851f.config" .config
+          if grep -Eq '^CONFIG_PACKAGE_mihomo-alpha=[ym]$' .config; then
+            echo 'ERROR: mihomo-alpha needs a Kconfig compatibility fix before enabling'
+            exit 1
+          fi
+          ./scripts/mt6990-prepare-proxy.sh
           ./scripts/feeds install -a
           cp "$RUNNER_TEMP/lg6851f.config" .config
           for package in kmod-mt6990-hwnat libnl-core libnl-genl libopenssl; do

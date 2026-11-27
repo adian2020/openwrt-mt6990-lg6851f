@@ -84,6 +84,8 @@ python3 scripts/lg6851f-build-pro-wireless.py \
 
 `cloud-build-stock-accel-port` 的独立 Actions 工作流先构建目标内核、mac80211 和 HNAT，再执行完整模块校验和 hostapd 构建。成功产物包含候选 DTB、10 个模块、hostapd、驱动修复报告及 SHA256，供下一步组装使用。工作流只上传组件，不生成或发布刷机包。
 
+配置阶段复用主构建的 feeds 兼容脚本。它从原始 `.config` 检查选项，避免未选配方的 Kconfig 循环进入索引。安装 feeds 后再次恢复原始配置，再核对无线内核模块及 hostapd 依赖仍为 `y`。
+
 候选 DTS 从本分支的板级设备树继承启动和其他外设资源，移除以太网对上游 WED 的引用和两个上游 WED 节点，加入 Pro 的三路 WED、WDMA、AP↔WO CCIF 及 WO 的 ILM、DLM、启动寄存器。编译后的 DTB 回读核对了这八个节点与 Pro 一致，其余基线属性和 phandle 一致。从 ARM64 `mtk_warp.o` 提取的三个内置固件，各自的 ILM/EMI 载荷为 22048/87264 字节，分别落在候选 DTB 的三对地址范围内。该方案使用 WARP 的嵌入固件和复位流程，避免把仓库里的外置 WO 文件按尾号当作 PCI 域编号。[Pro 板级设备树](https://github.com/adian2020/LG6851F-Pro/blob/0e1518ed632388e814032e0831560d22d9488981/target/linux/mediatek/dts/mt6990-fiberhome-lg6851f.dts)
 
 本地验证目录只有准备后的 Linux 6.18.44 内核和无线 backports 6.18.26。该目录用于核对 ARM64 对象，完整模块 ABI 由独立云流程使用同批符号表验证。
