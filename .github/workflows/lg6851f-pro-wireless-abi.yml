@@ -1,4 +1,4 @@
-name: LG6851F Pro Wireless ABI
+name: LG6851F Pro Experimental Image
 
 on:
   push:
@@ -16,10 +16,11 @@ jobs:
   wireless-abi:
     if: github.ref == 'refs/heads/cloud-build-stock-accel-port'
     runs-on: ubuntu-22.04
-    timeout-minutes: 210
+    timeout-minutes: 360
     env:
       PRO_BUILD_REVISION: b942f071af127ece3d40321aca41f4f96f2ab800
       JOBS: '4'
+      LG6851F_PRO_WARP_IMAGE: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,7 +39,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential clang flex bison gcc-multilib gawk gettext \
             git libncurses-dev libssl-dev python3 python3-distutils python3-setuptools \
-            rsync unzip zlib1g-dev file wget curl swig jq xsltproc libelf-dev libmd-dev
+            rsync unzip zlib1g-dev file wget curl swig jq xsltproc libelf-dev libmd-dev \
+            python3.10-venv device-tree-compiler squashfs-tools
+          python3.10 -m venv "$RUNNER_TEMP/lg6851f-sign"
+          "$RUNNER_TEMP/lg6851f-sign/bin/pip" install pycryptodome pyasn1 cryptography
+          cd lg6851f_sign_tool/fg370-2305-opensdk/mtk/tools/common/security/tool
+          "$RUNNER_TEMP/lg6851f-sign/bin/python3.10" -B -c 'import sign_flow'
 
       - name: Restore verified source downloads
         uses: actions/cache@v4
@@ -62,14 +68,21 @@ jobs:
           ./scripts/mt6990-prepare-proxy.sh
           ./scripts/feeds install -a
           cp "$RUNNER_TEMP/lg6851f.config" .config
-          for package in kmod-mt6990-hwnat libnl-core libnl-genl libopenssl; do
+          sed -i -E 's/^(CONFIG_PACKAGE_kmod-mt(76|79)[^=]*)=[ym]$/# \1 is not set/' .config
+          sed -i -E 's/^(CONFIG_PACKAGE_wpad-basic-mbedtls)=[ym]$/# \1 is not set/' .config
+          for package in kmod-mt6990-hwnat libnl-core libnl-genl libopenssl wpad-mbedtls; do
             sed -i -e "/^CONFIG_PACKAGE_${package}=/d" -e "/^# CONFIG_PACKAGE_${package} is not set$/d" .config
             printf 'CONFIG_PACKAGE_%s=y\n' "$package" >> .config
           done
           make defconfig 2>&1 | tee defconfig.log
           if grep -Eq 'recursive dependency detected|error:' defconfig.log; then exit 1; fi
           grep -qx 'CONFIG_TARGET_mediatek_mt6990_DEVICE_fiberhome_lg6851f=y' .config
-          for package in kmod-cfg80211 kmod-mac80211 kmod-mt6990-hwnat libnl-core libnl-genl libopenssl libubox libubus libjson-c liblua; do
+          if grep -Eq '^CONFIG_PACKAGE_kmod-mt(76|79)[^=]*=y$' .config; then
+            echo 'The vendor image must have exclusive ownership of the Wi-Fi hardware'
+            exit 1
+          fi
+          printf '%s\n' "$GITHUB_SHA" > files/etc/mt6990-firmware-id
+          for package in kmod-cfg80211 kmod-mac80211 kmod-mt6990-hwnat libnl-core libnl-genl libopenssl libubox libubus libjson-c liblua wpad-mbedtls; do
             grep -qx "CONFIG_PACKAGE_${package}=y" .config
           done
           for package in nikki luci-app-nikki luci-i18n-nikki-zh-cn mihomo-meta luci-app-openclash mihomo-openclash-core; do
@@ -112,7 +125,8 @@ jobs:
           compiler="$PWD/${compilers[0]}"
           python3 scripts/lg6851f-build-pro-wireless.py \
             --vendor-repo pro-source --kernel "${kernels[0]}" --staging "${staging[0]}" \
-            --cross-compile "${compiler%gcc}" --work-dir build-pro-wireless -j "$JOBS" --hostapd
+            --cross-compile "${compiler%gcc}" --work-dir build-pro-wireless -j "$JOBS" \
+            --hostapd --image-overlay files
           mkdir pro-wireless-verified
           cp build-pro-wireless/{pro-warp.dtb,driver-repair.json,lg6851f-hostapd} pro-wireless-verified/
           kernel="${kernels[0]}"
@@ -132,6 +146,51 @@ jobs:
           sha256sum *.ko Image kernel.config pro-warp.dtb driver-repair.json lg6851f-hostapd build-id.txt > SHA256SUMS
           sha256sum -c SHA256SUMS
 
+      - name: Assemble and sign the experimental A and B images
+        run: |
+          set -euo pipefail
+          export PATH="$RUNNER_TEMP/lg6851f-sign/bin:$PATH"
+          ./scripts/mt6990-build-and-record.sh -j"$JOBS" V=s
+          shopt -s nullglob
+          roots=(build_dir/target-*/root-mediatek)
+          kdirs=(build_dir/target-*/linux-mediatek_mt6990)
+          test "${#roots[@]}" -eq 1 && test "${#kdirs[@]}" -eq 1
+          kdir="${kdirs[0]}"
+          cmp "$kdir/Image" pro-wireless-verified/Image
+          tail -n +3 pro-wireless-verified/build-id.txt | sha256sum -c -
+          dtb="$kdir/image-mt6990-fiberhome-lg6851f-pro-warp.dtb"
+          test "$(fdtget "$dtb" /wed@15010000 compatible)" = mediatek,wed
+          test "$(fdtget "$dtb" /wed2@15011000 compatible)" = mediatek,wed2
+          if fdtget "$dtb" /ethernet@15100000 mediatek,wed >/dev/null 2>&1; then exit 1; fi
+          if [ -n "$(find "${roots[0]}/lib/modules" \( -name 'mt76*.ko*' -o -name 'mt79*.ko*' \) -print -quit)" ]; then
+            echo 'Unexpected mt76 module in the vendor rootfs'
+            exit 1
+          fi
+          rootfs="$kdir/root.squashfs"
+          for module in pro-wireless-verified/*.ko; do
+            unsquashfs -cat "$rootfs" "usr/lib/lg6851f-vendor618/modules/${module##*/}" | cmp - "$module"
+          done
+          unsquashfs -cat "$rootfs" usr/sbin/lg6851f-hostapd | cmp - pro-wireless-verified/lg6851f-hostapd
+          for runtime in etc/uci-defaults/zzzz-lg6851f-public-firstboot etc/init.d/lg6851f-vendor618-prepare \
+                         usr/sbin/lg6851f-vendor618-start usr/sbin/lg6851f-prepare-vendor-wireless \
+                         lib/netifd/wireless/vendor618.sh; do
+            unsquashfs -cat "$rootfs" "$runtime" | cmp - "files/$runtime"
+          done
+          out=pro-image-verified
+          mkdir -p "$out/a" "$out/b"
+          cp 'A槽单刷boot和rootfs签名成功包/'{boot_a.img,rootfs_a.img,lg6851f-signed-boot-rootfs.manifest.json} "$out/a/"
+          cp 'B槽单刷boot和rootfs签名成功包/'{boot_b.img,rootfs_b.img,lg6851f-signed-boot-rootfs.manifest.json} "$out/b/"
+          for slot in a b; do
+            package="bin/targets/mediatek/mt6990/lg6851f-mt6990-$slot-signed-sysupgrade.tar.gz"
+            tar -xOzf "$package" CONTROL | grep -Fx "slot=$slot"
+            cp "$package" "$out/$slot/"
+          done
+          cp "$dtb" "$out/"
+          cp pro-wireless-verified/{build-id.txt,driver-repair.json} "$out/"
+          cd "$out"
+          sha256sum a/* b/* ./*.dtb build-id.txt driver-repair.json > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
       - name: Upload wireless ABI build diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
@@ -144,10 +203,10 @@ jobs:
             build-pro-wireless/*.log
           retention-days: 7
 
-      - name: Upload verified components
+      - name: Upload the experimental images
         uses: actions/upload-artifact@v4
         with:
-          name: LG6851F-Pro-wireless-ABI-${{ github.run_id }}-${{ github.run_attempt }}
-          path: pro-wireless-verified/
+          name: LG6851F-stock-accel-Pro-experimental-${{ github.run_id }}-${{ github.run_attempt }}
+          path: pro-image-verified/
           if-no-files-found: error
           retention-days: 14

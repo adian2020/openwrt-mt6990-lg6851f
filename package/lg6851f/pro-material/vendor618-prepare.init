@@ -1,0 +1,8 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-2.0-only
+START=01
+
+start() {
+	[ -r /proc/device-tree/wed@15010000/wed_num ] || return 1
+	touch /tmp/lg6851f-vendor618-active
+}

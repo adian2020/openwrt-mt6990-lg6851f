@@ -49,7 +49,11 @@ ROOT_KEY="$SDK/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/ROOT"
 IMAGE_KEY="$SDK/mtk/tools/common/security/sign_master/hsm_test_keys/RSA2048/IMAGE"
 
 KERNEL_IMAGE="$KDIR/Image"
-DTB_IMAGE="$KDIR/image-mt6990-fiberhome-lg6851f.dtb"
+case "${LG6851F_PRO_WARP_IMAGE:-0}" in
+	0) DTB_IMAGE="$KDIR/image-mt6990-fiberhome-lg6851f.dtb" ;;
+	1) DTB_IMAGE="$KDIR/image-mt6990-fiberhome-lg6851f-pro-warp.dtb" ;;
+	*) printf 'ERROR: invalid LG6851F_PRO_WARP_IMAGE\n' >&2; exit 1 ;;
+esac
 ROOTFS_IMAGE="$KDIR/root.squashfs"
 
 die() {

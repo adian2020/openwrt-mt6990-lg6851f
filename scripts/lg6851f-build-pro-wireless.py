@@ -16,6 +16,23 @@ PRO_BUILD_REVISION = "b942f071af127ece3d40321aca41f4f96f2ab800"
 REPAIR_SOURCE = "development-history/systemfix-source/systemfix-20261021-30/driver-build/repair-source"
 RX_REPAIR = "development-history/V2.10/wifi-rebuild/patch-source.py"
 HOSTAPD_SOURCE = "development-history/V2.10/hostapd-native"
+IMAGE_RUNTIME = (
+    "etc/config/wireless", "etc/init.d/lg6851f-vendor618", "etc/init.d/lg6851f_hostapd",
+    "etc/init.d/wpad", "etc/uci-defaults/zzzz-lg6851f-public-firstboot",
+    "etc/lg6851f-vendor618/firmware", "etc/lg6851f-vendor618/wireless",
+    "lib/netifd/hostapd.sh", "lib/netifd/netifd-wireless.sh", "lib/netifd/vendor618-client64.sh",
+    "lib/netifd/wireless-device.uc", "lib/netifd/wireless.uc", "lib/netifd/wireless/vendor618.sh",
+    "usr/libexec/lg6851f-detach", "usr/sbin/lg6851f-auth-recover", "usr/sbin/lg6851f-hostapd-ctl",
+    "usr/sbin/lg6851f-hostapd-run", "usr/sbin/lg6851f-mwctl", "usr/sbin/lg6851f-public-calibration",
+    "usr/sbin/lg6851f-vendor618-start", "usr/sbin/lg6851f-wifi-power",
+    "usr/share/rpcd/acl.d/luci-lg6851f-wifi-power.json", "usr/share/rpcd/acl.d/luci-vendor618-wireless.json",
+    "usr/share/ucode/lg6851f/auth-plan.uc", "usr/share/ucode/lg6851f/bss-fingerprint.uc",
+    "usr/share/ucode/lg6851f/bss-prepare.uc", "usr/share/ucode/lg6851f/client64-plan.uc",
+    "usr/share/ucode/lg6851f/mlo-policy.uc", "usr/share/ucode/lg6851f/prepare-wireless-profile.uc",
+    "usr/share/ucode/lg6851f/wifi-power-cli.uc", "usr/share/ucode/lg6851f/wifi-power-engine.uc",
+    "usr/share/ucode/lg6851f/wifi-power-model.uc", "usr/share/ucode/wifi/hostapd.uc",
+    "www/luci-static/resources/view/network/wireless.js",
+)
 PARTS = {
     "coex": ("wifi_md_coex", ("wifi_md_coex",)),
     "cmn": ("mt_wifi_cmn", ("mt_wifi_cmn",)),
@@ -26,7 +43,8 @@ PARTS = {
 BACKPORT_HEADERS = (
     "mac80211-backport", "mac80211-backport/uapi", "mac80211", "mac80211/uapi",
 )
-DTS = Path(__file__).resolve().parents[1] / "target/linux/mediatek/dts/mt6990-fiberhome-lg6851f-pro-warp.dts"
+ROOT = Path(__file__).resolve().parents[1]
+DTS = ROOT / "target/linux/mediatek/dts/mt6990-fiberhome-lg6851f-pro-warp.dts"
 
 
 def require_file(path):
@@ -207,6 +225,55 @@ def build_hostapd(args, includes, environment):
     print(output, flush=True)
 
 
+def stage_image(args, sources, environment):
+    work = args.work_dir / "image-runtime"
+    work.mkdir()
+    extract_source(args.vendor_repo, work, PRO_BUILD_REVISION, [f"files/{path}" for path in IMAGE_RUNTIME])
+    payload = work / "files"
+    vendor = payload / "etc/lg6851f-vendor618"
+    (vendor / "firmware/MT7990_EEPROM.bin").unlink()
+    for calibration in (vendor / "wireless/mediatek").glob("e2p*"):
+        calibration.unlink()
+    shutil.rmtree(vendor / "wireless/sigma_test")
+
+    start = payload / "usr/sbin/lg6851f-vendor618-start"
+    script = start.read_text()
+    slot_gate = "grep -q 'bootslot=b' /proc/cmdline\n"
+    handoff = "touch /tmp/lg6851f-vendor618-ready\n/usr/bin/timeout -k 2 15 ubus call network.wireless up\n"
+    health_start = "n=0\nuntil /usr/sbin/lg6851f-a-mark-healthy --now; do\n"
+    health_end = "stage 'check both WO processors'\n"
+    if any(script.count(text) != 1 for text in (slot_gate, handoff, health_start, health_end)):
+        raise ValueError("固定 Pro 启动脚本的槽位、交接或确认流程与预期不符")
+    script = script.replace(slot_gate, "/usr/sbin/lg6851f-prepare-vendor-wireless\n", 1)
+    script = script.replace(handoff, "", 1)
+    script = script[:script.index(health_start)] + script[script.index(health_end):]
+    script, end, _ = script.partition('if [ -e "$cfg/enabled" ]; then\n')
+    if not end:
+        raise ValueError("固定 Pro 启动脚本的持久标记流程与预期不符")
+    start.write_text(script + "touch /tmp/lg6851f-vendor618-ready\n/usr/bin/timeout -k 2 15 /sbin/wifi up\n")
+
+    materials = ROOT / "package/lg6851f/pro-material"
+    for filename, where in (("vendor618-prepare.init", "etc/init.d/lg6851f-vendor618-prepare"),
+                            ("prepare-vendor-wireless.sh", "usr/sbin/lg6851f-prepare-vendor-wireless")):
+        shutil.copyfile(materials / filename, payload / where)
+        (payload / where).chmod(0o755)
+    rc = payload / "etc/rc.d"
+    rc.mkdir()
+    for order, name in (("S01", "lg6851f-vendor618-prepare"), ("S19", "lg6851f_hostapd"),
+                        ("K20", "lg6851f_hostapd"), ("S95", "lg6851f-vendor618")):
+        (rc / (order + name)).symlink_to(f"../init.d/{name}")
+
+    modules = payload / "usr/lib/lg6851f-vendor618/modules"
+    modules.mkdir(parents=True)
+    for part, (_, names) in PARTS.items():
+        for name in names:
+            filename = name + ".ko"
+            subprocess.run([args.cross_compile + "strip", "--strip-debug", sources[part] / filename,
+                            "-o", modules / filename], env=environment, check=True)
+    shutil.copy2(args.work_dir / "lg6851f-hostapd", payload / "usr/sbin/lg6851f-hostapd")
+    shutil.copytree(payload, args.image_overlay, dirs_exist_ok=True, symlinks=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vendor-repo", required=True, type=Path, help="local LG6851F-Pro Git repository")
@@ -216,11 +283,15 @@ def main():
     parser.add_argument("--work-dir", required=True, type=Path, help="new or empty output directory")
     parser.add_argument("--objects", action="store_true", help="compile linked objects without module ABI checks")
     parser.add_argument("--hostapd", action="store_true", help="also rebuild the vendor hostapd with target libraries")
+    parser.add_argument("--image-overlay", type=Path, help="stage the experimental vendor wireless image overlay")
     parser.add_argument("-j", "--jobs", type=int, default=4)
     args = parser.parse_args()
     args.kernel = args.kernel.resolve()
     args.staging = args.staging.resolve()
     args.work_dir = args.work_dir.resolve()
+
+    if args.image_overlay and (args.objects or not args.hostapd):
+        parser.error("--image-overlay requires the ABI-checked module and hostapd builds")
 
     try:
         if args.jobs < 1:
@@ -253,6 +324,8 @@ def main():
             build_part(args, part, sources, includes, config, environment)
         if args.hostapd:
             build_hostapd(args, includes, environment)
+        if args.image_overlay:
+            stage_image(args, sources, environment)
     except (OSError, ValueError, tarfile.TarError, subprocess.CalledProcessError) as error:
         parser.exit(1, f"{error}\n")
 

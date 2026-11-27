@@ -1,7 +1,8 @@
 """执行实际 Wi-Fi 启动脚本，验证不等待拨号、不重载已有 AP、尊重手动关闭。"""
 import io,tarfile,json,os,pathlib,subprocess,tempfile,unittest
 ROOT=pathlib.Path(__file__).resolve().parents[2]
-SCRIPT=ROOT/'package/vendor/lg6851f-modem-chain-only/files/usr/sbin/lg6851f-wifi-after-modem'
+# The target overlay takes precedence over the historical script in the vendor APK.
+SCRIPT=ROOT/'files/usr/sbin/lg6851f-wifi-after-modem'
 class WiFiStartupTest(unittest.TestCase):
  def run_case(self,enabled=False,provisioned=False,fail=False,phy=True,preserved=False):
   with tempfile.TemporaryDirectory() as name:

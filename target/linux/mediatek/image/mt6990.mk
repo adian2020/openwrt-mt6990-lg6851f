@@ -1,8 +1,10 @@
+LG6851F_IMAGE_DTS := mt6990-fiberhome-lg6851f$(if $(filter 1,$(LG6851F_PRO_WARP_IMAGE)),-pro-warp)
+
 define Build/lg6851f-android-boot
 	python3 $(TOPDIR)/scripts/lg6851f_mkbootimg_v2.py \
 		--meta $(TOPDIR)/target/linux/mediatek/image/lg6851f-boot-v2.json \
 		--kernel $(KDIR)/Image \
-		--dtb $(KDIR)/image-mt6990-fiberhome-lg6851f.dtb \
+		--dtb $(KDIR)/image-$(LG6851F_IMAGE_DTS).dtb \
 		--out $@
 	cp -f $@ $(BIN_DIR)/boot_b.img
 endef
@@ -21,9 +23,9 @@ define Device/fiberhome_lg6851f
   SOC := mt6990
   KERNEL_LOADADDR := 0x80080000
   KERNEL_ENTRY := 0x80080000
-  DEVICE_DTS := mt6990-fiberhome-lg6851f
+  DEVICE_DTS := $(LG6851F_IMAGE_DTS)
   DEVICE_DTS_DIR := ../dts
-	DEVICE_PACKAGES := kmod-mt7996e kmod-mt7990-firmware luci-app-5gmodem luci-app-fiberhomedash lg6851f-ipv6-prefix luci-app-pwmfan \
+	DEVICE_PACKAGES := $(if $(filter 1,$(LG6851F_PRO_WARP_IMAGE)),,kmod-mt7996e kmod-mt7990-firmware) luci-app-5gmodem luci-app-fiberhomedash lg6851f-ipv6-prefix luci-app-pwmfan \
 	luci-theme-argon luci-theme-bootstrap \
 	mt6990-adb-usb \
 	kmod-mt6990-hwnat kmod-lg6851f-ppe-stats \
