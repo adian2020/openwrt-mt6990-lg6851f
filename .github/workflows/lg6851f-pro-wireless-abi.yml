@@ -58,6 +58,7 @@ jobs:
       - name: Prepare target build configuration
         run: |
           set -euo pipefail
+          python3 scripts/tests/test_lg6851f_pro_network_diag.py
           cp .config "$RUNNER_TEMP/lg6851f.config"
           ./scripts/feeds update -a
           cp "$RUNNER_TEMP/lg6851f.config" .config
@@ -201,10 +202,13 @@ jobs:
           done
           unsquashfs -cat "$rootfs" usr/sbin/lg6851f-hostapd | cmp - pro-wireless-verified/lg6851f-hostapd
           for runtime in etc/config/wireless etc/init.d/lg6851f-vendor618-prepare \
+                         etc/init.d/lg6851f-pro-network-diag usr/sbin/lg6851f-pro-network-diag \
                          usr/sbin/lg6851f-vendor618-start usr/sbin/lg6851f-prepare-vendor-wireless \
                          lib/netifd/wireless/vendor618.sh; do
             unsquashfs -cat "$rootfs" "$runtime" | cmp - "files/$runtime"
           done
+          unsquashfs -ll "$rootfs" etc/rc.d/S08lg6851f-pro-network-diag |
+            grep -F '/etc/rc.d/S08lg6851f-pro-network-diag -> ../init.d/lg6851f-pro-network-diag'
           while IFS= read -r runtime; do
             unsquashfs -cat "$rootfs" "$runtime" | cmp - "files/$runtime"
           done < build-pro-wireless/network-runtime.txt

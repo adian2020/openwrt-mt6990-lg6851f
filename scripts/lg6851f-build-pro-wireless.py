@@ -288,24 +288,37 @@ def stage_image(args, sources, environment):
     handoff = "touch /tmp/lg6851f-vendor618-ready\n/usr/bin/timeout -k 2 15 ubus call network.wireless up\n"
     health_start = "n=0\nuntil /usr/sbin/lg6851f-a-mark-healthy --now; do\n"
     health_end = "stage 'check both WO processors'\n"
-    if any(script.count(text) != 1 for text in (slot_gate, handoff, health_start, health_end)):
+    wo_checks = "! dmesg | grep -q 'WO FW DL failed'\ntest \"$(dmesg | grep -c 'wocpu is ready')\" -ge 2\n"
+    if any(script.count(text) != 1 for text in (slot_gate, handoff, health_start, health_end, wo_checks)):
         raise ValueError("固定 Pro 启动脚本的槽位、交接或确认流程与预期不符")
     script = script.replace(slot_gate, "/usr/sbin/lg6851f-prepare-vendor-wireless\n", 1)
-    script = script.replace(handoff, "", 1)
+    # Keep the original Pro handoff before the WO diagnostic. The log
+    # message count must not decide whether netifd can start the APs.
     script = script[:script.index(health_start)] + script[script.index(health_end):]
+    script = script.replace(wo_checks, """wo_log=$(dmesg | grep -E 'WO FW DL failed|wocpu is ready' || true)
+wo_ready=$(printf '%s\\n' "$wo_log" | grep -c 'wocpu is ready' || true)
+stage "WO log ready_events=$wo_ready"
+if printf '%s\\n' "$wo_log" | grep -q 'WO FW DL failed' || [ "$wo_ready" -lt 2 ]; then
+ echo 'WO readiness check incomplete after the AP handoff'
+ exit 1
+fi
+""", 1)
     script, end, _ = script.partition('if [ -e "$cfg/enabled" ]; then\n')
     if not end:
         raise ValueError("固定 Pro 启动脚本的持久标记流程与预期不符")
-    start.write_text(script + "touch /tmp/lg6851f-vendor618-ready\n/usr/bin/timeout -k 2 15 /sbin/wifi up\n")
+    start.write_text(script)
 
     materials = ROOT / "package/lg6851f/pro-material"
     for filename, where in (("vendor618-prepare.init", "etc/init.d/lg6851f-vendor618-prepare"),
-                            ("prepare-vendor-wireless.sh", "usr/sbin/lg6851f-prepare-vendor-wireless")):
+                            ("prepare-vendor-wireless.sh", "usr/sbin/lg6851f-prepare-vendor-wireless"),
+                            ("pro-network-diag.init", "etc/init.d/lg6851f-pro-network-diag"),
+                            ("pro-network-diag.sh", "usr/sbin/lg6851f-pro-network-diag")):
         shutil.copyfile(materials / filename, payload / where)
         (payload / where).chmod(0o755)
     rc = payload / "etc/rc.d"
     rc.mkdir()
-    for order, name in (("S01", "lg6851f-vendor618-prepare"), ("S18", "turboacc"), ("S19", "lg6851f_hostapd"),
+    for order, name in (("S01", "lg6851f-vendor618-prepare"), ("S08", "lg6851f-pro-network-diag"),
+                        ("S18", "turboacc"), ("S19", "lg6851f_hostapd"),
                         ("K20", "lg6851f_hostapd"), ("S95", "lg6851f-vendor618")):
         (rc / (order + name)).symlink_to(f"../init.d/{name}")
 
