@@ -1,0 +1,86 @@
+[
+  {
+    "package": "luci-app-uugamebooster",
+    "repo": "xiaodoudou/luci-app-uugamebooster",
+    "upstream_base": "93cf1863da856c9c7cc81c84474694fa31bac0bd",
+    "source_sha": "078b7c223288dc03a07507890da72eff50959721"
+  },
+  {
+    "package": "luci-theme-aurora",
+    "repo": "eamonxg/luci-theme-aurora",
+    "upstream_base": "84c27b66952e6fc4be60128067a6b88bfd34afb5",
+    "source_sha": "078b7c223288dc03a07507890da72eff50959721"
+  },
+  {
+    "package": "luci-app-aurora-config",
+    "repo": "eamonxg/luci-app-aurora-config",
+    "upstream_base": "a5299ce0144859f47683ec3bc40805bf616f534f",
+    "source_sha": "078b7c223288dc03a07507890da72eff50959721"
+  },
+  {
+    "package": "luci-app-autoreboot",
+    "repo": "immortalwrt/luci",
+    "upstream_base": "ad75cde88e694b511100576bfbe0a280e5efe6ef",
+    "source_sha": "078b7c223288dc03a07507890da72eff50959721"
+  },
+  {
+    "package": "luci-app-openclash",
+    "repo": "adian2020/LG6851F-Pro",
+    "commit": "0e1518ed632388e814032e0831560d22d9488981",
+    "version": "0.47.156"
+  },
+  {
+    "package": "mihomo-openclash-core",
+    "repo": "adian2020/LG6851F-Pro",
+    "commit": "0e1518ed632388e814032e0831560d22d9488981",
+    "version": "1.19.29"
+  },
+  {
+    "package": "nikki",
+    "repo": "adian2020/LG6851F-Pro",
+    "commit": "0e1518ed632388e814032e0831560d22d9488981",
+    "version": "2026.04.08"
+  },
+  {
+    "package": "luci-app-nikki",
+    "repo": "adian2020/LG6851F-Pro",
+    "commit": "0e1518ed632388e814032e0831560d22d9488981",
+    "version": "1.26.1"
+  },
+  {
+    "package": "luci-i18n-nikki-zh-cn",
+    "repo": "adian2020/LG6851F-Pro",
+    "commit": "0e1518ed632388e814032e0831560d22d9488981",
+    "version": "26.161.56550~95d41dd"
+  },
+  {
+    "package": "mihomo-meta",
+    "repo": "adian2020/LG6851F-Pro",
+    "commit": "0e1518ed632388e814032e0831560d22d9488981",
+    "version": "1.19.27"
+  },
+  {
+    "feed": "luci",
+    "commit": "2969beb51d64bef71ac17351c8393c099f37082c"
+  },
+  {
+    "feed": "nikki",
+    "commit": "aaf46bf02a9ab2b5a8ab3fcaa5f84c99e56585bf"
+  },
+  {
+    "feed": "packages",
+    "commit": "3fe8d804b1f9df60e082ce6f3dd09d433384952f"
+  },
+  {
+    "feed": "routing",
+    "commit": "ea8633da9c461a9bdc62a0323439d31180762e03"
+  },
+  {
+    "feed": "telephony",
+    "commit": "06feffc2c154993f555b43756ef7db6dd7e58225"
+  },
+  {
+    "feed": "video",
+    "commit": "aa12a26a06b151429b7f0dea4144e9eb75b9bde8"
+  }
+]
